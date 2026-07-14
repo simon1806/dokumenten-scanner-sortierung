@@ -45,6 +45,8 @@ Die Oberfläche verwaltet diese Werte:
 - Dateistabilität nach einem Scan (Standard: 2 Sekunden)
 - optionaler Pfad zu Tesseract OCR, falls Tesseract nicht mitgeliefert oder systemweit installiert ist
 
+Die Oberfläche verwendet eine übersichtliche Kartenansicht mit klar getrennten Haupt-, Neben- und Beenden-Aktionen. Wenn der Mauszeiger kurz über einem Button stehen bleibt, erklärt ein Hinweis dessen Funktion und Auswirkungen.
+
 Die Stabilitätszeit verhindert, dass eine PDF verarbeitet wird, während der Scanner oder das Netzwerk sie noch schreibt. Zusätzlich prüft die Anwendung, ob die PDF-Struktur vollständig lesbar ist. Das Eingangsverzeichnis wird jede Sekunde geprüft, sodass fertige Scans gewöhnlich nach wenigen Sekunden starten.
 
 Für eine schnellere Erkennung werden vorhandener PDF-Text und Barcodes vor der OCR ausgewertet. Bei mehrseitigen Scans werden höchstens zwei Seiten gleichzeitig per OCR verarbeitet, damit die Laufzeit sinkt, ohne den Server unnötig auszulasten.
@@ -88,7 +90,7 @@ Pro Einstellungsdatei kann nur eine Programminstanz laufen. Ein erneuter Start �
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.8
+.\scripts\build-release.ps1 -Version 0.1.9
 ```
 
 Die Dateien liegen danach im Ordner `release`.
@@ -96,7 +98,7 @@ Die Dateien liegen danach im Ordner `release`.
 Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.8 -TesseractDir "C:\Program Files\Tesseract-OCR"
+.\scripts\build-release.ps1 -Version 0.1.9 -TesseractDir "C:\Program Files\Tesseract-OCR"
 ```
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
@@ -105,7 +107,7 @@ Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.8
+.\scripts\build-release.ps1 -Version 0.1.9
 ```
 
 Hinweis: Das offizielle Tesseract-Release auf GitHub enthaelt fuer Version 5.5.2 den Quellcode. Fuer eine Windows-EXE wird ein fertig gebauter Windows-Ordner mit `tesseract.exe`, DLLs und `tessdata` benoetigt.
