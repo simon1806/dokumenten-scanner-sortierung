@@ -90,6 +90,15 @@ Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
 
+Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
+
+```powershell
+.\scripts\prepare-tesseract-vendor.ps1
+.\scripts\build-release.ps1 -Version 0.1.4
+```
+
+Hinweis: Das offizielle Tesseract-Release auf GitHub enthaelt fuer Version 5.5.2 den Quellcode. Fuer eine Windows-EXE wird ein fertig gebauter Windows-Ordner mit `tesseract.exe`, DLLs und `tessdata` benoetigt.
+
 ## Automatischer Betrieb
 
 Für den Serverbetrieb wird in der Windows-Aufgabenplanung eine Aufgabe mit dem Auslöser **Beim Starten des Computers** eingerichtet. Als Programm wird verwendet:

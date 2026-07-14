@@ -6,6 +6,7 @@ build/
 dist/
 .artifacts/
 release/
+vendor/
 *.egg-info/
 settings.json
 logs/

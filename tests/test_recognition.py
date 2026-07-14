@@ -26,6 +26,11 @@ class RecognitionTests(unittest.TestCase):
         self.assertIsNotNone(detected)
         self.assertEqual("LS-Nowak-4783804.pdf", detected.filename)
 
+    def test_nowak_delivery_note_without_lieferschein_word(self) -> None:
+        detected = detect_document_from_text("NOWAK GLAS\nFirma Inh. Andreas Hagen 4783804 Kreuzstrasse")
+        self.assertIsNotNone(detected)
+        self.assertEqual("LS-Nowak-4783804.pdf", detected.filename)
+
     def test_heitzer_delivery_note(self) -> None:
         detected = detect_document_from_text("Heitzer AG\nLIEFERSCHEIN 26060887 vom 16.06.2026")
         self.assertIsNotNone(detected)

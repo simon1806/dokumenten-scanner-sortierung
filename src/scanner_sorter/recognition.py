@@ -34,8 +34,12 @@ def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> Detect
     normalised = normalise(text)
     barcode_values = tuple(barcodes)
 
-    if "NOWAK GLAS" in normalised and "LIEFERSCHEIN" in normalised:
-        number = extract_number(normalised, rf"LIEFERSCHEIN\s*(?:NR\.?\s*)?{NUMBER}", barcode_values)
+    if "NOWAK GLAS" in normalised:
+        number = extract_number(
+            normalised,
+            rf"(?:LIEFERSCHEIN\s*(?:NR\.?\s*)?)?\b(47\d{{5,10}})\b",
+            barcode_values,
+        )
         if number:
             return DetectedDocument("LS", number, "Nowak")
 
