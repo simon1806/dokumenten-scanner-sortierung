@@ -4,6 +4,8 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+.artifacts/
+release/
 *.egg-info/
 settings.json
 logs/

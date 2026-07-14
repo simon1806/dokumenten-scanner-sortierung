@@ -45,7 +45,7 @@ class Settings:
 
 
 def default_settings_path() -> Path:
-    base = Path(os.environ.get("PROGRAMDATA", Path.home()))
+    base = Path(os.environ.get("APPDATA") or os.environ.get("PROGRAMDATA") or Path.home())
     return base / "DokumentenScannerSortierung" / "settings.json"
 
 

@@ -60,10 +60,27 @@ py -3.11 -m venv .venv
 Beim ersten Start werden die Ordner und die Aufbewahrungsdauer in der Oberfläche eingetragen. Die Einstellungen liegen standardmäßig unter:
 
 ```text
-C:\ProgramData\DokumentenScannerSortierung\settings.json
+%APPDATA%\DokumentenScannerSortierung\settings.json
 ```
 
 Falls Tesseract nicht im Windows-Pfad hinterlegt ist, wird seine `tesseract.exe` in den Einstellungen eingetragen.
+
+## EXE für Test und Updates
+
+Das Release wird als zwei EXE-Dateien erzeugt:
+
+- `DokumentenScannerSortierung-<Version>.exe` ist die portable Anwendung.
+- `DokumentenScannerSortierung-Setup.exe` installiert die Anwendung unter `%LOCALAPPDATA%\Programs\DokumentenScannerSortierung` und startet sie anschließend.
+
+Für ein Update wird die neue `DokumentenScannerSortierung-Setup.exe` gestartet, nachdem die Anwendung geschlossen wurde. Einstellungen und Archivdateien bleiben erhalten, weil sie getrennt von der installierten EXE gespeichert werden.
+
+Zum Erzeugen der Dateien im Entwicklungsordner:
+
+```powershell
+.\scripts\build-release.ps1 -Version 0.1.0
+```
+
+Die Dateien liegen danach im Ordner `release`.
 
 ## Automatischer Betrieb
 
@@ -79,7 +96,7 @@ Argumente:
 --run --settings "C:\ProgramData\DokumentenScannerSortierung\settings.json"
 ```
 
-Das verwendete Dienstkonto benötigt Änderungsrechte für Eingangs-, Ziel- und Archivordner. Die Anwendung schreibt ein Protokoll nach `C:\ProgramData\DokumentenScannerSortierung\logs\dokumentensortierer.log`.
+Das verwendete Dienstkonto benötigt Änderungsrechte für Eingangs-, Ziel- und Archivordner. Die Anwendung schreibt ein Protokoll im Unterordner `logs` neben der verwendeten `settings.json`.
 
 ## Entwicklung und Tests
 
