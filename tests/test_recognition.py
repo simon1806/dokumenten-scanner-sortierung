@@ -55,6 +55,13 @@ class RecognitionTests(unittest.TestCase):
         self.assertIsNotNone(detected)
         self.assertEqual("LS-Heitzer-26060887.pdf", detected.filename)
 
+    def test_pauli_delivery_note(self) -> None:
+        detected = detect_document_from_text(
+            "Pauli+ Sohn GmbH-Metallwaren\nLieferschein\nNummer/Datum: 82079358 vom 24.02.2026"
+        )
+        self.assertIsNotNone(detected)
+        self.assertEqual("LS-Pauli-82079358.pdf", detected.filename)
+
 
 if __name__ == "__main__":
     unittest.main()

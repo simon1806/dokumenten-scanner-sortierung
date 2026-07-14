@@ -29,6 +29,7 @@ Archivdateien werden nach der in den Einstellungen festgelegten Aufbewahrungsdau
 | Montagebericht | `Montagebericht` und Auftragsnummer | `MI_<Auftragsnummer>.pdf` |
 | Nowak-Lieferschein | `NOWAK GLAS` und Lieferscheinnummer | `LS-Nowak-<Lieferscheinnummer>.pdf` |
 | Heitzer-Lieferschein | `Heitzer AG` und Lieferscheinnummer | `LS-Heitzer-<Lieferscheinnummer>.pdf` |
+| Pauli-Lieferschein | `Pauli + Sohn` und Nummer/Datum | `LS-Pauli-<Lieferscheinnummer>.pdf` |
 
 Mehrseitige Dokumente bleiben zusammen. Beispiel: Die Seiten `1 von 2` und `2 von 2` des Heitzer-Lieferscheins `26060887` ergeben `LS-Heitzer-26060887.pdf`.
 
@@ -83,7 +84,7 @@ Für ein Update wird die neue `DokumentenScannerSortierung-Setup.exe` gestartet,
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.5
+.\scripts\build-release.ps1 -Version 0.1.6
 ```
 
 Die Dateien liegen danach im Ordner `release`.
@@ -91,7 +92,7 @@ Die Dateien liegen danach im Ordner `release`.
 Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.5 -TesseractDir "C:\Program Files\Tesseract-OCR"
+.\scripts\build-release.ps1 -Version 0.1.6 -TesseractDir "C:\Program Files\Tesseract-OCR"
 ```
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
@@ -100,7 +101,7 @@ Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.5
+.\scripts\build-release.ps1 -Version 0.1.6
 ```
 
 Hinweis: Das offizielle Tesseract-Release auf GitHub enthaelt fuer Version 5.5.2 den Quellcode. Fuer eine Windows-EXE wird ein fertig gebauter Windows-Ordner mit `tesseract.exe`, DLLs und `tessdata` benoetigt.

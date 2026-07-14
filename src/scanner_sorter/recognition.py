@@ -50,6 +50,15 @@ def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> Detect
         if number:
             return DetectedDocument("LS", number, "Heitzer")
 
+    if "PAULI" in normalised and "SOHN" in normalised and "LIEFERSCHEIN" in normalised:
+        number = extract_number(
+            normalised,
+            rf"(?:NUMMER\s*/\s*DATUM|BELEG[- ]?NR\.?\s*/\s*DATUM)\s*:?\s*{NUMBER}",
+            barcode_values,
+        )
+        if number:
+            return DetectedDocument("LS", number, "Pauli")
+
     if "EMPFANGSSCHEIN" in normalised:
         number = extract_number(
             normalised,
