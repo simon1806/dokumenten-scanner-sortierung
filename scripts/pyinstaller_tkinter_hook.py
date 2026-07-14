@@ -9,5 +9,5 @@ from pathlib import Path
 
 if getattr(sys, "frozen", False):
     bundle = Path(sys._MEIPASS)
-    os.environ.setdefault("TCL_LIBRARY", str(bundle / "tcl_data"))
-    os.environ.setdefault("TK_LIBRARY", str(bundle / "tk_data"))
+    os.environ.setdefault("TCL_LIBRARY", str(bundle / "_tcl_data"))
+    os.environ.setdefault("TK_LIBRARY", str(bundle / "_tk_data"))

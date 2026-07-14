@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.1"
+    [string]$Version = "0.1.2"
 )
 
 $ErrorActionPreference = "Stop"
@@ -39,8 +39,8 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --add-binary "$(Join-Path $DllRoot '_tkinter.pyd');." `
     --add-binary "$(Join-Path $DllRoot 'tcl86t.dll');." `
     --add-binary "$(Join-Path $DllRoot 'tk86t.dll');." `
-    --add-data "$(Join-Path $TclRoot 'tcl8.6');tcl_data" `
-    --add-data "$(Join-Path $TclRoot 'tk8.6');tk_data" `
+    --add-data "$(Join-Path $TclRoot 'tcl8.6');_tcl_data" `
+    --add-data "$(Join-Path $TclRoot 'tk8.6');_tk_data" `
     --runtime-hook $TkinterHook `
     --distpath $MainDist `
     --workpath (Join-Path $BuildRoot "work-main") `
@@ -58,8 +58,8 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --add-binary "$(Join-Path $DllRoot '_tkinter.pyd');." `
     --add-binary "$(Join-Path $DllRoot 'tcl86t.dll');." `
     --add-binary "$(Join-Path $DllRoot 'tk86t.dll');." `
-    --add-data "$(Join-Path $TclRoot 'tcl8.6');tcl_data" `
-    --add-data "$(Join-Path $TclRoot 'tk8.6');tk_data" `
+    --add-data "$(Join-Path $TclRoot 'tcl8.6');_tcl_data" `
+    --add-data "$(Join-Path $TclRoot 'tk8.6');_tk_data" `
     --runtime-hook $TkinterHook `
     --add-data "$MainExecutable;payload" `
     --distpath $Release `
