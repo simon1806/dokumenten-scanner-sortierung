@@ -17,11 +17,17 @@ from pathlib import Path
 APPLICATION_FILENAME = "DokumentenScannerSortierung.exe"
 APPLICATION_FOLDER = "DokumentenScannerSortierung"
 SHORTCUT_FILENAME = "Dokumenten-Scanner-Sortierung.lnk"
+NOTICE_FILENAME = "THIRD_PARTY_NOTICES.md"
 
 
 def payload_path() -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
     return base / "payload" / APPLICATION_FILENAME
+
+
+def notice_payload_path() -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    return base / "payload" / NOTICE_FILENAME
 
 
 def installation_path() -> Path:
@@ -83,6 +89,7 @@ def main() -> int:
             print(f"Installiere {payload_path()} nach {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(payload_path(), target)
+        shutil.copy2(notice_payload_path(), target.parent / NOTICE_FILENAME)
         create_desktop_shortcut(target)
     except PermissionError as error:
         show_message(

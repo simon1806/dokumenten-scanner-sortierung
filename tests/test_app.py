@@ -5,10 +5,31 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from scanner_sorter.app import SettingsWindow, acquire_single_instance, release_single_instance
+from scanner_sorter.app import (
+    SettingsWindow,
+    acquire_single_instance,
+    initial_window_geometry,
+    release_single_instance,
+    ui_icon_path,
+)
 
 
 class AppTests(unittest.TestCase):
+    def test_default_window_is_large_and_centered_on_full_hd_screen(self) -> None:
+        width, height, x, y = initial_window_geometry(1920, 1080)
+
+        self.assertEqual((1460, 1000, 230, 40), (width, height, x, y))
+
+    def test_default_window_stays_inside_smaller_screen(self) -> None:
+        width, height, x, y = initial_window_geometry(1366, 768)
+
+        self.assertEqual((1286, 688, 40, 40), (width, height, x, y))
+
+    def test_required_button_icons_are_available(self) -> None:
+        for name in ("folder-open", "device-floppy", "player-play", "player-stop", "window-minimize", "power"):
+            with self.subTest(name=name):
+                self.assertTrue(ui_icon_path(name).is_file())
+
     def test_tray_image_has_windows_notification_size(self) -> None:
         image = SettingsWindow._tray_image()
 

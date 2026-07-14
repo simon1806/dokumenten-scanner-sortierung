@@ -12,12 +12,28 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from . import __version__
-from .config import Settings, default_settings_path, load_settings, save_settings
+from .config import Settings, bundled_folder, default_settings_path, load_settings, save_settings
 from .models import ProcessResult
 from .watcher import FolderWatcher
 
 
 ERROR_ALREADY_EXISTS = 183
+
+
+def initial_window_geometry(screen_width: int, screen_height: int) -> tuple[int, int, int, int]:
+    """Return a large centered default size that still fits on smaller displays."""
+    width = min(1460, max(900, screen_width - 80))
+    height = min(1000, max(680, screen_height - 80))
+    x = max(0, (screen_width - width) // 2)
+    y = max(0, (screen_height - height) // 2)
+    return width, height, x, y
+
+
+def ui_icon_path(name: str) -> Path:
+    bundle = bundled_folder()
+    if bundle is not None:
+        return bundle / "scanner_sorter" / "assets" / "icons" / "tabler" / f"{name}.png"
+    return Path(__file__).resolve().parent / "assets" / "icons" / "tabler" / f"{name}.png"
 
 
 def acquire_single_instance(settings_path: Path) -> tuple[bool, tuple[object, int] | None]:
@@ -180,11 +196,15 @@ class SettingsWindow:
         self.tray_icon: object | None = None
         self._quitting = False
         self._tooltips: list[ToolTip] = []
+        self._button_images: dict[tuple[str, str], object] = {}
 
         self.root = tk.Tk()
         self.root.title(f"Dokumenten-Scanner-Sortierung – Version {__version__}")
-        self.root.geometry("980x820")
-        self.root.minsize(900, 740)
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        width, height, x, y = initial_window_geometry(screen_width, screen_height)
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
+        self.root.minsize(min(1000, screen_width - 80), min(740, screen_height - 80))
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
         default_review_folder = self.settings.review_folder
@@ -283,10 +303,35 @@ class SettingsWindow:
         tooltip: str,
         style: str = "Secondary.TButton",
         state: str = "normal",
+        icon: str | None = None,
     ) -> object:
-        button = self.ttk.Button(parent, text=text, command=command, style=style, state=state)
+        options: dict[str, object] = {
+            "text": text,
+            "command": command,
+            "style": style,
+            "state": state,
+        }
+        if icon is not None:
+            color = "#FFFFFF" if style in {"Primary.TButton", "Danger.TButton"} else "#355064"
+            options["image"] = self._button_icon(icon, color)
+            options["compound"] = "left"
+        button = self.ttk.Button(parent, **options)
         self._tooltips.append(ToolTip(button, tooltip))
         return button
+
+    def _button_icon(self, name: str, color: str) -> object:
+        key = (name, color)
+        if key in self._button_images:
+            return self._button_images[key]
+
+        from PIL import Image, ImageTk
+
+        source = Image.open(ui_icon_path(name)).convert("RGBA")
+        icon = Image.new("RGBA", source.size, color)
+        icon.putalpha(source.getchannel("A"))
+        photo = ImageTk.PhotoImage(icon, master=self.root)
+        self._button_images[key] = photo
+        return photo
 
     def _build(self) -> None:
         from tkinter import filedialog, messagebox
@@ -399,6 +444,7 @@ class SettingsWindow:
                 lambda name=field: self._choose_folder(name, filedialog),
                 f"{label} im Windows-Dateidialog auswählen. Auch Netzwerk- und Serverpfade sind möglich.",
                 "Quiet.TButton",
+                icon="folder-open",
             )
             browse.grid(row=row, column=2, padx=(10, 0), pady=5)
 
@@ -495,6 +541,7 @@ class SettingsWindow:
             self.save,
             "Prüft alle Angaben und speichert sie dauerhaft, ohne die Überwachung zu starten.",
             "Secondary.TButton",
+            icon="device-floppy",
         )
         save_button.pack(side="left")
         self.start_button = self._button(
@@ -503,6 +550,7 @@ class SettingsWindow:
             self.start,
             "Speichert die Einstellungen und beginnt anschließend mit der automatischen Verarbeitung neuer PDFs.",
             "Primary.TButton",
+            icon="player-play",
         )
         self.start_button.pack(side="left", padx=(8, 0))
         self.stop_button = self._button(
@@ -512,6 +560,7 @@ class SettingsWindow:
             "Stoppt die Ordnerüberwachung. Die Anwendung und bereits erzeugte Dateien bleiben erhalten.",
             "Secondary.TButton",
             "disabled",
+            icon="player-stop",
         )
         self.stop_button.pack(side="left", padx=(8, 0))
         quit_button = self._button(
@@ -520,6 +569,7 @@ class SettingsWindow:
             self.quit_application,
             "Beendet die Überwachung und schließt die Anwendung vollständig.",
             "Danger.TButton",
+            icon="power",
         )
         quit_button.pack(side="right")
         hide_button = self._button(
@@ -528,6 +578,7 @@ class SettingsWindow:
             self.hide_to_tray,
             "Blendet nur das Fenster aus. Die Anwendung läuft unten rechts im Windows-Infobereich weiter.",
             "Quiet.TButton",
+            icon="window-minimize",
         )
         hide_button.pack(side="right", padx=(0, 8))
 
@@ -566,6 +617,7 @@ class SettingsWindow:
             self._open_log_folder,
             "Öffnet den Ordner mit der dauerhaften Logdatei und den älteren Protokollen.",
             "Quiet.TButton",
+            icon="folder-open",
         )
         open_log_button.pack(side="right")
         log_body.columnconfigure(0, weight=1)

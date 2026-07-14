@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dokumenten-scanner-sortierung"
-version = "0.1.9"
+version = "0.1.10"
 description = "Automatische Trennung und Benennung eingescannter Betriebsdokumente."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,3 +25,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+scanner_sorter = ["assets/icons/tabler/*.png"]
