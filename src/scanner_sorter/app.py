@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import os
 import signal
@@ -14,6 +15,75 @@ from . import __version__
 from .config import Settings, default_settings_path, load_settings, save_settings
 from .models import ProcessResult
 from .watcher import FolderWatcher
+
+
+ERROR_ALREADY_EXISTS = 183
+
+
+def acquire_single_instance(settings_path: Path) -> tuple[bool, tuple[object, int] | None]:
+    """Acquire one Windows mutex per settings file, independent of the EXE filename."""
+    if os.name != "nt":
+        return True, None
+
+    import ctypes
+
+    settings_key = str(settings_path.resolve()).casefold().encode("utf-8")
+    digest = hashlib.sha256(settings_key).hexdigest()[:20]
+    mutex_name = f"Local\\DokumentenScannerSortierung-{digest}"
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_bool
+
+    ctypes.set_last_error(0)
+    handle = kernel32.CreateMutexW(None, False, mutex_name)
+    error = ctypes.get_last_error()
+    if not handle:
+        raise OSError(error, "Einzelinstanz-Sperre konnte nicht erstellt werden.")
+    if error == ERROR_ALREADY_EXISTS:
+        kernel32.CloseHandle(handle)
+        return False, None
+    return True, (kernel32, int(handle))
+
+
+def release_single_instance(instance: tuple[object, int] | None) -> None:
+    if instance is None:
+        return
+    kernel32, handle = instance
+    kernel32.CloseHandle(handle)
+
+
+def notify_already_running() -> None:
+    message = (
+        "Die Dokumenten-Scanner-Sortierung läuft bereits.\n\n"
+        "Öffnen Sie die vorhandene Anwendung über das Symbol unten rechts im Windows-Infobereich."
+    )
+    if os.name == "nt":
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        windows: list[int] = []
+        callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+        def find_window(window: int, _parameter: int) -> bool:
+            length = user32.GetWindowTextLengthW(window)
+            if length:
+                title = ctypes.create_unicode_buffer(length + 1)
+                user32.GetWindowTextW(window, title, length + 1)
+                if title.value.startswith("Dokumenten-Scanner-Sortierung"):
+                    windows.append(window)
+                    return False
+            return True
+
+        user32.EnumWindows(callback_type(find_window), 0)
+        if windows:
+            user32.ShowWindow(windows[0], 9)
+            user32.SetForegroundWindow(windows[0])
+            return
+        user32.MessageBoxW(None, message, "Anwendung läuft bereits", 0x40)
+    else:
+        print(message, file=sys.stderr)
 
 
 def log_file_path(settings_path: Path) -> Path:
@@ -53,7 +123,7 @@ class SettingsWindow:
         self._quitting = False
 
         self.root = tk.Tk()
-        self.root.title("Dokumenten-Scanner-Sortierung")
+        self.root.title(f"Dokumenten-Scanner-Sortierung – Version {__version__}")
         self.root.minsize(820, 670)
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
@@ -85,7 +155,10 @@ class SettingsWindow:
         frame.rowconfigure(15, weight=1)
 
         self.ttk.Label(frame, text="Ordner", font=("Segoe UI", 12, "bold")).grid(
-            row=0, column=0, columnspan=3, sticky="w", pady=(0, 8)
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 8)
+        )
+        self.ttk.Label(frame, text=f"Version {__version__}", foreground="#555555").grid(
+            row=0, column=2, sticky="e", pady=(0, 8)
         )
         labels = [
             ("Eingangsordner", "input_folder"),
@@ -203,7 +276,7 @@ class SettingsWindow:
             self.tray_icon = pystray.Icon(
                 "DokumentenScannerSortierung",
                 self._tray_image(),
-                "Dokumenten-Scanner-Sortierung",
+                f"Dokumenten-Scanner-Sortierung {__version__}",
                 menu,
             )
             self.tray_icon.run_detached()
@@ -236,7 +309,7 @@ class SettingsWindow:
             return
         active = bool(self.watcher and self.watcher.running)
         status = "Überwachung aktiv" if active else "Überwachung nicht gestartet"
-        self.tray_icon.title = f"Dokumenten-Scanner-Sortierung – {status}"
+        self.tray_icon.title = f"Dokumenten-Scanner-Sortierung {__version__} – {status}"
 
     def show_window(self) -> None:
         self.root.deiconify()
@@ -370,14 +443,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run", action="store_true", help="Überwachung ohne Benutzeroberfläche starten")
     parser.add_argument("--settings", type=Path, default=default_settings_path(), help="Pfad zur settings.json")
     args = parser.parse_args(argv)
-    configure_logging(args.settings)
+    acquired, instance = acquire_single_instance(args.settings)
+    if not acquired:
+        notify_already_running()
+        return 0
 
-    if args.run:
-        return run_headless(args.settings)
+    try:
+        configure_logging(args.settings)
 
-    window = SettingsWindow(args.settings)
-    window.run()
-    return 0
+        if args.run:
+            return run_headless(args.settings)
+
+        window = SettingsWindow(args.settings)
+        window.run()
+        return 0
+    finally:
+        release_single_instance(instance)
 
 
 if __name__ == "__main__":
