@@ -49,11 +49,13 @@ class SettingsWindow:
         self.log_path = log_file_path(settings_path)
         self.settings = load_settings(settings_path)
         self.watcher: FolderWatcher | None = None
+        self.tray_icon: object | None = None
+        self._quitting = False
 
         self.root = tk.Tk()
         self.root.title("Dokumenten-Scanner-Sortierung")
         self.root.minsize(820, 670)
-        self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
         default_review_folder = self.settings.review_folder
         if not default_review_folder and self.settings.output_folder:
@@ -69,6 +71,7 @@ class SettingsWindow:
         }
         self.status = tk.StringVar(value="Einstellungen speichern und Überwachung starten.")
         self._build()
+        self._start_tray_icon()
 
     def _build(self) -> None:
         from tkinter import filedialog, messagebox
@@ -123,6 +126,8 @@ class SettingsWindow:
         self.start_button.pack(side="left", padx=8)
         self.stop_button = self.ttk.Button(controls, text="Überwachung beenden", command=self.stop, state="disabled")
         self.stop_button.pack(side="left")
+        self.ttk.Button(controls, text="Ausblenden", command=self.hide_to_tray).pack(side="left", padx=8)
+        self.ttk.Button(controls, text="Anwendung beenden", command=self.quit_application).pack(side="left")
 
         self.ttk.Label(frame, textvariable=self.status, foreground="#155724", wraplength=760).grid(
             row=12, column=0, columnspan=3, sticky="w", pady=(12, 4)
@@ -169,6 +174,81 @@ class SettingsWindow:
             os.startfile(str(self.log_path.parent))
         except Exception as error:
             self._messagebox.showerror("Protokollordner", f"Ordner konnte nicht geöffnet werden:\n{error}")
+
+    @staticmethod
+    def _tray_image() -> object:
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGBA", (64, 64), (25, 103, 164, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle((12, 6, 50, 58), radius=5, fill="white")
+        draw.polygon(((39, 6), (50, 17), (39, 17)), fill=(190, 220, 240, 255))
+        draw.line((19, 27, 43, 27), fill=(25, 103, 164, 255), width=4)
+        draw.line((19, 36, 43, 36), fill=(25, 103, 164, 255), width=4)
+        draw.line((19, 45, 35, 45), fill=(25, 103, 164, 255), width=4)
+        return image
+
+    def _start_tray_icon(self) -> None:
+        try:
+            import pystray
+
+            menu = pystray.Menu(
+                pystray.MenuItem("Fenster öffnen", self._tray_show, default=True),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Überwachung starten", self._tray_start),
+                pystray.MenuItem("Überwachung beenden", self._tray_stop),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Anwendung beenden", self._tray_quit),
+            )
+            self.tray_icon = pystray.Icon(
+                "DokumentenScannerSortierung",
+                self._tray_image(),
+                "Dokumenten-Scanner-Sortierung",
+                menu,
+            )
+            self.tray_icon.run_detached()
+            self._update_tray_status()
+            logging.info("Symbol im Windows-Infobereich gestartet.")
+        except Exception:
+            self.tray_icon = None
+            logging.exception("Symbol im Windows-Infobereich konnte nicht gestartet werden.")
+
+    def _schedule_from_tray(self, callback: object) -> None:
+        try:
+            self.root.after(0, callback)
+        except RuntimeError:
+            pass
+
+    def _tray_show(self, _icon: object, _item: object) -> None:
+        self._schedule_from_tray(self.show_window)
+
+    def _tray_start(self, _icon: object, _item: object) -> None:
+        self._schedule_from_tray(self.start)
+
+    def _tray_stop(self, _icon: object, _item: object) -> None:
+        self._schedule_from_tray(self.stop)
+
+    def _tray_quit(self, _icon: object, _item: object) -> None:
+        self._schedule_from_tray(self.quit_application)
+
+    def _update_tray_status(self) -> None:
+        if self.tray_icon is None:
+            return
+        active = bool(self.watcher and self.watcher.running)
+        status = "Überwachung aktiv" if active else "Überwachung nicht gestartet"
+        self.tray_icon.title = f"Dokumenten-Scanner-Sortierung – {status}"
+
+    def show_window(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def hide_to_tray(self) -> None:
+        if self.tray_icon is None:
+            self.quit_application()
+            return
+        self.root.withdraw()
+        logging.info("Fenster in den Windows-Infobereich ausgeblendet.")
 
     def _current_settings(self) -> Settings:
         try:
@@ -220,12 +300,14 @@ class SettingsWindow:
             return
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
+        self._update_tray_status()
 
     def stop(self) -> None:
         if self.watcher:
             self.watcher.stop()
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
+        self._update_tray_status()
 
     def _from_worker(self, message: str) -> None:
         def update() -> None:
@@ -237,12 +319,23 @@ class SettingsWindow:
     def _result_from_worker(self, result: ProcessResult) -> None:
         logging.info("%s: %s", result.source_name, result.message)
 
-    def close(self) -> None:
+    def quit_application(self) -> None:
+        if self._quitting:
+            return
+        self._quitting = True
         self.stop()
+        if self.tray_icon is not None:
+            self.tray_icon.stop()
+            self.tray_icon = None
         self.root.destroy()
 
     def run(self) -> None:
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        finally:
+            if self.tray_icon is not None:
+                self.tray_icon.stop()
+                self.tray_icon = None
 
 
 def run_headless(settings_path: Path) -> int:

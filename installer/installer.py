@@ -16,6 +16,7 @@ from pathlib import Path
 
 APPLICATION_FILENAME = "DokumentenScannerSortierung.exe"
 APPLICATION_FOLDER = "DokumentenScannerSortierung"
+SHORTCUT_FILENAME = "Dokumenten-Scanner-Sortierung.lnk"
 
 
 def payload_path() -> Path:
@@ -26,6 +27,43 @@ def payload_path() -> Path:
 def installation_path() -> Path:
     local_app_data = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
     return local_app_data / "Programs" / APPLICATION_FOLDER / APPLICATION_FILENAME
+
+
+def _powershell_quote(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def create_desktop_shortcut(target: Path) -> None:
+    quoted_target = _powershell_quote(str(target))
+    quoted_working_directory = _powershell_quote(str(target.parent))
+    quoted_shortcut_name = _powershell_quote(SHORTCUT_FILENAME)
+    script = (
+        "$desktop = [Environment]::GetFolderPath('Desktop'); "
+        f"$shortcutPath = Join-Path $desktop {quoted_shortcut_name}; "
+        "$shell = New-Object -ComObject WScript.Shell; "
+        "$shortcut = $shell.CreateShortcut($shortcutPath); "
+        f"$shortcut.TargetPath = {quoted_target}; "
+        f"$shortcut.WorkingDirectory = {quoted_working_directory}; "
+        f"$shortcut.IconLocation = {quoted_target} + ',0'; "
+        "$shortcut.Description = 'Dokumenten-Scanner-Sortierung'; "
+        "$shortcut.Save()"
+    )
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        creationflags=creation_flags,
+    )
 
 
 def show_message(kind: str, title: str, message: str) -> None:
@@ -45,6 +83,7 @@ def main() -> int:
             print(f"Installiere {payload_path()} nach {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(payload_path(), target)
+        create_desktop_shortcut(target)
     except PermissionError as error:
         show_message(
             "showerror",
@@ -63,6 +102,7 @@ def main() -> int:
         "showinfo",
         "Installation abgeschlossen",
         f"Die Anwendung wurde installiert unter:\n{target.parent}\n\n"
+        "Eine Verknüpfung wurde auf dem Desktop erstellt.\n\n"
         "Spätere Versionen werden mit derselben Setup-EXE installiert.",
     )
     return 0

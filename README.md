@@ -77,14 +77,16 @@ Falls Tesseract nicht mit der EXE mitgeliefert und nicht im Windows-Pfad hinterl
 Das Release wird als zwei EXE-Dateien erzeugt:
 
 - `DokumentenScannerSortierung-<Version>.exe` ist die portable Anwendung.
-- `DokumentenScannerSortierung-Setup.exe` installiert die Anwendung unter `%LOCALAPPDATA%\Programs\DokumentenScannerSortierung` und startet sie anschließend.
+- `DokumentenScannerSortierung-Setup.exe` installiert die Anwendung unter `%LOCALAPPDATA%\Programs\DokumentenScannerSortierung`, erstellt eine Desktop-Verknüpfung und startet sie anschließend.
 
 Für ein Update wird die neue `DokumentenScannerSortierung-Setup.exe` gestartet, nachdem die Anwendung geschlossen wurde. Einstellungen und Archivdateien bleiben erhalten, weil sie getrennt von der installierten EXE gespeichert werden.
+
+Die laufende Anwendung zeigt ein Symbol im Windows-Infobereich unten rechts. Das Schließen des Fensters blendet es nur aus; die Überwachung läuft weiter. Über das Symbol können das Fenster geöffnet, die Überwachung gestartet oder beendet und die Anwendung vollständig beendet werden. Windows kann das Symbol zunächst hinter dem Pfeil für ausgeblendete Symbole anzeigen.
 
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.6
+.\scripts\build-release.ps1 -Version 0.1.7
 ```
 
 Die Dateien liegen danach im Ordner `release`.
@@ -92,7 +94,7 @@ Die Dateien liegen danach im Ordner `release`.
 Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.6 -TesseractDir "C:\Program Files\Tesseract-OCR"
+.\scripts\build-release.ps1 -Version 0.1.7 -TesseractDir "C:\Program Files\Tesseract-OCR"
 ```
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
@@ -101,7 +103,7 @@ Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.6
+.\scripts\build-release.ps1 -Version 0.1.7
 ```
 
 Hinweis: Das offizielle Tesseract-Release auf GitHub enthaelt fuer Version 5.5.2 den Quellcode. Fuer eine Windows-EXE wird ein fertig gebauter Windows-Ordner mit `tesseract.exe`, DLLs und `tessdata` benoetigt.
