@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.2"
+    [string]$Version = "0.1.3"
 )
 
 $ErrorActionPreference = "Stop"
@@ -18,6 +18,7 @@ if (-not (Test-Path $Python)) {
 $BasePython = & $Python -c "import sys; print(sys.base_prefix)"
 $TclRoot = Join-Path $BasePython "tcl"
 $DllRoot = Join-Path $BasePython "DLLs"
+$TkinterPackage = Join-Path $BasePython "Lib\tkinter"
 $TkinterHook = Join-Path $PSScriptRoot "pyinstaller_tkinter_hook.py"
 
 New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
@@ -39,13 +40,14 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --add-binary "$(Join-Path $DllRoot '_tkinter.pyd');." `
     --add-binary "$(Join-Path $DllRoot 'tcl86t.dll');." `
     --add-binary "$(Join-Path $DllRoot 'tk86t.dll');." `
+    --add-data "$TkinterPackage;tkinter" `
     --add-data "$(Join-Path $TclRoot 'tcl8.6');_tcl_data" `
     --add-data "$(Join-Path $TclRoot 'tk8.6');_tk_data" `
     --runtime-hook $TkinterHook `
     --distpath $MainDist `
     --workpath (Join-Path $BuildRoot "work-main") `
     --specpath (Join-Path $BuildRoot "spec") `
-    (Join-Path $ProjectRoot "src\scanner_sorter\app.py")
+    (Join-Path $ProjectRoot "src\main.py")
 
 & $Python -m PyInstaller `
     --noconfirm `
@@ -53,14 +55,6 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --onefile `
     --windowed `
     --name "DokumentenScannerSortierung-Setup" `
-    --hidden-import tkinter `
-    --hidden-import _tkinter `
-    --add-binary "$(Join-Path $DllRoot '_tkinter.pyd');." `
-    --add-binary "$(Join-Path $DllRoot 'tcl86t.dll');." `
-    --add-binary "$(Join-Path $DllRoot 'tk86t.dll');." `
-    --add-data "$(Join-Path $TclRoot 'tcl8.6');_tcl_data" `
-    --add-data "$(Join-Path $TclRoot 'tk8.6');_tk_data" `
-    --runtime-hook $TkinterHook `
     --add-data "$MainExecutable;payload" `
     --distpath $Release `
     --workpath (Join-Path $BuildRoot "work-setup") `

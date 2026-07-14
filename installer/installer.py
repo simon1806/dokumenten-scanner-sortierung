@@ -32,12 +32,10 @@ def show_message(kind: str, title: str, message: str) -> None:
     if "--silent" in sys.argv:
         print(f"{title}: {message}")
         return
-    from tkinter import messagebox
+    import ctypes
 
-    root = __import__("tkinter").Tk()
-    root.withdraw()
-    getattr(messagebox, kind)(title, message)
-    root.destroy()
+    icon = 0x10 if kind == "showerror" else 0x40
+    ctypes.windll.user32.MessageBoxW(None, message, title, icon)
 
 
 def main() -> int:

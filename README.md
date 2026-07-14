@@ -77,7 +77,7 @@ Für ein Update wird die neue `DokumentenScannerSortierung-Setup.exe` gestartet,
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.2
+.\scripts\build-release.ps1 -Version 0.1.3
 ```
 
 Die Dateien liegen danach im Ordner `release`.
