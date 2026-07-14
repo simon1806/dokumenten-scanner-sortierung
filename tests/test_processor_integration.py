@@ -73,7 +73,9 @@ class ProcessorIntegrationTests(unittest.TestCase):
             self.assertFalse(result.success)
             self.assertFalse(source.exists())
             self.assertTrue((output / "unklar.pdf").exists())
+            self.assertTrue((output / "Nicht_erkannt" / "unklar.pdf").exists())
             self.assertEqual(1, len(list(archive.rglob("unklar.pdf"))))
+            self.assertEqual(2, len(result.created_files))
 
 
 if __name__ == "__main__":

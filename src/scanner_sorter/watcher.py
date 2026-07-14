@@ -43,12 +43,20 @@ class FolderWatcher:
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run, name="dokumentensortierer", daemon=True)
         self._thread.start()
+        LOGGER.info(
+            "Überwachung gestartet; Eingang=%s; Ziel=%s; Archiv=%s; Prüfordner=%s",
+            self.settings.input_folder,
+            self.settings.output_folder,
+            self.settings.archive_folder,
+            self.settings.review_folder_path,
+        )
         self.on_status("Überwachung gestartet.")
 
     def stop(self) -> None:
         self._stop_event.set()
         if self._thread:
             self._thread.join(timeout=self.settings.poll_interval_seconds + 2)
+        LOGGER.info("Überwachung beendet.")
         self.on_status("Überwachung beendet.")
 
     def _run(self) -> None:
@@ -79,12 +87,29 @@ class FolderWatcher:
                 continue
             if now - state[2] < self.settings.settle_seconds:
                 continue
+            if not self._pdf_is_complete(path):
+                LOGGER.debug("PDF wird noch geschrieben oder ist noch nicht vollständig: %s", path)
+                continue
 
             self._observed.pop(path, None)
             self.on_status(f"Verarbeite: {path.name}")
             result = self.processor.process(path)
             self.on_result(result)
             self.on_status(result.message)
+
+    @staticmethod
+    def _pdf_is_complete(path: Path) -> bool:
+        """Only release a scan for processing once its PDF structure is readable."""
+        try:
+            import fitz
+
+            with fitz.open(path) as document:
+                if document.page_count < 1:
+                    return False
+                document.load_page(document.page_count - 1)
+            return True
+        except Exception:
+            return False
 
     def _cleanup_if_due(self) -> None:
         now = time.monotonic()

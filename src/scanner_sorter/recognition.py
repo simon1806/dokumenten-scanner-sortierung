@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import re
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 from typing import Iterable
 
 from .config import Settings, find_tesseract_executable
@@ -84,9 +86,45 @@ class PageRecognizer:
     def __init__(self, settings: Settings):
         self.settings = settings
 
+    def recognise_document(self, source: Path) -> list[DetectedDocument | None]:
+        """Recognise pages in order while allowing two OCR processes to work concurrently."""
+        import fitz
+
+        with fitz.open(source) as document:
+            page_count = document.page_count
+        if page_count == 0:
+            return []
+        if page_count == 1:
+            return [self._recognise_file_page(source, 0)]
+
+        with ThreadPoolExecutor(max_workers=min(2, page_count), thread_name_prefix="ocr") as executor:
+            return list(executor.map(lambda index: self._recognise_file_page(source, index), range(page_count)))
+
+    def _recognise_file_page(self, source: Path, page_index: int) -> DetectedDocument | None:
+        import fitz
+
+        with fitz.open(source) as document:
+            return self.recognise(document.load_page(page_index))
+
     def recognise(self, page: object) -> DetectedDocument | None:
+        embedded_text = ""
+        try:
+            embedded_text = page.get_text("text")
+        except Exception:
+            # Reine Bildscans besitzen üblicherweise keine eingebettete Textebene.
+            pass
+
+        if embedded_text:
+            detected = detect_document_from_text(embedded_text)
+            if detected:
+                return detected
+
         image = self._render(page)
         barcodes = self._read_barcodes(image)
+        detected = detect_document_from_text(embedded_text, barcodes)
+        if detected:
+            return detected
+
         text = self._read_ocr(image)
         return detect_document_from_text(text, barcodes)
 

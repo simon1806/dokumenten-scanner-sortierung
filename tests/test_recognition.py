@@ -1,11 +1,30 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
-from scanner_sorter.recognition import detect_document_from_text
+from scanner_sorter.config import Settings
+from scanner_sorter.recognition import PageRecognizer, detect_document_from_text
 
 
 class RecognitionTests(unittest.TestCase):
+    def test_typed_barcode_skips_slow_ocr(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=object()),
+            patch.object(recognizer, "_read_barcodes", return_value=("AM_3250672",)),
+            patch.object(recognizer, "_read_ocr", side_effect=AssertionError("OCR darf nicht laufen")),
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("AM_3250672.pdf", detected.filename)
+
     def test_aufmassblatt(self) -> None:
         detected = detect_document_from_text("AUFMASSBLATT 3250672\nKunden-Nummer 11959", ["3250672"])
         self.assertIsNotNone(detected)

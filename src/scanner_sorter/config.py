@@ -12,9 +12,10 @@ class Settings:
     input_folder: str = ""
     output_folder: str = ""
     archive_folder: str = ""
+    review_folder: str = ""
     archive_retention_days: int = 30
-    settle_seconds: int = 15
-    poll_interval_seconds: int = 5
+    settle_seconds: int = 2
+    poll_interval_seconds: int = 1
     tesseract_path: str = ""
     ocr_languages: str = "deu+eng"
 
@@ -24,6 +25,7 @@ class Settings:
             "Eingangsordner": self.input_folder,
             "Zielordner": self.output_folder,
             "Archivordner": self.archive_folder,
+            "Prüfordner": str(self.review_folder_path),
         }
         for label, value in named_paths.items():
             if not value.strip():
@@ -31,18 +33,26 @@ class Settings:
 
         configured = [Path(value).resolve() for value in named_paths.values() if value.strip()]
         if len(configured) != len(set(configured)):
-            errors.append("Eingangs-, Ziel- und Archivordner müssen unterschiedlich sein.")
+            errors.append("Eingangs-, Ziel-, Archiv- und Prüfordner müssen unterschiedlich sein.")
         if self.archive_retention_days < 1:
             errors.append("Die Archiv-Aufbewahrung muss mindestens einen Tag betragen.")
         if self.settle_seconds < 1:
-            errors.append("Die Wartezeit für vollständige Scans muss mindestens eine Sekunde betragen.")
+            errors.append("Die Stabilitätszeit für vollständige Scans muss mindestens eine Sekunde betragen.")
         if self.poll_interval_seconds < 1:
             errors.append("Das Prüfintervall muss mindestens eine Sekunde betragen.")
         return errors
 
     def ensure_directories(self) -> None:
-        for value in (self.input_folder, self.output_folder, self.archive_folder):
+        for value in (self.input_folder, self.output_folder, self.archive_folder, str(self.review_folder_path)):
             Path(value).mkdir(parents=True, exist_ok=True)
+
+    @property
+    def review_folder_path(self) -> Path:
+        if self.review_folder.strip():
+            return Path(self.review_folder)
+        if self.output_folder.strip():
+            return Path(self.output_folder) / "Nicht_erkannt"
+        return Path("")
 
 
 def default_settings_path() -> Path:
