@@ -36,6 +36,13 @@ def ui_icon_path(name: str) -> Path:
     return Path(__file__).resolve().parent / "assets" / "icons" / "tabler" / f"{name}.png"
 
 
+def app_asset_path(filename: str) -> Path:
+    bundle = bundled_folder()
+    if bundle is not None:
+        return bundle / "scanner_sorter" / "assets" / "app" / filename
+    return Path(__file__).resolve().parent / "assets" / "app" / filename
+
+
 def acquire_single_instance(settings_path: Path) -> tuple[bool, tuple[object, int] | None]:
     """Acquire one Windows mutex per settings file, independent of the EXE filename."""
     if os.name != "nt":
@@ -197,9 +204,12 @@ class SettingsWindow:
         self._quitting = False
         self._tooltips: list[ToolTip] = []
         self._button_images: dict[tuple[str, str], object] = {}
+        self._window_icon: object | None = None
+        self._header_logo: object | None = None
 
         self.root = tk.Tk()
         self.root.title(f"Dokumenten-Scanner-Sortierung – Version {__version__}")
+        self._apply_window_icon()
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         width, height, x, y = initial_window_geometry(screen_width, screen_height)
@@ -222,6 +232,24 @@ class SettingsWindow:
         self.status = tk.StringVar(value="Einstellungen speichern und Überwachung starten.")
         self._build()
         self._start_tray_icon()
+
+    @staticmethod
+    def _app_image(size: int) -> object:
+        from PIL import Image
+
+        with Image.open(app_asset_path("dokumenten-scanner-sortierung.png")) as source:
+            return source.convert("RGBA").resize((size, size), Image.Resampling.LANCZOS)
+
+    def _apply_window_icon(self) -> None:
+        from PIL import ImageTk
+
+        self._window_icon = ImageTk.PhotoImage(self._app_image(64), master=self.root)
+        self.root.iconphoto(True, self._window_icon)
+        if os.name == "nt":
+            try:
+                self.root.iconbitmap(default=str(app_asset_path("dokumenten-scanner-sortierung.ico")))
+            except self.tk.TclError:
+                logging.exception("Windows-Fenstersymbol konnte nicht gesetzt werden.")
 
     def _configure_styles(self) -> None:
         style = self.ttk.Style(self.root)
@@ -351,14 +379,14 @@ class SettingsWindow:
         header.grid(row=0, column=0, sticky="ew")
         header.grid_propagate(False)
         header.columnconfigure(1, weight=1)
+        from PIL import ImageTk
+
+        self._header_logo = ImageTk.PhotoImage(self._app_image(54), master=self.root)
         logo = self.tk.Label(
             header,
-            text="DS",
-            background="#2B7EB3",
-            foreground="#FFFFFF",
-            font=("Segoe UI Semibold", 16),
-            width=3,
-            height=2,
+            image=self._header_logo,
+            background="#17354B",
+            borderwidth=0,
         )
         logo.grid(row=0, column=0, rowspan=2, padx=(22, 14), pady=18)
         self.tk.Label(
@@ -666,16 +694,7 @@ class SettingsWindow:
 
     @staticmethod
     def _tray_image() -> object:
-        from PIL import Image, ImageDraw
-
-        image = Image.new("RGBA", (64, 64), (25, 103, 164, 255))
-        draw = ImageDraw.Draw(image)
-        draw.rounded_rectangle((12, 6, 50, 58), radius=5, fill="white")
-        draw.polygon(((39, 6), (50, 17), (39, 17)), fill=(190, 220, 240, 255))
-        draw.line((19, 27, 43, 27), fill=(25, 103, 164, 255), width=4)
-        draw.line((19, 36, 43, 36), fill=(25, 103, 164, 255), width=4)
-        draw.line((19, 45, 35, 45), fill=(25, 103, 164, 255), width=4)
-        return image
+        return SettingsWindow._app_image(64)
 
     def _start_tray_icon(self) -> None:
         try:

@@ -8,6 +8,7 @@ from pathlib import Path
 from scanner_sorter.app import (
     SettingsWindow,
     acquire_single_instance,
+    app_asset_path,
     initial_window_geometry,
     release_single_instance,
     ui_icon_path,
@@ -29,6 +30,10 @@ class AppTests(unittest.TestCase):
         for name in ("folder-open", "device-floppy", "player-play", "player-stop", "window-minimize", "power"):
             with self.subTest(name=name):
                 self.assertTrue(ui_icon_path(name).is_file())
+
+    def test_program_icons_are_available(self) -> None:
+        self.assertTrue(app_asset_path("dokumenten-scanner-sortierung.ico").is_file())
+        self.assertTrue(app_asset_path("dokumenten-scanner-sortierung.png").is_file())
 
     def test_tray_image_has_windows_notification_size(self) -> None:
         image = SettingsWindow._tray_image()

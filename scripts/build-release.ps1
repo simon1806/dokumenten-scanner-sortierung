@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.10",
+    [string]$Version = "0.1.11",
     [string]$TesseractDir = ""
 )
 
@@ -12,6 +12,8 @@ $Release = Join-Path $ProjectRoot "release"
 $MainName = "DokumentenScannerSortierung"
 $MainExecutable = Join-Path $MainDist "$MainName.exe"
 $IconAssets = Join-Path $ProjectRoot "src\scanner_sorter\assets\icons\tabler"
+$AppAssets = Join-Path $ProjectRoot "src\scanner_sorter\assets\app"
+$AppIcon = Join-Path $AppAssets "dokumenten-scanner-sortierung.ico"
 $ThirdPartyNotices = Join-Path $ProjectRoot "THIRD_PARTY_NOTICES.md"
 
 if (-not (Test-Path $Python)) {
@@ -49,6 +51,7 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --onefile `
     --windowed `
     --name $MainName `
+    --icon $AppIcon `
     --paths (Join-Path $ProjectRoot "src") `
     --hidden-import fitz `
     --hidden-import zxingcpp `
@@ -67,6 +70,7 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --add-data "$(Join-Path $TclRoot 'tcl8.6');_tcl_data" `
     --add-data "$(Join-Path $TclRoot 'tk8.6');_tk_data" `
     --add-data "$IconAssets;scanner_sorter/assets/icons/tabler" `
+    --add-data "$AppAssets;scanner_sorter/assets/app" `
     $TesseractArgs `
     --runtime-hook $TkinterHook `
     --distpath $MainDist `
@@ -80,6 +84,7 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --onefile `
     --windowed `
     --name "DokumentenScannerSortierung-Setup" `
+    --icon $AppIcon `
     --add-data "$MainExecutable;payload" `
     --add-data "$ThirdPartyNotices;payload" `
     --distpath $Release `
