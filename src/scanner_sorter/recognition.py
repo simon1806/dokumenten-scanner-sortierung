@@ -5,7 +5,7 @@ import re
 import unicodedata
 from typing import Iterable
 
-from .config import Settings
+from .config import Settings, find_tesseract_executable
 from .models import DetectedDocument
 
 NUMBER = r"(\d{6,12})"
@@ -109,8 +109,11 @@ class PageRecognizer:
         except ImportError as error:  # pragma: no cover - dependency check at runtime
             raise RuntimeError("Die OCR-Abhängigkeit pytesseract ist nicht installiert.") from error
 
-        if self.settings.tesseract_path.strip():
-            pytesseract.pytesseract.tesseract_cmd = self.settings.tesseract_path
+        tesseract_path = find_tesseract_executable(self.settings.tesseract_path)
+        if tesseract_path:
+            pytesseract.pytesseract.tesseract_cmd = str(tesseract_path)
+        elif self.settings.tesseract_path.strip():
+            raise RuntimeError("Der eingetragene Tesseract-Pfad wurde nicht gefunden.")
 
         languages = [language.strip() for language in self.settings.ocr_languages.split(",") if language.strip()]
         if "eng" not in languages:
@@ -120,6 +123,10 @@ class PageRecognizer:
         for language in languages:
             try:
                 return pytesseract.image_to_string(image, lang=language, config="--psm 6")
+            except pytesseract.TesseractNotFoundError as error:
+                raise RuntimeError(
+                    "Tesseract OCR ist nicht installiert oder wurde nicht mit der Anwendung gefunden."
+                ) from error
             except pytesseract.TesseractError as error:
                 last_error = error
         raise RuntimeError("Tesseract OCR konnte nicht gestartet werden.") from last_error

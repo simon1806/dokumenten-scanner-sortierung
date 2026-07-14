@@ -81,7 +81,7 @@ class SettingsWindow:
         )
         self._entry_row(frame, 6, "Archiv-Aufbewahrung (Tage)", "archive_retention_days")
         self._entry_row(frame, 7, "Wartezeit nach Scan (Sekunden)", "settle_seconds")
-        self._entry_row(frame, 8, "Tesseract-Pfad (optional)", "tesseract_path")
+        self._entry_row(frame, 8, "Tesseract-Pfad (optional, falls nicht mitgeliefert)", "tesseract_path")
 
         self.ttk.Label(
             frame,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
 
@@ -47,6 +48,40 @@ class Settings:
 def default_settings_path() -> Path:
     base = Path(os.environ.get("APPDATA") or os.environ.get("PROGRAMDATA") or Path.home())
     return base / "DokumentenScannerSortierung" / "settings.json"
+
+
+def application_folder() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+def bundled_folder() -> Path | None:
+    bundle_path = getattr(sys, "_MEIPASS", None)
+    return Path(bundle_path).resolve() if bundle_path else None
+
+
+def find_tesseract_executable(configured_path: str = "") -> Path | None:
+    configured_path = configured_path.strip()
+    if configured_path:
+        configured = Path(configured_path)
+        return configured if configured.exists() else None
+
+    program_files = [os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)")]
+    roots = [folder for folder in (bundled_folder(), application_folder()) if folder]
+    candidates = []
+    for root in roots:
+        candidates.extend(
+            [
+                root / "tesseract" / "tesseract.exe",
+                root / "Tesseract-OCR" / "tesseract.exe",
+            ]
+        )
+    candidates.extend(Path(path) / "Tesseract-OCR" / "tesseract.exe" for path in program_files if path)
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def load_settings(path: Path | None = None) -> Settings:

@@ -40,13 +40,13 @@ Die Oberfläche verwaltet diese Werte:
 - Archivordner
 - Archiv-Aufbewahrung in Tagen (Standard: 30)
 - Wartezeit nach einem Scan, bevor die Datei verarbeitet wird
-- optionaler Pfad zu Tesseract OCR
+- optionaler Pfad zu Tesseract OCR, falls Tesseract nicht mitgeliefert oder systemweit installiert ist
 
 Eingangs-, Ziel- und Archivordner müssen unterschiedlich sein. Gleichnamige Dateien werden nicht überschrieben, sondern mit einer laufenden Nummer abgelegt.
 
 ## Installation auf Windows Server 2025
 
-Voraussetzungen: Python 3.11 oder neuer sowie Tesseract OCR mit deutschem Sprachpaket (`deu`).
+Voraussetzungen fuer die Entwicklung: Python 3.11 oder neuer sowie Tesseract OCR mit deutschem Sprachpaket (`deu`). Bei der Setup-EXE kann Tesseract mitgeliefert werden.
 
 ```powershell
 git clone https://github.com/simon1806/dokumenten-scanner-sortierung.git
@@ -63,7 +63,7 @@ Beim ersten Start werden die Ordner und die Aufbewahrungsdauer in der Oberfläch
 %APPDATA%\DokumentenScannerSortierung\settings.json
 ```
 
-Falls Tesseract nicht im Windows-Pfad hinterlegt ist, wird seine `tesseract.exe` in den Einstellungen eingetragen.
+Falls Tesseract nicht mit der EXE mitgeliefert und nicht im Windows-Pfad hinterlegt ist, wird seine `tesseract.exe` in den Einstellungen eingetragen.
 
 ## EXE für Test und Updates
 
@@ -77,10 +77,18 @@ Für ein Update wird die neue `DokumentenScannerSortierung-Setup.exe` gestartet,
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.3
+.\scripts\build-release.ps1 -Version 0.1.4
 ```
 
 Die Dateien liegen danach im Ordner `release`.
+
+Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
+
+```powershell
+.\scripts\build-release.ps1 -Version 0.1.4 -TesseractDir "C:\Program Files\Tesseract-OCR"
+```
+
+Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
 
 ## Automatischer Betrieb
 

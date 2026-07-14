@@ -1,5 +1,6 @@
 param(
-    [string]$Version = "0.1.3"
+    [string]$Version = "0.1.4",
+    [string]$TesseractDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,6 +21,23 @@ $TclRoot = Join-Path $BasePython "tcl"
 $DllRoot = Join-Path $BasePython "DLLs"
 $TkinterPackage = Join-Path $BasePython "Lib\tkinter"
 $TkinterHook = Join-Path $PSScriptRoot "pyinstaller_tkinter_hook.py"
+$DefaultTesseractDir = Join-Path $ProjectRoot "vendor\Tesseract-OCR"
+
+if (-not $TesseractDir -and (Test-Path $DefaultTesseractDir)) {
+    $TesseractDir = $DefaultTesseractDir
+}
+
+$TesseractArgs = @()
+if ($TesseractDir) {
+    $ResolvedTesseractDir = (Resolve-Path $TesseractDir).Path
+    if (-not (Test-Path (Join-Path $ResolvedTesseractDir "tesseract.exe"))) {
+        throw "tesseract.exe nicht gefunden in: $ResolvedTesseractDir"
+    }
+    $TesseractArgs = @("--add-data", "$ResolvedTesseractDir;Tesseract-OCR")
+    Write-Host "Tesseract wird mitgeliefert aus: $ResolvedTesseractDir"
+} else {
+    Write-Host "Tesseract wird nicht mitgeliefert. Optional: -TesseractDir C:\Pfad\zu\Tesseract-OCR"
+}
 
 New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
 
@@ -43,6 +61,7 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --add-data "$TkinterPackage;tkinter" `
     --add-data "$(Join-Path $TclRoot 'tcl8.6');_tcl_data" `
     --add-data "$(Join-Path $TclRoot 'tk8.6');_tk_data" `
+    $TesseractArgs `
     --runtime-hook $TkinterHook `
     --distpath $MainDist `
     --workpath (Join-Path $BuildRoot "work-main") `
