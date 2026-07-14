@@ -1,5 +1,14 @@
 # Drittanbieter-Hinweise
 
+## Tesseract OCR
+
+Die Anwendung liefert Tesseract OCR `5.5.0.20241111` mit Leptonica `1.85.0` und den Sprachmodellen `deu`, `eng` und `osd` mit.
+
+- Tesseract OCR: Apache License 2.0
+- Leptonica: BSD 2-Clause License
+- Projekt: https://github.com/tesseract-ocr/tesseract
+- Verwendeter Windows-Build: https://github.com/tesseract-ocr/tesseract/releases/tag/5.5.0
+
 ## Tabler Icons
 
 Für die Schaltflächen der Anwendung werden ausgewählte Symbole aus [Tabler Icons](https://tabler.io/icons) verwendet.

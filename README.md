@@ -94,7 +94,7 @@ Pro Einstellungsdatei kann nur eine Programminstanz laufen. Ein erneuter Start Ã
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.12
+.\scripts\build-release.ps1 -Version 0.1.13
 ```
 
 Die Dateien liegen danach im Ordner `release`.
@@ -102,7 +102,7 @@ Die Dateien liegen danach im Ordner `release`.
 Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.12 -TesseractDir "C:\Program Files\Tesseract-OCR"
+.\scripts\build-release.ps1 -Version 0.1.13 -TesseractDir "C:\Program Files\Tesseract-OCR"
 ```
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
@@ -111,10 +111,12 @@ Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.12
+.\scripts\build-release.ps1 -Version 0.1.13
 ```
 
-Hinweis: Das offizielle Tesseract-Release auf GitHub enthaelt fuer Version 5.5.2 den Quellcode. Fuer eine Windows-EXE wird ein fertig gebauter Windows-Ordner mit `tesseract.exe`, DLLs und `tessdata` benoetigt.
+Der Release 0.1.13 liefert Tesseract `5.5.0.20241111` mit Leptonica `1.85.0` sowie den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Grundlage ist der offizielle Windows-x64-Installer des Tesseract-Releases 5.5.0. Seine SHA-256-Pruefsumme lautet `F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC`.
+
+Hinweis: Das offizielle Tesseract-Release 5.5.2 stellt auf GitHub nur Quellcodearchive bereit. Fuer die Windows-EXE wird deshalb der offizielle fertige Windows-Build 5.5.0 verwendet.
 
 ## Automatischer Betrieb
 
