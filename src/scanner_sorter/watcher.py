@@ -29,7 +29,7 @@ class FolderWatcher:
         self.on_result = on_result or (lambda _result: None)
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
-        self._observed: dict[Path, tuple[int, float, float]] = {}
+        self._observed: dict[Path, tuple[int, float, float, bool]] = {}
         self._last_cleanup = 0.0
 
     @property
@@ -83,13 +83,27 @@ class FolderWatcher:
             state = self._observed.get(path)
             signature = (stat.st_size, stat.st_mtime)
             if state is None or signature != state[:2]:
-                self._observed[path] = (*signature, now)
+                self._observed[path] = (*signature, now, False)
                 continue
             if now - state[2] < self.settings.settle_seconds:
                 continue
             if not self._pdf_is_complete(path):
-                LOGGER.debug("PDF wird noch geschrieben oder ist noch nicht vollständig: %s", path)
-                continue
+                if not state[3]:
+                    message = (
+                        f"PDF noch unvollständig: {path.name}; Weiterleitung nach "
+                        f"{self.settings.invalid_pdf_timeout_seconds} Sekunden ohne Dateiänderung."
+                    )
+                    LOGGER.warning(message)
+                    self.on_status(message)
+                    self._observed[path] = (*state[:3], True)
+                if now - state[2] < self.settings.invalid_pdf_timeout_seconds:
+                    continue
+                timeout_message = (
+                    f"PDF nach {self.settings.invalid_pdf_timeout_seconds} Sekunden weiterhin unvollständig: "
+                    f"{path.name}; Original wird zur Prüfung weitergeleitet."
+                )
+                LOGGER.error(timeout_message)
+                self.on_status(timeout_message)
 
             self._observed.pop(path, None)
             self.on_status(f"Verarbeite: {path.name}")

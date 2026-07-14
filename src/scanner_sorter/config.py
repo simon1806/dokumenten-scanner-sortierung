@@ -15,6 +15,7 @@ class Settings:
     review_folder: str = ""
     archive_retention_days: int = 30
     settle_seconds: int = 2
+    invalid_pdf_timeout_seconds: int = 60
     poll_interval_seconds: int = 1
     tesseract_path: str = ""
     ocr_languages: str = "deu+eng"
@@ -38,6 +39,10 @@ class Settings:
             errors.append("Die Archiv-Aufbewahrung muss mindestens einen Tag betragen.")
         if self.settle_seconds < 1:
             errors.append("Die Stabilitätszeit für vollständige Scans muss mindestens eine Sekunde betragen.")
+        if self.invalid_pdf_timeout_seconds < self.settle_seconds:
+            errors.append(
+                "Die Wartezeit für beschädigte PDFs muss mindestens so lang wie die Dateistabilitätszeit sein."
+            )
         if self.poll_interval_seconds < 1:
             errors.append("Das Prüfintervall muss mindestens eine Sekunde betragen.")
         return errors

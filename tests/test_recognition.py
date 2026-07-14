@@ -35,6 +35,11 @@ class RecognitionTests(unittest.TestCase):
         self.assertIsNotNone(detected)
         self.assertEqual("EM_6260347.pdf", detected.filename)
 
+    def test_empfangsschein_accepts_ocr_spaces_around_dash(self) -> None:
+        detected = detect_document_from_text("EMPFANGSSCHEIN - NR. 6260347\nGlas Hagen")
+        self.assertIsNotNone(detected)
+        self.assertEqual("EM_6260347.pdf", detected.filename)
+
     def test_montagebericht(self) -> None:
         detected = detect_document_from_text("Montagebericht Auftrag: 3260551 [MI-Nr. 1]")
         self.assertIsNotNone(detected)

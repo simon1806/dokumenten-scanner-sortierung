@@ -22,6 +22,17 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(Path("pruefung"), settings.review_folder_path)
 
+    def test_invalid_pdf_timeout_must_not_be_shorter_than_settle_time(self) -> None:
+        settings = Settings(
+            input_folder="eingang",
+            output_folder="ziel",
+            archive_folder="archiv",
+            settle_seconds=10,
+            invalid_pdf_timeout_seconds=5,
+        )
+
+        self.assertTrue(any("beschädigte PDFs" in error for error in settings.validate()))
+
 
 if __name__ == "__main__":
     unittest.main()

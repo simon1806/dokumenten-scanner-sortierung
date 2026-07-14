@@ -18,7 +18,7 @@ Barcode- und OCR-Erkennung je Seite
                               Originalscan im Archiv
 ```
 
-Archivdateien werden nach der in den Einstellungen festgelegten Aufbewahrungsdauer gelöscht. Standard: **30 Tage**.
+Archivdateien werden nach der in den Einstellungen festgelegten Aufbewahrungsdauer gelöscht. Die Frist beginnt mit der Archivierung, unabhängig vom ursprünglichen Datei-Zeitstempel. Standard: **30 Tage**.
 
 ## Unterstützte Dokumente
 
@@ -43,6 +43,7 @@ Die Oberfläche verwaltet diese Werte:
 - Prüfordner für nicht erkannte Scans
 - Archiv-Aufbewahrung in Tagen (Standard: 30)
 - Dateistabilität nach einem Scan (Standard: 2 Sekunden)
+- Wartezeit für unvollständige oder beschädigte PDFs (Standard: 60 Sekunden)
 - optionaler Pfad zu Tesseract OCR, falls Tesseract nicht mitgeliefert oder systemweit installiert ist
 
 Die Oberfläche startet auf üblichen Full-HD-Bildschirmen in einer großzügigen, zentrierten Ansicht und passt sich auf kleineren Bildschirmen automatisch an. Sie verwendet eine übersichtliche Kartenansicht mit klar getrennten Haupt-, Neben- und Beenden-Aktionen. Wenn der Mauszeiger kurz über einem Button stehen bleibt, erklärt ein Hinweis dessen Funktion und Auswirkungen.
@@ -51,11 +52,11 @@ Die Schaltflächensymbole stammen aus dem freien, MIT-lizenzierten Paket [Tabler
 
 Das eigene Dokumenten- und Scanner-Symbol wird durchgängig für Anwendung, Setup, Desktop-Verknüpfung, Fenstertitel, Kopfbereich und Windows-Infobereich verwendet. Das Setup installiert dafür zusätzlich eine eigene ICO-Datei und meldet Änderungen an die Windows-Oberfläche, damit veraltete Symbole nicht aus dem Explorer-Cache übernommen werden.
 
-Die Stabilitätszeit verhindert, dass eine PDF verarbeitet wird, während der Scanner oder das Netzwerk sie noch schreibt. Zusätzlich prüft die Anwendung, ob die PDF-Struktur vollständig lesbar ist. Das Eingangsverzeichnis wird jede Sekunde geprüft, sodass fertige Scans gewöhnlich nach wenigen Sekunden starten.
+Die Stabilitätszeit verhindert, dass eine PDF verarbeitet wird, während der Scanner oder das Netzwerk sie noch schreibt. Zusätzlich prüft die Anwendung, ob die PDF-Struktur vollständig lesbar ist. Bleibt sie nach der konfigurierten Fehlerwartezeit unvollständig, wird das Original archiviert und unverändert in Ziel- und Prüfordner weitergeleitet. Das Eingangsverzeichnis wird jede Sekunde geprüft, sodass fertige Scans gewöhnlich nach wenigen Sekunden starten.
 
 Für eine schnellere Erkennung werden vorhandener PDF-Text und Barcodes vor der OCR ausgewertet. Bei mehrseitigen Scans werden höchstens zwei Seiten gleichzeitig per OCR verarbeitet, damit die Laufzeit sinkt, ohne den Server unnötig auszulasten.
 
-Eingangs-, Ziel-, Archiv- und Prüfordner müssen unterschiedlich sein. Bleibt der Prüfordner leer, wird `Nicht_erkannt` im Zielordner verwendet. Gleichnamige Dateien werden nicht überschrieben, sondern mit einer laufenden Nummer abgelegt.
+Eingangs-, Ziel-, Archiv- und Prüfordner müssen unterschiedlich sein. Bleibt der Prüfordner leer, wird `Nicht_erkannt` im Zielordner verwendet. Gleichnamige Dateien werden nicht überschrieben, sondern mit einer laufenden Nummer abgelegt. Das Ausführungskonto benötigt Löschrechte im Eingangsordner. Kann eine Eingangsdatei nicht entfernt werden, entstehen keine Ausgabedokumente und die vorläufige Archivkopie wird zurückgerollt.
 
 ## Installation auf Windows Server 2025
 
@@ -94,7 +95,7 @@ Pro Einstellungsdatei kann nur eine Programminstanz laufen. Ein erneuter Start �
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.13
+.\scripts\build-release.ps1 -Version 0.1.14
 ```
 
 Die Dateien liegen danach im Ordner `release`.
@@ -102,7 +103,7 @@ Die Dateien liegen danach im Ordner `release`.
 Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.13 -TesseractDir "C:\Program Files\Tesseract-OCR"
+.\scripts\build-release.ps1 -Version 0.1.14 -TesseractDir "C:\Program Files\Tesseract-OCR"
 ```
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
@@ -111,10 +112,10 @@ Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.13
+.\scripts\build-release.ps1 -Version 0.1.14
 ```
 
-Der Release 0.1.13 liefert Tesseract `5.5.0.20241111` mit Leptonica `1.85.0` sowie den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Grundlage ist der offizielle Windows-x64-Installer des Tesseract-Releases 5.5.0. Seine SHA-256-Pruefsumme lautet `F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC`.
+Der Release 0.1.14 liefert Tesseract `5.5.0.20241111` mit Leptonica `1.85.0` sowie den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Grundlage ist der offizielle Windows-x64-Installer des Tesseract-Releases 5.5.0. Seine SHA-256-Pruefsumme lautet `F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC`.
 
 Hinweis: Das offizielle Tesseract-Release 5.5.2 stellt auf GitHub nur Quellcodearchive bereit. Fuer die Windows-EXE wird deshalb der offizielle fertige Windows-Build 5.5.0 verwendet.
 

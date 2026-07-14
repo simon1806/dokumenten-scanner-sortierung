@@ -51,36 +51,70 @@ class DocumentProcessor:
 
     def process(self, source: Path) -> ProcessResult:
         started = time.perf_counter()
+        source_name = source.name
         LOGGER.info("Verarbeitung gestartet: %s", source)
-        try:
-            created = self._split_and_store(source)
-        except ProcessingError as error:
-            LOGGER.warning("Dokument nicht erkannt: %s (%s)", source, error)
-            return self._handle_failed_processing(source, error, started)
-        except Exception as error:
-            LOGGER.exception("Verarbeitung fehlgeschlagen: %s", source)
-            return self._handle_failed_processing(source, error, started)
 
-        archive_path = self._archive_original(source)
-        source.unlink()
+        try:
+            archive_path = self._archive_original(source)
+        except Exception as error:
+            LOGGER.exception("Original konnte nicht archiviert werden: %s", source)
+            return ProcessResult(
+                source_name,
+                False,
+                f"Verarbeitung nicht gestartet: Original konnte nicht archiviert werden ({error}).",
+            )
+
+        try:
+            source.unlink()
+        except Exception as error:
+            try:
+                archive_path.unlink()
+            except Exception:
+                LOGGER.exception("Temporäre Archivkopie konnte nicht zurückgerollt werden: %s", archive_path)
+            LOGGER.exception(
+                "Eingangsdatei konnte nicht entfernt werden; es wurden keine Ausgabedokumente erzeugt: %s",
+                source,
+            )
+            return ProcessResult(
+                source_name,
+                False,
+                f"Verarbeitung nicht gestartet: Eingangsdatei konnte nicht entfernt werden ({error}).",
+            )
+
+        try:
+            created = self._split_and_store(archive_path)
+        except ProcessingError as error:
+            LOGGER.warning("Dokument nicht erkannt: %s (%s)", source_name, error)
+            return self._handle_failed_processing(archive_path, source_name, error, started)
+        except Exception as error:
+            LOGGER.exception("Verarbeitung fehlgeschlagen: %s", source_name)
+            return self._handle_failed_processing(archive_path, source_name, error, started)
+
         message = f"{len(created)} Dokument(e) erstellt; Original archiviert: {archive_path.name}"
         LOGGER.info(
             "Verarbeitung erfolgreich: %s; Dauer %.2f s; Ausgaben: %s",
-            source.name,
+            source_name,
             time.perf_counter() - started,
             ", ".join(path.name for path in created),
         )
-        return ProcessResult(source.name, True, message, tuple(str(path) for path in created))
+        return ProcessResult(source_name, True, message, tuple(str(path) for path in created))
 
-    def _handle_failed_processing(self, source: Path, error: Exception, started: float) -> ProcessResult:
+    def _handle_failed_processing(
+        self,
+        archived_source: Path,
+        source_name: str,
+        error: Exception,
+        started: float,
+    ) -> ProcessResult:
         try:
-            forwarded, review_copy = self._forward_original(source)
+            forwarded, review_copy = self._forward_archived_original(archived_source, source_name)
         except Exception as forward_error:
-            LOGGER.exception("Fehlerdatei konnte nicht vollständig gesichert werden: %s", source)
+            LOGGER.exception("Fehlerdatei konnte nicht vollständig weitergeleitet werden: %s", source_name)
             return ProcessResult(
-                source.name,
+                source_name,
                 False,
-                f"Verarbeitung fehlgeschlagen ({error}); Weiterleitung fehlgeschlagen ({forward_error}).",
+                f"Verarbeitung fehlgeschlagen ({error}); Original ist im Archiv, "
+                f"Weiterleitung fehlgeschlagen ({forward_error}).",
             )
         message = (
             f"Nicht erkannt: Original unverändert weitergeleitet; "
@@ -88,13 +122,13 @@ class DocumentProcessor:
         )
         LOGGER.warning(
             "Nicht erkannt: %s; Dauer %.2f s; Ziel: %s; Prüfkopie: %s; Grund: %s",
-            source.name,
+            source_name,
             time.perf_counter() - started,
             forwarded,
             review_copy,
             error,
         )
-        return ProcessResult(source.name, False, message, (str(forwarded), str(review_copy)))
+        return ProcessResult(source_name, False, message, (str(forwarded), str(review_copy)))
 
     def _split_and_store(self, source: Path) -> list[Path]:
         try:
@@ -124,19 +158,19 @@ class DocumentProcessor:
             created.append(destination)
         return created
 
-    def _forward_original(self, source: Path) -> tuple[Path, Path]:
-        output_path = self._unique_path(Path(self.settings.output_folder), source.name)
+    def _forward_archived_original(self, source: Path, source_name: str) -> tuple[Path, Path]:
+        output_path = self._unique_path(Path(self.settings.output_folder), source_name)
         shutil.copy2(source, output_path)
-        review_path = self._unique_path(self.settings.review_folder_path, source.name)
+        review_path = self._unique_path(self.settings.review_folder_path, source_name)
         shutil.copy2(source, review_path)
-        self._archive_original(source)
-        source.unlink()
         return output_path, review_path
 
     def _archive_original(self, source: Path) -> Path:
         dated_archive = Path(self.settings.archive_folder) / datetime.now().strftime("%Y-%m-%d")
         destination = self._unique_path(dated_archive, source.name)
-        shutil.copy2(source, destination)
+        # Nur den Dateiinhalt übernehmen. Damit beginnt die Aufbewahrungsfrist
+        # mit der Archivierung und nicht mit dem Zeitstempel des Scanneroriginals.
+        shutil.copyfile(source, destination)
         return destination
 
     @staticmethod

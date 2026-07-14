@@ -242,6 +242,7 @@ class SettingsWindow:
             "review_folder": tk.StringVar(value=default_review_folder),
             "archive_retention_days": tk.StringVar(value=str(self.settings.archive_retention_days)),
             "settle_seconds": tk.StringVar(value=str(self.settings.settle_seconds)),
+            "invalid_pdf_timeout_seconds": tk.StringVar(value=str(self.settings.invalid_pdf_timeout_seconds)),
             "tesseract_path": tk.StringVar(value=self.settings.tesseract_path),
         }
         self.status = tk.StringVar(value="Einstellungen speichern und Überwachung starten.")
@@ -555,8 +556,33 @@ class SettingsWindow:
                 row=2, column=0, sticky="ew"
             )
 
+        invalid_pdf_panel = self.tk.Frame(processing_body, background="#FFFFFF")
+        invalid_pdf_panel.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        invalid_pdf_panel.columnconfigure(0, weight=1)
+        self.tk.Label(
+            invalid_pdf_panel,
+            text="Beschädigte PDF weiterleiten nach (Sekunden)",
+            background="#FFFFFF",
+            foreground="#233746",
+            font=("Segoe UI Semibold", 9),
+        ).grid(row=0, column=0, sticky="w")
+        self.tk.Label(
+            invalid_pdf_panel,
+            text="Wartezeit ohne Dateiänderung, bevor eine unvollständige PDF zur Prüfung weitergeleitet wird",
+            background="#FFFFFF",
+            foreground="#7A8A96",
+            font=("Segoe UI", 8),
+            wraplength=330,
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(1, 5))
+        self.ttk.Entry(
+            invalid_pdf_panel,
+            textvariable=self.fields["invalid_pdf_timeout_seconds"],
+            style="Modern.TEntry",
+        ).grid(row=2, column=0, sticky="ew")
+
         tesseract_panel = self.tk.Frame(processing_body, background="#FFFFFF")
-        tesseract_panel.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        tesseract_panel.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         tesseract_panel.columnconfigure(0, weight=1)
         self.tk.Label(
             tesseract_panel,
@@ -578,7 +604,7 @@ class SettingsWindow:
             row=2, column=0, sticky="ew"
         )
         notice = self.tk.Frame(processing_body, background="#EAF4FA")
-        notice.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        notice.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         self.tk.Label(
             notice,
             text="i",
@@ -591,7 +617,7 @@ class SettingsWindow:
         self.tk.Label(
             notice,
             text=(
-                "Nicht erkannt: Original ins Ziel, zusätzliche Kopie in den Prüfordner."
+                "Nicht erkannt oder beschädigt: Original ins Ziel, zusätzliche Kopie in den Prüfordner."
             ),
             background="#EAF4FA",
             foreground="#315B73",
@@ -824,8 +850,11 @@ class SettingsWindow:
         try:
             retention = int(self.fields["archive_retention_days"].get())
             settle = int(self.fields["settle_seconds"].get())
+            invalid_pdf_timeout = int(self.fields["invalid_pdf_timeout_seconds"].get())
         except ValueError as error:
-            raise ValueError("Archiv-Aufbewahrung und Stabilitätszeit müssen ganze Zahlen sein.") from error
+            raise ValueError(
+                "Archiv-Aufbewahrung, Stabilitätszeit und PDF-Fehlerwartezeit müssen ganze Zahlen sein."
+            ) from error
 
         return Settings(
             input_folder=self.fields["input_folder"].get().strip(),
@@ -834,6 +863,7 @@ class SettingsWindow:
             review_folder=self.fields["review_folder"].get().strip(),
             archive_retention_days=retention,
             settle_seconds=settle,
+            invalid_pdf_timeout_seconds=invalid_pdf_timeout,
             poll_interval_seconds=1,
             tesseract_path=self.fields["tesseract_path"].get().strip(),
             ocr_languages=self.settings.ocr_languages,
