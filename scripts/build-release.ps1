@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.11",
+    [string]$Version = "0.1.12",
     [string]$TesseractDir = ""
 )
 
@@ -87,6 +87,7 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --icon $AppIcon `
     --add-data "$MainExecutable;payload" `
     --add-data "$ThirdPartyNotices;payload" `
+    --add-data "$AppIcon;payload" `
     --distpath $Release `
     --workpath (Join-Path $BuildRoot "work-setup") `
     --specpath (Join-Path $BuildRoot "spec") `

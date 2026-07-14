@@ -18,6 +18,7 @@ from .watcher import FolderWatcher
 
 
 ERROR_ALREADY_EXISTS = 183
+WINDOWS_APP_ID = "GlasHagen.DokumentenScannerSortierung"
 
 
 def initial_window_geometry(screen_width: int, screen_height: int) -> tuple[int, int, int, int]:
@@ -41,6 +42,19 @@ def app_asset_path(filename: str) -> Path:
     if bundle is not None:
         return bundle / "scanner_sorter" / "assets" / "app" / filename
     return Path(__file__).resolve().parent / "assets" / "app" / filename
+
+
+def configure_windows_app_identity() -> None:
+    if os.name != "nt":
+        return
+    import ctypes
+
+    shell32 = ctypes.windll.shell32
+    shell32.SetCurrentProcessExplicitAppUserModelID.argtypes = [ctypes.c_wchar_p]
+    shell32.SetCurrentProcessExplicitAppUserModelID.restype = ctypes.c_long
+    result = shell32.SetCurrentProcessExplicitAppUserModelID(WINDOWS_APP_ID)
+    if result != 0:
+        logging.warning("Windows-App-ID konnte nicht gesetzt werden: HRESULT %s", result)
 
 
 def acquire_single_instance(settings_path: Path) -> tuple[bool, tuple[object, int] | None]:
@@ -194,6 +208,7 @@ class SettingsWindow:
         import tkinter as tk
         from tkinter import ttk
 
+        configure_windows_app_identity()
         self.tk = tk
         self.ttk = ttk
         self.settings_path = settings_path
@@ -206,10 +221,10 @@ class SettingsWindow:
         self._button_images: dict[tuple[str, str], object] = {}
         self._window_icon: object | None = None
         self._header_logo: object | None = None
+        self._native_icon_handles: list[int] = []
 
         self.root = tk.Tk()
         self.root.title(f"Dokumenten-Scanner-Sortierung – Version {__version__}")
-        self._apply_window_icon()
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         width, height, x, y = initial_window_geometry(screen_width, screen_height)
@@ -231,6 +246,7 @@ class SettingsWindow:
         }
         self.status = tk.StringVar(value="Einstellungen speichern und Überwachung starten.")
         self._build()
+        self._apply_window_icon()
         self._start_tray_icon()
 
     @staticmethod
@@ -247,9 +263,40 @@ class SettingsWindow:
         self.root.iconphoto(True, self._window_icon)
         if os.name == "nt":
             try:
-                self.root.iconbitmap(default=str(app_asset_path("dokumenten-scanner-sortierung.ico")))
-            except self.tk.TclError:
+                icon_path = str(app_asset_path("dokumenten-scanner-sortierung.ico"))
+                self.root.iconbitmap(icon_path)
+                self.root.update_idletasks()
+                self._apply_native_windows_icon(icon_path)
+            except (OSError, self.tk.TclError):
                 logging.exception("Windows-Fenstersymbol konnte nicht gesetzt werden.")
+
+    def _apply_native_windows_icon(self, icon_path: str) -> None:
+        import ctypes
+
+        image_icon = 1
+        load_from_file = 0x0010
+        wm_seticon = 0x0080
+        icon_small = 0
+        icon_big = 1
+        user32 = ctypes.windll.user32
+        user32.LoadImageW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+        user32.LoadImageW.restype = ctypes.c_void_p
+        user32.GetParent.argtypes = [ctypes.c_void_p]
+        user32.GetParent.restype = ctypes.c_void_p
+        user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
+        user32.SendMessageW.restype = ctypes.c_void_p
+
+        child = self.root.winfo_id()
+        parent = user32.GetParent(child)
+        windows = {child, int(parent) if parent else child}
+        small = user32.LoadImageW(None, icon_path, image_icon, 16, 16, load_from_file)
+        large = user32.LoadImageW(None, icon_path, image_icon, 32, 32, load_from_file)
+        self._native_icon_handles = [int(handle) for handle in (small, large) if handle]
+        for window in windows:
+            if small:
+                user32.SendMessageW(window, wm_seticon, icon_small, small)
+            if large:
+                user32.SendMessageW(window, wm_seticon, icon_big, large)
 
     def _configure_styles(self) -> None:
         style = self.ttk.Style(self.root)
