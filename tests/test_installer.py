@@ -9,17 +9,17 @@ from installer import installer
 
 class InstallerTests(unittest.TestCase):
     def test_first_install_prompt_uses_installation_action(self) -> None:
-        title, instruction, _content, action = installer.prompt_text(False, "0.1.17")
+        title, instruction, _content, action = installer.prompt_text(False, "0.1.18")
 
         self.assertEqual("Installation bestätigen", title)
-        self.assertIn("0.1.17", instruction)
+        self.assertIn("0.1.18", instruction)
         self.assertEqual("Installation ausführen", action)
 
     def test_update_prompt_uses_update_action(self) -> None:
-        title, instruction, content, action = installer.prompt_text(True, "0.1.17")
+        title, instruction, content, action = installer.prompt_text(True, "0.1.18")
 
         self.assertEqual("Update bestätigen", title)
-        self.assertIn("0.1.17", instruction)
+        self.assertIn("0.1.18", instruction)
         self.assertIn("Einstellungen", content)
         self.assertEqual("Update ausführen", action)
 
@@ -42,11 +42,11 @@ class InstallerTests(unittest.TestCase):
         target = Path(r"C:\Users\Test\AppData\Local\Programs\DokumentenScannerSortierung\app.exe")
         uninstaller = target.parent / installer.UNINSTALLER_FILENAME
 
-        values = installer.installed_app_values(target, uninstaller, "0.1.17", 123_456)
+        values = installer.installed_app_values(target, uninstaller, "0.1.18", 123_456)
 
         self.assertEqual("Simon Hagen – Glas Hagen", values["Publisher"])
         self.assertEqual("simon.hagen@glashagen.de", values["Contact"])
-        self.assertEqual("0.1.17", values["DisplayVersion"])
+        self.assertEqual("0.1.18", values["DisplayVersion"])
         self.assertIn(str(uninstaller), str(values["UninstallString"]))
         self.assertEqual(1, values["NoModify"])
         self.assertEqual(1, values["NoRepair"])

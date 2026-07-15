@@ -2,12 +2,21 @@
 
 ## Tesseract OCR
 
-Die Anwendung liefert Tesseract OCR `5.5.0.20241111` mit Leptonica `1.85.0` und den Sprachmodellen `deu`, `eng` und `osd` mit.
+Die Anwendung liefert Tesseract OCR `5.5.2` mit Leptonica `1.85.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` mit.
 
 - Tesseract OCR: Apache License 2.0
 - Leptonica: BSD 2-Clause License
 - Projekt: https://github.com/tesseract-ocr/tesseract
-- Verwendeter Windows-Build: https://github.com/tesseract-ocr/tesseract/releases/tag/5.5.0
+- Quellrelease: https://github.com/tesseract-ocr/tesseract/releases/tag/5.5.2
+- Windows-Paket: https://packages.msys2.org/packages/mingw-w64-x86_64-tesseract-ocr
+
+## GCC- und Winpthreads-Laufzeit
+
+Fuer Tesseract 5.5.2 werden die MSYS2-Pakete `mingw-w64-x86_64-gcc-libs` und `mingw-w64-x86_64-libwinpthread` mitgeliefert.
+
+- GCC-Laufzeitbibliotheken: GPL-3.0-or-later mit GCC Runtime Library Exception 3.1 sowie LGPL-2.1-or-later
+- Winpthreads: MIT und BSD-3-Clause-Clear
+- Paketquelle: https://packages.msys2.org/
 
 ## Tabler Icons
 

@@ -1,10 +1,16 @@
 param(
-    [string]$InstallerUrl = "https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe",
-    [string]$InstallerSha256 = "F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC",
+    [string]$BaseInstallerUrl = "https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe",
+    [string]$BaseInstallerSha256 = "F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC",
+    [string]$TesseractPackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-tesseract-ocr-5.5.2-1-any.pkg.tar.zst",
+    [string]$TesseractPackageSha256 = "6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA",
+    [string]$GccRuntimePackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-gcc-libs-16.1.0-5-any.pkg.tar.zst",
+    [string]$GccRuntimePackageSha256 = "AA560F5438C35B71C3E7B24FD5BECBCA028F70C5B4D1F1697A86FF80FEC947DA",
+    [string]$WinPthreadsPackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-libwinpthread-14.0.0.r179.g24aaa6147-1-any.pkg.tar.zst",
+    [string]$WinPthreadsPackageSha256 = "8F12DC1BE987165FAAB6363A159921553B4A2AC64E443CD0E7C501C343C2A92A",
     [string]$GermanDataUrl = "https://github.com/tesseract-ocr/tessdata/raw/refs/tags/4.1.0/deu.traineddata",
     [string]$GermanDataSha256 = "896B3B4956503AB9DAA10285DB330881B2D74B70D889B79262CC534B9EC699A4",
     [string]$Destination = "",
-    [switch]$KeepInstaller
+    [switch]$KeepDownloads
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,84 +22,168 @@ if (-not $Destination) {
 
 $Destination = [System.IO.Path]::GetFullPath($Destination)
 $DownloadDir = Join-Path $ProjectRoot ".artifacts\downloads"
-$InstallerPath = Join-Path $DownloadDir ([System.IO.Path]::GetFileName($InstallerUrl))
-$GermanDataDownload = Join-Path $DownloadDir "deu-4.1.0.traineddata"
+$ExtractionRoot = Join-Path $ProjectRoot ".artifacts\tesseract-packages"
 $TesseractExe = Join-Path $Destination "tesseract.exe"
-$SystemTesseractDir = Join-Path $env:ProgramFiles "Tesseract-OCR"
-$SystemTesseractExe = Join-Path $SystemTesseractDir "tesseract.exe"
+$GermanData = Join-Path $Destination "tessdata\deu.traineddata"
+$EnglishData = Join-Path $Destination "tessdata\eng.traineddata"
+$OsdData = Join-Path $Destination "tessdata\osd.traineddata"
 
-New-Item -ItemType Directory -Force -Path $DownloadDir, $Destination | Out-Null
-
-if (Test-Path $TesseractExe) {
-    $ExistingVersion = (& $TesseractExe --version | Select-Object -First 1)
-    if ($ExistingVersion -notmatch "v5\.5\.0") {
-        throw "Der Zielordner enthaelt nicht Tesseract 5.5.0: $ExistingVersion. Den bisherigen Ordner zuerst sichern oder verschieben."
+function Get-VerifiedDownload(
+    [string]$Url,
+    [string]$Sha256
+) {
+    $download = Join-Path $DownloadDir ([System.IO.Path]::GetFileName($Url))
+    if (-not (Test-Path -LiteralPath $download) -or
+        (Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash -ne $Sha256) {
+        Write-Host "Lade herunter: $Url"
+        Invoke-WebRequest -Uri $Url -OutFile $download -Headers @{
+            "User-Agent" = "Dokumenten-Scanner-Sortierung Build"
+        }
     }
-} else {
-    if (Test-Path $SystemTesseractExe) {
-        $SystemVersion = (& $SystemTesseractExe --version | Select-Object -First 1)
-        if ($SystemVersion -notmatch "v5\.5\.0") {
-            throw "Die vorhandene Systeminstallation ist nicht Tesseract 5.5.0: $SystemVersion"
-        }
-        Write-Host "Kopiere die vorhandene Tesseract-5.5.0-Systeminstallation:"
-        Write-Host $SystemTesseractDir
-        Copy-Item -Path (Join-Path $SystemTesseractDir "*") -Destination $Destination -Recurse -Force
-    } else {
-        Write-Host "Lade Tesseract-Installer:"
-        Write-Host $InstallerUrl
-        Invoke-WebRequest -Uri $InstallerUrl -OutFile $InstallerPath -Headers @{
-            "User-Agent" = "Mozilla/5.0 Windows Tesseract Vendor Preparation"
-        }
+    $actualSha256 = (Get-FileHash -LiteralPath $download -Algorithm SHA256).Hash
+    if ($actualSha256 -ne $Sha256) {
+        throw "Die SHA-256-Pruefsumme stimmt nicht. Erwartet: $Sha256, erhalten: $actualSha256"
+    }
+    return $download
+}
 
-        $ActualSha256 = (Get-FileHash -LiteralPath $InstallerPath -Algorithm SHA256).Hash
-        if ($ActualSha256 -ne $InstallerSha256) {
-            throw "Die SHA-256-Pruefsumme des Tesseract-Installers stimmt nicht. Erwartet: $InstallerSha256, erhalten: $ActualSha256"
-        }
+function Expand-Msys2Package(
+    [string]$PackagePath,
+    [string]$Name
+) {
+    $target = Join-Path $ExtractionRoot $Name
+    if (Test-Path -LiteralPath $target) {
+        Remove-Item -LiteralPath $target -Recurse -Force
+    }
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+    & tar -xf $PackagePath -C $target
+    if ($LASTEXITCODE -ne 0) {
+        throw "MSYS2-Paket konnte nicht entpackt werden: $PackagePath"
+    }
+    return $target
+}
 
-        Write-Host "Installiere Tesseract nach:"
-        Write-Host $Destination
-        $arguments = @(
-            "/S",
-            "/D=$Destination"
-        )
-        $process = Start-Process -FilePath $InstallerPath -ArgumentList $arguments -Wait -PassThru
-        if ($process.ExitCode -ne 0) {
-            throw "Tesseract-Installer wurde mit Exitcode $($process.ExitCode) beendet."
-        }
-        if (-not (Test-Path $TesseractExe) -and (Test-Path $SystemTesseractExe)) {
-            $InstalledVersion = (& $SystemTesseractExe --version | Select-Object -First 1)
-            if ($InstalledVersion -match "v5\.5\.0") {
-                Copy-Item -Path (Join-Path $SystemTesseractDir "*") -Destination $Destination -Recurse -Force
+function Copy-PackageFile(
+    [string]$PackageRoot,
+    [string]$RelativePath,
+    [string]$TargetDirectory
+) {
+    $source = Join-Path $PackageRoot $RelativePath
+    if (-not (Test-Path -LiteralPath $source)) {
+        throw "Datei fehlt im MSYS2-Paket: $RelativePath"
+    }
+    New-Item -ItemType Directory -Force -Path $TargetDirectory | Out-Null
+    Copy-Item -LiteralPath $source -Destination $TargetDirectory -Force
+}
+
+function Find-WindowsBase {
+    foreach ($candidate in @(
+        (Join-Path $env:ProgramFiles "Tesseract-OCR"),
+        (Join-Path ${env:ProgramFiles(x86)} "Tesseract-OCR"),
+        (Join-Path $env:LOCALAPPDATA "Programs\Tesseract-OCR"),
+        (Join-Path $env:LOCALAPPDATA "Tesseract-OCR")
+    )) {
+        $candidateExe = Join-Path $candidate "tesseract.exe"
+        if (Test-Path -LiteralPath $candidateExe) {
+            $candidateVersion = (& $candidateExe --version 2>&1 | Select-Object -First 1)
+            if ($candidateVersion -match "tesseract v5\.5\.0") {
+                return $candidate
             }
         }
     }
+    return $null
 }
 
-$GermanData = Join-Path $Destination "tessdata\deu.traineddata"
-$EnglishData = Join-Path $Destination "tessdata\eng.traineddata"
+New-Item -ItemType Directory -Force -Path $DownloadDir, $ExtractionRoot, $Destination | Out-Null
 
-if (-not (Test-Path $TesseractExe)) {
-    throw "tesseract.exe wurde nicht gefunden: $TesseractExe"
+if (-not (Test-Path -LiteralPath $TesseractExe)) {
+    $installedBase = Find-WindowsBase
+    if (-not $installedBase) {
+        $baseInstaller = Get-VerifiedDownload $BaseInstallerUrl $BaseInstallerSha256
+        Write-Host "Bereite Windows-Abhaengigkeiten vor: $Destination"
+        $process = Start-Process -FilePath $baseInstaller -ArgumentList @("/S", "/D=$Destination") `
+            -Wait -PassThru -WindowStyle Hidden
+        if ($process.ExitCode -ne 0) {
+            throw "Tesseract-Basisinstaller wurde mit Exitcode $($process.ExitCode) beendet."
+        }
+        $installedBase = Find-WindowsBase
+    }
+    if (-not (Test-Path -LiteralPath $TesseractExe)) {
+        if (-not $installedBase) {
+            throw "Die installierten Tesseract-Basisdateien wurden nicht gefunden."
+        }
+        Write-Host "Kopiere Windows-Abhaengigkeiten aus: $installedBase"
+        Copy-Item -Path (Join-Path $installedBase "*") -Destination $Destination -Recurse -Force
+    }
 }
-if (-not (Test-Path $GermanData) -or (Get-FileHash -LiteralPath $GermanData -Algorithm SHA256).Hash -ne $GermanDataSha256) {
-    Write-Host "Lade das deutsche Sprachmodell tessdata 4.1.0:"
-    Write-Host $GermanDataUrl
-    Invoke-WebRequest -Uri $GermanDataUrl -OutFile $GermanDataDownload -Headers @{
-        "User-Agent" = "Mozilla/5.0 Windows Tesseract Vendor Preparation"
-    }
-    $ActualGermanDataSha256 = (Get-FileHash -LiteralPath $GermanDataDownload -Algorithm SHA256).Hash
-    if ($ActualGermanDataSha256 -ne $GermanDataSha256) {
-        throw "Die SHA-256-Pruefsumme des deutschen Sprachmodells stimmt nicht. Erwartet: $GermanDataSha256, erhalten: $ActualGermanDataSha256"
-    }
+
+$existingVersion = (& $TesseractExe --version 2>&1 | Select-Object -First 1)
+if ($existingVersion -notmatch "tesseract (v5\.5\.0|5\.5\.2)") {
+    throw "Der Zielordner enthaelt keine unterstuetzte Tesseract-Basis: $existingVersion"
+}
+
+$tesseractPackage = Get-VerifiedDownload $TesseractPackageUrl $TesseractPackageSha256
+$gccPackage = Get-VerifiedDownload $GccRuntimePackageUrl $GccRuntimePackageSha256
+$winPthreadsPackage = Get-VerifiedDownload $WinPthreadsPackageUrl $WinPthreadsPackageSha256
+$tesseractRoot = Expand-Msys2Package $tesseractPackage "tesseract-5.5.2"
+$gccRoot = Expand-Msys2Package $gccPackage "gcc-runtime"
+$winPthreadsRoot = Expand-Msys2Package $winPthreadsPackage "winpthreads-runtime"
+
+Copy-PackageFile $tesseractRoot "mingw64\bin\tesseract.exe" $Destination
+Copy-PackageFile $tesseractRoot "mingw64\bin\libtesseract-5.5.dll" $Destination
+foreach ($runtimeFile in @(
+    "libatomic-1.dll",
+    "libgcc_s_seh-1.dll",
+    "libgomp-1.dll",
+    "libquadmath-0.dll",
+    "libstdc++-6.dll"
+)) {
+    Copy-PackageFile $gccRoot "mingw64\bin\$runtimeFile" $Destination
+}
+Copy-PackageFile $winPthreadsRoot "mingw64\bin\libwinpthread-1.dll" $Destination
+
+$licenses = Join-Path $Destination "licenses"
+Copy-PackageFile $tesseractRoot "mingw64\share\licenses\tesseract-ocr\LICENSE" `
+    (Join-Path $licenses "tesseract-ocr")
+foreach ($licenseFile in @("COPYING.LIB", "COPYING.RUNTIME", "COPYING3", "README")) {
+    Copy-PackageFile $gccRoot "mingw64\share\licenses\gcc-libs\$licenseFile" `
+        (Join-Path $licenses "gcc-runtime")
+}
+Copy-PackageFile $winPthreadsRoot "mingw64\share\licenses\libwinpthread\COPYING" `
+    (Join-Path $licenses "libwinpthread")
+
+Remove-Item -LiteralPath (Join-Path $Destination "libtesseract-5.dll") -Force -ErrorAction SilentlyContinue
+Get-ChildItem -LiteralPath $Destination -File -Filter "*.exe" |
+    Where-Object Name -ne "tesseract.exe" |
+    Remove-Item -Force
+
+if (-not (Test-Path -LiteralPath $GermanData) -or
+    (Get-FileHash -LiteralPath $GermanData -Algorithm SHA256).Hash -ne $GermanDataSha256) {
+    $germanDataDownload = Get-VerifiedDownload $GermanDataUrl $GermanDataSha256
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $GermanData) | Out-Null
-    Copy-Item -LiteralPath $GermanDataDownload -Destination $GermanData -Force
+    Copy-Item -LiteralPath $germanDataDownload -Destination $GermanData -Force
 }
-if (-not (Test-Path $EnglishData)) {
-    throw "Englisches Sprachpaket wurde nicht gefunden: $EnglishData"
-}
-
-if (-not $KeepInstaller) {
-    Remove-Item -LiteralPath $InstallerPath, $GermanDataDownload -Force -ErrorAction SilentlyContinue
+foreach ($languageFile in @($GermanData, $EnglishData, $OsdData)) {
+    if (-not (Test-Path -LiteralPath $languageFile)) {
+        throw "Sprachmodell wurde nicht gefunden: $languageFile"
+    }
 }
 
-Write-Host "Tesseract ist vorbereitet. Der Release-Build nimmt diesen Ordner automatisch mit."
+$versionOutput = (& $TesseractExe --version 2>&1)
+if ($LASTEXITCODE -ne 0 -or ($versionOutput | Select-Object -First 1) -notmatch "^tesseract 5\.5\.2$") {
+    throw "Tesseract 5.5.2 konnte nicht gestartet werden: $($versionOutput -join ' ')"
+}
+$languages = (& $TesseractExe --list-langs 2>&1)
+foreach ($language in @("deu", "eng", "osd")) {
+    if ($languages -notcontains $language) {
+        throw "Tesseract findet das Sprachmodell '$language' nicht."
+    }
+}
+
+if (-not $KeepDownloads) {
+    Remove-Item -LiteralPath $ExtractionRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tesseractPackage, $gccPackage, $winPthreadsPackage -Force -ErrorAction SilentlyContinue
+}
+
+Write-Host ($versionOutput -join [Environment]::NewLine)
+Write-Host "Tesseract 5.5.2 ist vorbereitet. Der Release-Build nimmt diesen Ordner automatisch mit."
