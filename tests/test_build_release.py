@@ -132,10 +132,23 @@ class BuildReleaseTests(unittest.TestCase):
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
         self.assertEqual(workflow.count("python -m venv .venv"), 2)
+        self.assertEqual(workflow.count('python-version: "3.12"'), 2)
         self.assertIn(r".\.venv\Scripts\python.exe -m unittest", workflow)
         self.assertIn(r".\.venv\Scripts\ruff.exe check", workflow)
         self.assertIn(r".\scripts\build-release.ps1 -Version 0.1.24", workflow)
         self.assertEqual(workflow.count("--require-hashes"), 2)
+        self.assertEqual(
+            workflow.count("actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"),
+            2,
+        )
+        self.assertEqual(
+            workflow.count("actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"),
+            2,
+        )
+        self.assertEqual(
+            workflow.count("actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4"),
+            1,
+        )
         self.assertNotRegex(workflow, r"uses:\s+[^\s]+@v\d+")
 
 
