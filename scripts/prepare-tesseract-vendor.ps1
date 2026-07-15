@@ -3,6 +3,8 @@ param(
     [string]$BaseInstallerSha256 = "F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC",
     [string]$TesseractPackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-tesseract-ocr-5.5.2-1-any.pkg.tar.zst",
     [string]$TesseractPackageSha256 = "6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA",
+    [string]$LeptonicaPackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-leptonica-1.87.0-1-any.pkg.tar.zst",
+    [string]$LeptonicaPackageSha256 = "702D6EE60255B083AA37A3CBBE1A53EF253D9119204D0478D025EFEA2D0C91F9",
     [string]$GccRuntimePackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-gcc-libs-16.1.0-5-any.pkg.tar.zst",
     [string]$GccRuntimePackageSha256 = "AA560F5438C35B71C3E7B24FD5BECBCA028F70C5B4D1F1697A86FF80FEC947DA",
     [string]$WinPthreadsPackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-libwinpthread-14.0.0.r179.g24aaa6147-1-any.pkg.tar.zst",
@@ -123,14 +125,17 @@ if ($existingVersion -notmatch "tesseract (v5\.5\.0|5\.5\.2)") {
 }
 
 $tesseractPackage = Get-VerifiedDownload $TesseractPackageUrl $TesseractPackageSha256
+$leptonicaPackage = Get-VerifiedDownload $LeptonicaPackageUrl $LeptonicaPackageSha256
 $gccPackage = Get-VerifiedDownload $GccRuntimePackageUrl $GccRuntimePackageSha256
 $winPthreadsPackage = Get-VerifiedDownload $WinPthreadsPackageUrl $WinPthreadsPackageSha256
 $tesseractRoot = Expand-Msys2Package $tesseractPackage "tesseract-5.5.2"
+$leptonicaRoot = Expand-Msys2Package $leptonicaPackage "leptonica-1.87.0"
 $gccRoot = Expand-Msys2Package $gccPackage "gcc-runtime"
 $winPthreadsRoot = Expand-Msys2Package $winPthreadsPackage "winpthreads-runtime"
 
 Copy-PackageFile $tesseractRoot "mingw64\bin\tesseract.exe" $Destination
 Copy-PackageFile $tesseractRoot "mingw64\bin\libtesseract-5.5.dll" $Destination
+Copy-PackageFile $leptonicaRoot "mingw64\bin\libleptonica-6.dll" $Destination
 foreach ($runtimeFile in @(
     "libatomic-1.dll",
     "libgcc_s_seh-1.dll",
@@ -145,6 +150,8 @@ Copy-PackageFile $winPthreadsRoot "mingw64\bin\libwinpthread-1.dll" $Destination
 $licenses = Join-Path $Destination "licenses"
 Copy-PackageFile $tesseractRoot "mingw64\share\licenses\tesseract-ocr\LICENSE" `
     (Join-Path $licenses "tesseract-ocr")
+Copy-PackageFile $leptonicaRoot "mingw64\share\licenses\leptonica\LICENSE" `
+    (Join-Path $licenses "leptonica")
 foreach ($licenseFile in @("COPYING.LIB", "COPYING.RUNTIME", "COPYING3", "README")) {
     Copy-PackageFile $gccRoot "mingw64\share\licenses\gcc-libs\$licenseFile" `
         (Join-Path $licenses "gcc-runtime")
@@ -170,8 +177,10 @@ foreach ($languageFile in @($GermanData, $EnglishData, $OsdData)) {
 }
 
 $versionOutput = (& $TesseractExe --version 2>&1)
-if ($LASTEXITCODE -ne 0 -or ($versionOutput | Select-Object -First 1) -notmatch "^tesseract 5\.5\.2$") {
-    throw "Tesseract 5.5.2 konnte nicht gestartet werden: $($versionOutput -join ' ')"
+if ($LASTEXITCODE -ne 0 -or
+    ($versionOutput | Select-Object -First 1) -notmatch "^tesseract 5\.5\.2$" -or
+    ($versionOutput -join "`n") -notmatch "leptonica-1\.87\.0") {
+    throw "Tesseract 5.5.2 mit Leptonica 1.87.0 konnte nicht gestartet werden: $($versionOutput -join ' ')"
 }
 $languages = (& $TesseractExe --list-langs 2>&1)
 foreach ($language in @("deu", "eng", "osd")) {
@@ -182,8 +191,9 @@ foreach ($language in @("deu", "eng", "osd")) {
 
 if (-not $KeepDownloads) {
     Remove-Item -LiteralPath $ExtractionRoot -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $tesseractPackage, $gccPackage, $winPthreadsPackage -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tesseractPackage, $leptonicaPackage, $gccPackage, $winPthreadsPackage `
+        -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ($versionOutput -join [Environment]::NewLine)
-Write-Host "Tesseract 5.5.2 ist vorbereitet. Der Release-Build nimmt diesen Ordner automatisch mit."
+Write-Host "Tesseract 5.5.2 mit Leptonica 1.87.0 ist vorbereitet. Der Release-Build nimmt diesen Ordner automatisch mit."

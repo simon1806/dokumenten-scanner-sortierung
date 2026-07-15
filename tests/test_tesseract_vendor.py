@@ -22,6 +22,13 @@ class TesseractVendorTests(unittest.TestCase):
         self.assertIn("AA560F5438C35B71C3E7B24FD5BECBCA028F70C5B4D1F1697A86FF80FEC947DA", self.script)
         self.assertIn("8F12DC1BE987165FAAB6363A159921553B4A2AC64E443CD0E7C501C343C2A92A", self.script)
 
+    def test_preparation_pins_leptonica_1_87_0_and_package_hash(self) -> None:
+        self.assertIn("leptonica-1.87.0-1-any.pkg.tar.zst", self.script)
+        self.assertIn("702D6EE60255B083AA37A3CBBE1A53EF253D9119204D0478D025EFEA2D0C91F9", self.script)
+        self.assertIn('"leptonica-1.87.0"', self.script)
+        self.assertIn('"mingw64\\bin\\libleptonica-6.dll"', self.script)
+        self.assertIn('"leptonica-1\\.87\\.0"', self.script)
+
     def test_preparation_verifies_all_required_languages(self) -> None:
         self.assertIn('@("deu", "eng", "osd")', self.script)
 
