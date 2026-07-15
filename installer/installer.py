@@ -125,6 +125,35 @@ def create_desktop_shortcut(target: Path, icon_path: Path | None = None) -> None
     )
 
 
+def is_application_running(target: Path) -> bool:
+    if os.name != "nt":
+        return False
+    quoted_process_name = powershell_quote(target.stem)
+    quoted_target = powershell_quote(str(target))
+    script = (
+        f"$target = {quoted_target}; "
+        f"$running = @(Get-Process -Name {quoted_process_name} -ErrorAction SilentlyContinue | "
+        "Where-Object { $_.Path -and $_.Path -ieq $target }); "
+        "if ($running.Count -gt 0) { exit 0 } else { exit 1 }"
+    )
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    return result.returncode == 0
+
+
 def notify_shell_icon_change(path: Path) -> None:
     if os.name != "nt":
         return
@@ -237,13 +266,13 @@ def completion_text(
             f"Installierte Version: {current_version}\n"
             f"Neue Version: {version}\n"
             f"Update: {current_version} → {version}\n\n"
-            f"Installationsordner: {target.parent}",
+            f"Installationsordner:\n{target.parent}",
         )
     return (
         "Installation abgeschlossen",
         "Installation erfolgreich abgeschlossen",
         f"Installierte Version: {version}\n\n"
-        f"Installationsordner: {target.parent}\n"
+        f"Installationsordner:\n{target.parent}\n"
         "Eine Verknüpfung wurde auf dem Desktop erstellt.",
     )
 
@@ -286,6 +315,14 @@ def main() -> int:
     is_update = target.exists()
     version = application_version()
     installed_version = installed_application_version(target) if is_update else None
+    if is_update and is_application_running(target):
+        show_message(
+            "showerror",
+            "Update abgebrochen",
+            "Die Anwendung läuft noch und muss vor dem Update vollständig beendet werden. "
+            "Beenden Sie sie über das Symbol im Windows-Infobereich und starten Sie das Setup anschließend erneut.",
+        )
+        return 1
     if not confirm_installation(is_update, version, installed_version):
         return 0
     try:

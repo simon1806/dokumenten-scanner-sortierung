@@ -94,7 +94,7 @@ Das Release wird als zwei EXE-Dateien erzeugt:
 
 Die Setup-Version wird zusätzlich unter **Windows-Einstellungen > Apps > Installierte Apps** registriert. Dort erscheint sie mit Version, Programmsymbol und dem Herausgeber `Simon Hagen – Glas Hagen`. Als Supportkontakt ist `simon.hagen@glashagen.de` hinterlegt. Die Windows-Schaltfläche **Deinstallieren** entfernt Programmdateien, Desktop-Verknüpfung und Registrierung. Einstellungen und Protokolle unter `%APPDATA%\DokumentenScannerSortierung` sowie sämtliche Eingangs-, Ziel-, Archiv- und Prüfordner bleiben erhalten.
 
-Für ein Update wird die neue `DokumentenScannerSortierung-Setup.exe` gestartet, nachdem die Anwendung geschlossen wurde. Einstellungen und Archivdateien bleiben erhalten, weil sie getrennt von der installierten EXE gespeichert werden.
+Für ein Update wird die neue `DokumentenScannerSortierung-Setup.exe` gestartet, nachdem die Anwendung geschlossen wurde. Erkennt das Setup noch einen laufenden installierten Programmprozess, wird das Update vor dem Ersetzen von Dateien abgebrochen. Einstellungen und Archivdateien bleiben erhalten, weil sie getrennt von der installierten EXE gespeichert werden.
 
 Die laufende Anwendung zeigt ein Symbol im Windows-Infobereich unten rechts. Das Schließen des Fensters blendet es nur aus; die Überwachung läuft weiter. Über das Symbol können das Fenster geöffnet, die Überwachung gestartet oder beendet und die Anwendung vollständig beendet werden. Windows kann das Symbol zunächst hinter dem Pfeil für ausgeblendete Symbole anzeigen.
 
@@ -103,7 +103,7 @@ Pro Einstellungsdatei kann nur eine Programminstanz laufen. Ein erneuter Start �
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.20
+.\scripts\build-release.ps1 -Version 0.1.21
 ```
 
 Die Dateien liegen danach im Ordner `release`.
@@ -111,7 +111,7 @@ Die Dateien liegen danach im Ordner `release`.
 Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.20 -TesseractDir "C:\Program Files\Tesseract-OCR"
+.\scripts\build-release.ps1 -Version 0.1.21 -TesseractDir "C:\Program Files\Tesseract-OCR"
 ```
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
@@ -120,10 +120,10 @@ Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.20
+.\scripts\build-release.ps1 -Version 0.1.21
 ```
 
-Der Release 0.1.20 liefert Tesseract `5.5.2` mit Leptonica `1.85.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Das signierte GitHub-Release 5.5.2 stellt nur Quellcodearchive bereit. Fuer Windows werden deshalb `tesseract.exe` und `libtesseract-5.5.dll` aus dem MSYS2-Paket `mingw-w64-x86_64-tesseract-ocr-5.5.2-1` verwendet, das aus diesem Release gebaut wurde. Seine SHA-256-Pruefsumme lautet `6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA`.
+Der Release 0.1.21 liefert Tesseract `5.5.2` mit Leptonica `1.85.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Das signierte GitHub-Release 5.5.2 stellt nur Quellcodearchive bereit. Fuer Windows werden deshalb `tesseract.exe` und `libtesseract-5.5.dll` aus dem MSYS2-Paket `mingw-w64-x86_64-tesseract-ocr-5.5.2-1` verwendet, das aus diesem Release gebaut wurde. Seine SHA-256-Pruefsumme lautet `6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA`.
 
 Die passend fixierten GCC- und Winpthreads-Laufzeitpakete werden ebenfalls nur nach erfolgreicher SHA-256-Pruefung eingebunden. Die uebrigen Bild-, Archiv- und Netzwerkbibliotheken stammen aus dem bereits geprueften Windows-Laufzeitunterbau des Releases 5.5.0. Das Vorbereitungsskript dokumentiert alle Paketversionen und Pruefsummen direkt in seinen Parametern.
 
