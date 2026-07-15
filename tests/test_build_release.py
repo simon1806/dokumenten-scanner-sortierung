@@ -115,6 +115,12 @@ class BuildReleaseTests(unittest.TestCase):
         self.assertIn("dependency_lock_sha256 = Get-Sha256 $LockFile", self.script)
         self.assertIn("native_runtime_version_output = @($NativeRuntimeVersionOutput)", self.script)
 
+    def test_dependency_probe_is_compatible_with_windows_powershell_51(self) -> None:
+        self.assertIn("foreach ($constraint in $constraintLines)", self.script)
+        self.assertIn("$actualPackageVersion = Invoke-PythonCapture", self.script)
+        self.assertIn("importlib.metadata.version(sys.argv[1])", self.script)
+        self.assertNotIn("$constraintCheck = @'", self.script)
+
     def test_windows_ci_uses_the_build_scripts_expected_virtual_environment(self) -> None:
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 

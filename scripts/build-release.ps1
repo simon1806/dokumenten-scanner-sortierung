@@ -385,33 +385,31 @@ if ($SourceDirty -and -not $AllowDirtySource) {
     throw "Arbeitsverzeichnis enthaelt versionierte oder unversionierte Aenderungen. Fuer einen bewussten Entwicklungs-Build -AllowDirtySource verwenden.`n$($dirtyLines -join [Environment]::NewLine)"
 }
 
-$constraintCheck = @'
-import importlib.metadata
-import pathlib
-import sys
-
-errors = []
-for raw_line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
-    line = raw_line.strip()
-    if not line or line.startswith("#") or "==" not in line:
-        continue
-    name, expected = (part.strip() for part in line.split("==", 1))
-    try:
-        actual = importlib.metadata.version(name)
-    except importlib.metadata.PackageNotFoundError:
-        errors.append(f"{name} fehlt (erwartet {expected})")
-    else:
-        if actual != expected:
-            errors.append(f"{name}={actual}, erwartet {expected}")
-if errors:
-    raise SystemExit("Build-Abhängigkeiten stimmen nicht:\n" + "\n".join(errors))
-'@
-Invoke-PythonCommand @("-c", $constraintCheck, $ConstraintsFile) "Prüfung der fixierten Build-Abhängigkeiten"
 $constraintLines = @(
     [System.IO.File]::ReadAllLines($ConstraintsFile, [System.Text.Encoding]::UTF8) |
         ForEach-Object { $_.Trim() } |
         Where-Object { $_ -and -not $_.StartsWith("#") }
 )
+foreach ($constraint in $constraintLines) {
+    if ($constraint -notmatch '^([^=]+)==([^=]+)$') {
+        throw "Ungültige fixierte Build-Abhängigkeit: $constraint"
+    }
+    $packageName = $Matches[1].Trim()
+    $expectedPackageVersion = $Matches[2].Trim()
+    # Windows PowerShell 5.1 does not reliably preserve newlines in native
+    # command arguments. Keep this probe deliberately on one line.
+    $actualPackageVersion = Invoke-PythonCapture @(
+        "-c",
+        "import importlib.metadata, sys; print(importlib.metadata.version(sys.argv[1]))",
+        $packageName
+    ) "Prüfung der fixierten Build-Abhängigkeit $packageName"
+    if ($actualPackageVersion -ne $expectedPackageVersion) {
+        throw (
+            "Build-Abhängigkeit stimmt nicht: $packageName=$actualPackageVersion, " +
+            "erwartet $expectedPackageVersion"
+        )
+    }
+}
 $lockText = [System.IO.File]::ReadAllText($LockFile, [System.Text.Encoding]::UTF8)
 foreach ($constraint in $constraintLines) {
     if ($lockText -notmatch ('(?im)^' + [regex]::Escape($constraint) + '\s*\\\s*$')) {
