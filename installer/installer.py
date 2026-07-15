@@ -11,16 +11,45 @@ import os
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
-
-APPLICATION_FILENAME = "DokumentenScannerSortierung.exe"
-APPLICATION_FOLDER = "DokumentenScannerSortierung"
-SHORTCUT_FILENAME = "Dokumenten-Scanner-Sortierung.lnk"
-NOTICE_FILENAME = "THIRD_PARTY_NOTICES.md"
-ICON_FILENAME = "DokumentenScannerSortierung.ico"
-PAYLOAD_ICON_FILENAME = "dokumenten-scanner-sortierung.ico"
-VERSION_FILENAME = "version.txt"
+if __package__:
+    from .product import (
+        APPLICATION_FILENAME,
+        APPLICATION_FOLDER,
+        DISPLAY_NAME,
+        ICON_FILENAME,
+        LEGACY_UNINSTALLER_FILENAME,
+        NOTICE_FILENAME,
+        PAYLOAD_ICON_FILENAME,
+        PAYLOAD_UNINSTALLER_FILENAME,
+        PUBLISHER,
+        SHORTCUT_FILENAME,
+        SUPPORT_EMAIL,
+        UNINSTALL_REGISTRY_PATH,
+        UNINSTALLER_FILENAME,
+        VERSION_FILENAME,
+    )
+    from .windows_dialog import powershell_quote, show_confirmation
+else:
+    from product import (  # type: ignore[no-redef]
+        APPLICATION_FILENAME,
+        APPLICATION_FOLDER,
+        DISPLAY_NAME,
+        ICON_FILENAME,
+        LEGACY_UNINSTALLER_FILENAME,
+        NOTICE_FILENAME,
+        PAYLOAD_ICON_FILENAME,
+        PAYLOAD_UNINSTALLER_FILENAME,
+        PUBLISHER,
+        SHORTCUT_FILENAME,
+        SUPPORT_EMAIL,
+        UNINSTALL_REGISTRY_PATH,
+        UNINSTALLER_FILENAME,
+        VERSION_FILENAME,
+    )
+    from windows_dialog import powershell_quote, show_confirmation  # type: ignore[no-redef]
 
 
 def payload_path() -> Path:
@@ -43,6 +72,11 @@ def version_payload_path() -> Path:
     return base / "payload" / VERSION_FILENAME
 
 
+def uninstaller_payload_path() -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    return base / "payload" / PAYLOAD_UNINSTALLER_FILENAME
+
+
 def application_version() -> str:
     try:
         return version_payload_path().read_text(encoding="utf-8-sig").strip() or "Unbekannt"
@@ -55,16 +89,12 @@ def installation_path() -> Path:
     return local_app_data / "Programs" / APPLICATION_FOLDER / APPLICATION_FILENAME
 
 
-def _powershell_quote(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
 def create_desktop_shortcut(target: Path, icon_path: Path | None = None) -> None:
     icon_path = icon_path or target
-    quoted_target = _powershell_quote(str(target))
-    quoted_working_directory = _powershell_quote(str(target.parent))
-    quoted_shortcut_name = _powershell_quote(SHORTCUT_FILENAME)
-    quoted_icon = _powershell_quote(str(icon_path))
+    quoted_target = powershell_quote(str(target))
+    quoted_working_directory = powershell_quote(str(target.parent))
+    quoted_shortcut_name = powershell_quote(SHORTCUT_FILENAME)
+    quoted_icon = powershell_quote(str(icon_path))
     script = (
         "$desktop = [Environment]::GetFolderPath('Desktop'); "
         f"$shortcutPath = Join-Path $desktop {quoted_shortcut_name}; "
@@ -108,7 +138,8 @@ def notify_shell_icon_change(path: Path) -> None:
 
 def show_message(kind: str, title: str, message: str) -> None:
     if "--silent" in sys.argv:
-        print(f"{title}: {message}")
+        if sys.stdout is not None:
+            print(f"{title}: {message}")
         return
     import ctypes
 
@@ -138,59 +169,40 @@ def confirm_installation(is_update: bool, version: str) -> bool:
     if "--silent" in sys.argv:
         return True
     title, instruction, content, action_text = prompt_text(is_update, version)
-    script = (
-        "Add-Type -AssemblyName System.Windows.Forms; "
-        "Add-Type -AssemblyName System.Drawing; "
-        "$form = New-Object System.Windows.Forms.Form; "
-        f"$form.Text = {_powershell_quote(title)}; "
-        "$form.ClientSize = New-Object System.Drawing.Size(560,245); "
-        "$form.StartPosition = 'CenterScreen'; "
-        "$form.FormBorderStyle = 'FixedDialog'; "
-        "$form.MaximizeBox = $false; $form.MinimizeBox = $false; $form.ShowInTaskbar = $true; "
-        f"$iconPath = {_powershell_quote(str(icon_payload_path()))}; "
-        "if (Test-Path -LiteralPath $iconPath) { $form.Icon = New-Object System.Drawing.Icon($iconPath) }; "
-        "$header = New-Object System.Windows.Forms.Panel; $header.Dock = 'Top'; $header.Height = 70; "
-        "$header.BackColor = [System.Drawing.Color]::FromArgb(23,53,75); $form.Controls.Add($header); "
-        "$titleLabel = New-Object System.Windows.Forms.Label; $titleLabel.AutoSize = $false; "
-        "$titleLabel.Location = New-Object System.Drawing.Point(22,15); "
-        "$titleLabel.Size = New-Object System.Drawing.Size(510,40); "
-        "$titleLabel.ForeColor = [System.Drawing.Color]::White; "
-        "$titleLabel.Font = New-Object System.Drawing.Font('Segoe UI Semibold',14); "
-        f"$titleLabel.Text = {_powershell_quote(instruction)}; $header.Controls.Add($titleLabel); "
-        "$contentLabel = New-Object System.Windows.Forms.Label; $contentLabel.AutoSize = $false; "
-        "$contentLabel.Location = New-Object System.Drawing.Point(24,91); "
-        "$contentLabel.Size = New-Object System.Drawing.Size(510,70); "
-        "$contentLabel.Font = New-Object System.Drawing.Font('Segoe UI',9); "
-        f"$contentLabel.Text = {_powershell_quote(content)}; $form.Controls.Add($contentLabel); "
-        "$action = New-Object System.Windows.Forms.Button; "
-        "$action.Location = New-Object System.Drawing.Point(274,186); "
-        "$action.Size = New-Object System.Drawing.Size(150,36); "
-        "$action.BackColor = [System.Drawing.Color]::FromArgb(23,111,166); "
-        "$action.ForeColor = [System.Drawing.Color]::White; $action.FlatStyle = 'Flat'; "
-        f"$action.Text = {_powershell_quote(action_text)}; "
-        "$action.Add_Click({ $form.Tag = 'confirmed'; $form.Close() }); $form.Controls.Add($action); "
-        "$cancel = New-Object System.Windows.Forms.Button; "
-        "$cancel.Location = New-Object System.Drawing.Point(434,186); "
-        "$cancel.Size = New-Object System.Drawing.Size(100,36); $cancel.Text = 'Abbrechen'; "
-        "$cancel.Add_Click({ $form.Close() }); $form.Controls.Add($cancel); "
-        "$form.AcceptButton = $action; $form.CancelButton = $cancel; "
-        "$form.Add_Shown({ $action.Focus() }); [void]$form.ShowDialog(); "
-        "if ($form.Tag -eq 'confirmed') { exit 0 } else { exit 1 }"
+    return show_confirmation(title, instruction, content, action_text, icon_payload_path())
+
+
+def installed_app_values(target: Path, uninstaller: Path, version: str, estimated_size_kb: int) -> dict[str, str | int]:
+    uninstall_command = (
+        f'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "{uninstaller}"'
     )
-    result = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-STA",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ],
-        check=False,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    return result.returncode == 0
+    return {
+        "DisplayName": DISPLAY_NAME,
+        "DisplayVersion": version,
+        "Publisher": PUBLISHER,
+        "Contact": SUPPORT_EMAIL,
+        "HelpLink": f"mailto:{SUPPORT_EMAIL}",
+        "InstallLocation": str(target.parent),
+        "DisplayIcon": f'"{target.parent / ICON_FILENAME}"',
+        "UninstallString": uninstall_command,
+        "QuietUninstallString": f"{uninstall_command} -Silent",
+        "InstallDate": datetime.now().strftime("%Y%m%d"),
+        "EstimatedSize": estimated_size_kb,
+        "NoModify": 1,
+        "NoRepair": 1,
+        "Language": 1031,
+    }
+
+
+def register_installed_application(target: Path, uninstaller: Path, version: str, files: tuple[Path, ...]) -> None:
+    import winreg
+
+    estimated_size_kb = max(1, (sum(path.stat().st_size for path in files) + 1023) // 1024)
+    values = installed_app_values(target, uninstaller, version, estimated_size_kb)
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, UNINSTALL_REGISTRY_PATH) as key:
+        for name, value in values.items():
+            value_type = winreg.REG_DWORD if isinstance(value, int) else winreg.REG_SZ
+            winreg.SetValueEx(key, name, 0, value_type, value)
 
 
 def main() -> int:
@@ -201,13 +213,24 @@ def main() -> int:
         return 0
     try:
         if "--silent" in sys.argv:
-            print(f"Installiere {payload_path()} nach {target}")
+            if sys.stdout is not None:
+                print(f"Installiere {payload_path()} nach {target}")
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(payload_path(), target)
-        shutil.copy2(notice_payload_path(), target.parent / NOTICE_FILENAME)
+        installed_notice = target.parent / NOTICE_FILENAME
+        shutil.copy2(notice_payload_path(), installed_notice)
         installed_icon = target.parent / ICON_FILENAME
         shutil.copy2(icon_payload_path(), installed_icon)
+        installed_uninstaller = target.parent / UNINSTALLER_FILENAME
+        shutil.copy2(uninstaller_payload_path(), installed_uninstaller)
+        (target.parent / LEGACY_UNINSTALLER_FILENAME).unlink(missing_ok=True)
         create_desktop_shortcut(target, installed_icon)
+        register_installed_application(
+            target,
+            installed_uninstaller,
+            version,
+            (target, installed_notice, installed_icon, installed_uninstaller),
+        )
         notify_shell_icon_change(installed_icon)
         notify_shell_icon_change(Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop" / SHORTCUT_FILENAME)
     except PermissionError as error:

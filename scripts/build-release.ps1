@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.16",
+    [string]$Version = "0.1.17",
     [string]$TesseractDir = ""
 )
 
@@ -11,6 +11,7 @@ $MainDist = Join-Path $BuildRoot "main"
 $Release = Join-Path $ProjectRoot "release"
 $MainName = "DokumentenScannerSortierung"
 $MainExecutable = Join-Path $MainDist "$MainName.exe"
+$UninstallerSource = Join-Path $ProjectRoot "installer\uninstall.ps1"
 $IconAssets = Join-Path $ProjectRoot "src\scanner_sorter\assets\icons\tabler"
 $AppAssets = Join-Path $ProjectRoot "src\scanner_sorter\assets\app"
 $AppIcon = Join-Path $AppAssets "dokumenten-scanner-sortierung.ico"
@@ -93,7 +94,9 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --windowed `
     --name "DokumentenScannerSortierung-Setup" `
     --icon $AppIcon `
+    --paths $ProjectRoot `
     --add-data "$MainExecutable;payload" `
+    --add-data "$UninstallerSource;payload" `
     --add-data "$ThirdPartyNotices;payload" `
     --add-data "$AppIcon;payload" `
     --add-data "$VersionPayload;payload" `
