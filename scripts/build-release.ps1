@@ -183,33 +183,70 @@ function Invoke-ArtifactSelfTest([string]$Path, [int]$TimeoutSeconds = 120) {
     $name = [System.IO.Path]::GetFileNameWithoutExtension($Path)
     $stdoutPath = Join-Path $BuildRoot "$name-self-test.stdout.log"
     $stderrPath = Join-Path $BuildRoot "$name-self-test.stderr.log"
-    $process = Start-Process `
-        -FilePath $Path `
-        -ArgumentList "--self-test" `
-        -RedirectStandardOutput $stdoutPath `
-        -RedirectStandardError $stderrPath `
-        -WindowStyle Hidden `
-        -PassThru
+    $selfTestTemp = Join-Path $BuildRoot "self-test-temp-$name-$([guid]::NewGuid().ToString('N'))"
+    Assert-ProjectChildPath $selfTestTemp
+    New-Item -ItemType Directory -Path $selfTestTemp | Out-Null
+    $previousTemp = $env:TEMP
+    $previousTmp = $env:TMP
+    # Start-Process in Windows PowerShell 5.1 can fail before launch when the
+    # inherited environment contains differently-cased duplicates such as
+    # Path/PATH. ProcessStartInfo inherits that environment without rebuilding
+    # it as a case-insensitive PowerShell dictionary.
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = $Path
+    $startInfo.Arguments = "--self-test"
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.RedirectStandardOutput = $true
+    $startInfo.RedirectStandardError = $true
+    $process = New-Object System.Diagnostics.Process
+    $process.StartInfo = $startInfo
+    $stdoutTask = $null
+    $stderrTask = $null
     try {
-        # Start-Process -Wait has no timeout. WaitForExit provides the same wait
-        # semantics with an explicit upper bound so a broken GUI build cannot hang CI.
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        # Keep one-file extraction in the controlled build tree. This also makes
+        # the self-test independent of service-account TEMP permissions.
+        $env:TEMP = $selfTestTemp
+        $env:TMP = $selfTestTemp
+        if (-not $process.Start()) {
+            throw "Selbsttest-Prozess konnte nicht gestartet werden: $Path"
+        }
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
+        if ($timedOut) {
+            try {
+                $process.Kill()
+            } catch {
+                Write-Warning "Selbsttest-Prozess konnte nach Timeout nicht beendet werden: $Path; $_"
+            }
             [void]$process.WaitForExit(10000)
-            throw "Selbsttest hat das Zeitlimit von $TimeoutSeconds Sekunden ueberschritten: $Path"
         }
         $process.WaitForExit()
+        $stdout = $stdoutTask.GetAwaiter().GetResult()
+        $stderr = $stderrTask.GetAwaiter().GetResult()
+        [System.IO.File]::WriteAllText($stdoutPath, $stdout, [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText($stderrPath, $stderr, [System.Text.UTF8Encoding]::new($false))
+        if ($timedOut) {
+            throw "Selbsttest hat das Zeitlimit von $TimeoutSeconds Sekunden ueberschritten: $Path"
+        }
         if ($process.ExitCode -ne 0) {
-            $stdout = if (Test-Path -LiteralPath $stdoutPath) {
-                [System.IO.File]::ReadAllText($stdoutPath, [System.Text.Encoding]::UTF8).Trim()
-            } else { "" }
-            $stderr = if (Test-Path -LiteralPath $stderrPath) {
-                [System.IO.File]::ReadAllText($stderrPath, [System.Text.Encoding]::UTF8).Trim()
-            } else { "" }
-            throw "Selbsttest ist mit Exitcode $($process.ExitCode) fehlgeschlagen: $Path`nSTDOUT: $stdout`nSTDERR: $stderr"
+            throw (
+                "Selbsttest ist mit Exitcode $($process.ExitCode) fehlgeschlagen: $Path" +
+                "`nSTDOUT: $($stdout.Trim())`nSTDERR: $($stderr.Trim())"
+            )
         }
     } finally {
         $process.Dispose()
+        $env:TEMP = $previousTemp
+        $env:TMP = $previousTmp
+        if (Test-Path -LiteralPath $selfTestTemp) {
+            try {
+                Remove-Item -LiteralPath $selfTestTemp -Recurse -Force -ErrorAction Stop
+            } catch {
+                Write-Warning "Temporärer Selbsttest-Ordner konnte nicht entfernt werden: $selfTestTemp; $_"
+            }
+        }
     }
 }
 

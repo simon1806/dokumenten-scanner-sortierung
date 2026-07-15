@@ -56,8 +56,15 @@ class BuildReleaseTests(unittest.TestCase):
 
     def test_built_executables_must_pass_bounded_self_tests(self) -> None:
         self.assertIn("function Invoke-ArtifactSelfTest", self.script)
-        self.assertIn('Start-Process `', self.script)
-        self.assertIn('-ArgumentList "--self-test"', self.script)
+        self.assertIn("New-Object System.Diagnostics.ProcessStartInfo", self.script)
+        self.assertIn('$startInfo.Arguments = "--self-test"', self.script)
+        self.assertIn("$startInfo.CreateNoWindow = $true", self.script)
+        self.assertIn("$startInfo.RedirectStandardOutput = $true", self.script)
+        self.assertIn("$startInfo.RedirectStandardError = $true", self.script)
+        self.assertIn('$env:TEMP = $selfTestTemp', self.script)
+        self.assertIn('$env:TMP = $selfTestTemp', self.script)
+        self.assertIn('$env:TEMP = $previousTemp', self.script)
+        self.assertIn('$env:TMP = $previousTmp', self.script)
         self.assertIn("WaitForExit($TimeoutSeconds * 1000)", self.script)
         self.assertIn("if ($process.ExitCode -ne 0)", self.script)
         self.assertEqual(2, self.script.count("Invoke-ArtifactSelfTest $"))
