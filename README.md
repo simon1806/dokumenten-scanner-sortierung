@@ -58,6 +58,12 @@ Für eine schnellere Erkennung werden vorhandener PDF-Text und Barcodes vor der 
 
 Eingangs-, Ziel-, Archiv- und Prüfordner müssen unterschiedlich sein. Bleibt der Prüfordner leer, wird `Nicht_erkannt` im Zielordner verwendet. Gleichnamige Dateien werden nicht überschrieben, sondern mit einer laufenden Nummer abgelegt. Das Ausführungskonto benötigt Löschrechte im Eingangsordner. Kann eine Eingangsdatei nicht entfernt werden, entstehen keine Ausgabedokumente und die vorläufige Archivkopie wird zurückgerollt.
 
+## Protokolle
+
+Für jeden Kalendertag wird unter `%APPDATA%\DokumentenScannerSortierung\logs` eine eigene UTF-8-Datei angelegt, zum Beispiel `dokumentensortierer-2026-07-15.log`. Der Tageswechsel erfolgt auch dann automatisch, wenn die Anwendung dauerhaft läuft. Die Datei wird nur zum Schreiben eines einzelnen Eintrags geöffnet und danach wieder geschlossen, damit Updates, Sicherungen und Supportkopien nicht durch eine Dateisperre behindert werden.
+
+Jeder Verarbeitungsvorgang erhält eine kurze Vorgangs-ID. Die Zusammenfassung enthält Ergebnisstatus, Dateiname und Dateigröße, Seiten- und Dokumentanzahl, erkannte Dokumenttypen, erzeugte Ausgabedateien sowie die Zeiten für Archivierung, Erkennung, PDF-Ausgabe und den gesamten Vorgang. Bei Fehlern werden Bearbeitungsphase, Weiterleitungsziel, Prüfkopie, Fehlergrund und bei unerwarteten Ausnahmen ein Stacktrace protokolliert. Beim Programm- und Überwachungsstart werden außerdem Versionen, Betriebssystem, Prozess-ID, Ordner, Wartezeiten, Aufbewahrung und OCR-Einstellungen festgehalten. Erkannter Dokumenttext und vollständige OCR-Inhalte werden bewusst nicht gespeichert.
+
 ## Installation auf Windows Server 2025
 
 Voraussetzungen fuer die Entwicklung: Python 3.11 oder neuer sowie Tesseract OCR mit deutschem Sprachpaket (`deu`). Bei der Setup-EXE kann Tesseract mitgeliefert werden.
@@ -97,7 +103,7 @@ Pro Einstellungsdatei kann nur eine Programminstanz laufen. Ein erneuter Start �
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.18
+.\scripts\build-release.ps1 -Version 0.1.19
 ```
 
 Die Dateien liegen danach im Ordner `release`.
@@ -105,7 +111,7 @@ Die Dateien liegen danach im Ordner `release`.
 Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.18 -TesseractDir "C:\Program Files\Tesseract-OCR"
+.\scripts\build-release.ps1 -Version 0.1.19 -TesseractDir "C:\Program Files\Tesseract-OCR"
 ```
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
@@ -114,10 +120,10 @@ Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.18
+.\scripts\build-release.ps1 -Version 0.1.19
 ```
 
-Der Release 0.1.18 liefert Tesseract `5.5.2` mit Leptonica `1.85.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Das signierte GitHub-Release 5.5.2 stellt nur Quellcodearchive bereit. Fuer Windows werden deshalb `tesseract.exe` und `libtesseract-5.5.dll` aus dem MSYS2-Paket `mingw-w64-x86_64-tesseract-ocr-5.5.2-1` verwendet, das aus diesem Release gebaut wurde. Seine SHA-256-Pruefsumme lautet `6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA`.
+Der Release 0.1.19 liefert Tesseract `5.5.2` mit Leptonica `1.85.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Das signierte GitHub-Release 5.5.2 stellt nur Quellcodearchive bereit. Fuer Windows werden deshalb `tesseract.exe` und `libtesseract-5.5.dll` aus dem MSYS2-Paket `mingw-w64-x86_64-tesseract-ocr-5.5.2-1` verwendet, das aus diesem Release gebaut wurde. Seine SHA-256-Pruefsumme lautet `6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA`.
 
 Die passend fixierten GCC- und Winpthreads-Laufzeitpakete werden ebenfalls nur nach erfolgreicher SHA-256-Pruefung eingebunden. Die uebrigen Bild-, Archiv- und Netzwerkbibliotheken stammen aus dem bereits geprueften Windows-Laufzeitunterbau des Releases 5.5.0. Das Vorbereitungsskript dokumentiert alle Paketversionen und Pruefsummen direkt in seinen Parametern.
 

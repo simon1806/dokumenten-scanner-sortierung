@@ -44,11 +44,19 @@ class FolderWatcher:
         self._thread = threading.Thread(target=self._run, name="dokumentensortierer", daemon=True)
         self._thread.start()
         LOGGER.info(
-            "Überwachung gestartet; Eingang=%s; Ziel=%s; Archiv=%s; Prüfordner=%s",
+            "Überwachung gestartet; eingang=%s; ziel=%s; archiv=%s; pruefordner=%s; "
+            "archiv_tage=%s; dateistabilitaet_s=%s; defekt_timeout_s=%s; abfrage_s=%s; "
+            "ocr_sprachen=%s; tesseract=%s",
             self.settings.input_folder,
             self.settings.output_folder,
             self.settings.archive_folder,
             self.settings.review_folder_path,
+            self.settings.archive_retention_days,
+            self.settings.settle_seconds,
+            self.settings.invalid_pdf_timeout_seconds,
+            self.settings.poll_interval_seconds,
+            self.settings.ocr_languages,
+            self.settings.tesseract_path or "automatisch/mitgeliefert",
         )
         self.on_status("Überwachung gestartet.")
 

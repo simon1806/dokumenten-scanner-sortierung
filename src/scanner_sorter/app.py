@@ -4,11 +4,12 @@ import argparse
 import hashlib
 import logging
 import os
+import platform
 import signal
 import sys
 import threading
-from datetime import datetime
-from logging.handlers import RotatingFileHandler
+from collections.abc import Callable
+from datetime import date, datetime
 from pathlib import Path
 
 from . import __version__
@@ -124,25 +125,61 @@ def notify_already_running() -> None:
         print(message, file=sys.stderr)
 
 
-def log_file_path(settings_path: Path) -> Path:
-    return settings_path.parent / "logs" / "dokumentensortierer.log"
+def log_file_path(settings_path: Path, log_date: date | None = None) -> Path:
+    log_date = log_date or date.today()
+    return settings_path.parent / "logs" / f"dokumentensortierer-{log_date.isoformat()}.log"
+
+
+class DailyFileHandler(logging.Handler):
+    """Write each record to the file for its local calendar day without holding a file lock."""
+
+    terminator = "\n"
+
+    def __init__(self, log_directory: Path, date_provider: Callable[[], date] | None = None):
+        super().__init__()
+        self.log_directory = log_directory
+        self.date_provider = date_provider or date.today
+
+    @property
+    def current_log_path(self) -> Path:
+        return self.log_directory / f"dokumentensortierer-{self.date_provider().isoformat()}.log"
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            path = self.current_log_path
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as stream:
+                stream.write(self.format(record) + self.terminator)
+        except Exception:
+            self.handleError(record)
 
 
 def configure_logging(settings_path: Path) -> Path:
     log_path = log_file_path(settings_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    handlers: list[logging.Handler] = [
-        RotatingFileHandler(log_path, maxBytes=5_000_000, backupCount=5, encoding="utf-8")
-    ]
+    handlers: list[logging.Handler] = [DailyFileHandler(log_path.parent)]
     if sys.stderr is not None:
         handlers.append(logging.StreamHandler())
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        format="%(asctime)s %(levelname)s %(name)s [%(threadName)s]: %(message)s",
         handlers=handlers,
         force=True,
     )
-    logging.info("Anwendung gestartet; Version %s", __version__)
+    report = collect_version_information()
+    ocr_versions = {entry.name: entry.version for entry in report.ocr}
+    logging.info(
+        "Anwendung gestartet; version=%s; python=%s; tesseract=%s; leptonica=%s; "
+        "system=%s; architektur=%s; prozess_id=%s; protokoll=%s",
+        __version__,
+        platform.python_version(),
+        ocr_versions.get("Tesseract OCR", "Unbekannt"),
+        ocr_versions.get("Leptonica", "Unbekannt"),
+        platform.platform(),
+        platform.machine(),
+        os.getpid(),
+        log_path,
+    )
     return log_path
 
 
@@ -1064,7 +1101,9 @@ class SettingsWindow:
         self.root.after(0, update)
 
     def _result_from_worker(self, result: ProcessResult) -> None:
-        logging.info("%s: %s", result.source_name, result.message)
+        # The worker sends the user-facing result immediately afterwards via on_status.
+        # Detailed processing data is already written once by DocumentProcessor.
+        pass
 
     def quit_application(self) -> None:
         if self._quitting:
@@ -1096,7 +1135,7 @@ def run_headless(settings_path: Path) -> int:
     watcher = FolderWatcher(
         settings,
         on_status=lambda message: logging.info(message),
-        on_result=lambda result: logging.info("%s: %s", result.source_name, result.message),
+        on_result=lambda _result: None,
     )
 
     def stop(_signal: int, _frame: object) -> None:
@@ -1124,6 +1163,11 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         configure_logging(args.settings)
+        logging.info(
+            "Startmodus; modus=%s; einstellungen=%s",
+            "Dienst/Headless" if args.run else "Benutzeroberfläche",
+            args.settings,
+        )
 
         if args.run:
             return run_headless(args.settings)
@@ -1132,6 +1176,7 @@ def main(argv: list[str] | None = None) -> int:
         window.run()
         return 0
     finally:
+        logging.info("Anwendung beendet; version=%s", __version__)
         release_single_instance(instance)
 
 

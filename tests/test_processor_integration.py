@@ -49,7 +49,8 @@ class ProcessorIntegrationTests(unittest.TestCase):
                 ]
             )
 
-            result = processor.process(source)
+            with self.assertLogs("scanner_sorter.processing", level="INFO") as captured:
+                result = processor.process(source)
 
             self.assertTrue(result.success)
             self.assertFalse(source.exists())
@@ -58,6 +59,15 @@ class ProcessorIntegrationTests(unittest.TestCase):
                 sorted(path.name for path in output.glob("*.pdf")),
             )
             self.assertEqual(1, len(list(archive.rglob("scan.pdf"))))
+            summary = next(message for message in captured.output if "status=erfolgreich" in message)
+            self.assertIn("seiten=4", summary)
+            self.assertIn("dokumente=3", summary)
+            self.assertIn("typen=LS:1S,LS:1S,LS:2S", summary)
+            self.assertIn("archiv_s=", summary)
+            self.assertIn("erkennung_s=", summary)
+            self.assertIn("ausgabe_s=", summary)
+            self.assertIn("gesamt_s=", summary)
+            self.assertIn("Dauer:", result.message)
 
     def test_forwards_original_without_renaming_on_unrecognised_first_page(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

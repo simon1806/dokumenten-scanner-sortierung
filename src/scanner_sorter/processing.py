@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 import time
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Iterable
@@ -52,17 +53,39 @@ class DocumentProcessor:
     def process(self, source: Path) -> ProcessResult:
         started = time.perf_counter()
         source_name = source.name
-        LOGGER.info("Verarbeitung gestartet: %s", source)
+        operation_id = uuid.uuid4().hex[:10]
+        try:
+            source_size = source.stat().st_size
+        except OSError:
+            source_size = -1
+        LOGGER.info(
+            "Vorgang gestartet; id=%s; datei=%s; groesse_bytes=%s; quelle=%s",
+            operation_id,
+            source_name,
+            source_size,
+            source,
+        )
 
+        archive_started = time.perf_counter()
         try:
             archive_path = self._archive_original(source)
         except Exception as error:
-            LOGGER.exception("Original konnte nicht archiviert werden: %s", source)
+            duration = time.perf_counter() - started
+            LOGGER.exception(
+                "Vorgang fehlgeschlagen; id=%s; status=fehler; phase=archivieren; "
+                "datei=%s; groesse_bytes=%s; gesamt_s=%.3f",
+                operation_id,
+                source_name,
+                source_size,
+                duration,
+            )
             return ProcessResult(
                 source_name,
                 False,
-                f"Verarbeitung nicht gestartet: Original konnte nicht archiviert werden ({error}).",
+                f"Verarbeitung nicht gestartet: Original konnte nicht archiviert werden ({error}); "
+                f"Dauer: {duration:.2f} s.",
             )
+        archive_seconds = time.perf_counter() - archive_started
 
         try:
             source.unlink()
@@ -72,29 +95,71 @@ class DocumentProcessor:
             except Exception:
                 LOGGER.exception("Temporäre Archivkopie konnte nicht zurückgerollt werden: %s", archive_path)
             LOGGER.exception(
-                "Eingangsdatei konnte nicht entfernt werden; es wurden keine Ausgabedokumente erzeugt: %s",
-                source,
+                "Vorgang fehlgeschlagen; id=%s; status=fehler; phase=eingang_entfernen; "
+                "datei=%s; groesse_bytes=%s; archiv_s=%.3f; gesamt_s=%.3f",
+                operation_id,
+                source_name,
+                source_size,
+                archive_seconds,
+                time.perf_counter() - started,
             )
+            duration = time.perf_counter() - started
             return ProcessResult(
                 source_name,
                 False,
-                f"Verarbeitung nicht gestartet: Eingangsdatei konnte nicht entfernt werden ({error}).",
+                f"Verarbeitung nicht gestartet: Eingangsdatei konnte nicht entfernt werden ({error}); "
+                f"Dauer: {duration:.2f} s.",
             )
 
         try:
-            created = self._split_and_store(archive_path)
+            created, page_count, document_types, recognition_seconds, output_seconds = (
+                self._split_and_store(archive_path)
+            )
         except ProcessingError as error:
-            LOGGER.warning("Dokument nicht erkannt: %s (%s)", source_name, error)
-            return self._handle_failed_processing(archive_path, source_name, error, started)
+            return self._handle_failed_processing(
+                archive_path,
+                source_name,
+                error,
+                started,
+                operation_id,
+                source_size,
+                archive_seconds,
+            )
         except Exception as error:
-            LOGGER.exception("Verarbeitung fehlgeschlagen: %s", source_name)
-            return self._handle_failed_processing(archive_path, source_name, error, started)
+            LOGGER.exception(
+                "Vorgangsausnahme; id=%s; phase=erkennung_oder_ausgabe; datei=%s",
+                operation_id,
+                source_name,
+            )
+            return self._handle_failed_processing(
+                archive_path,
+                source_name,
+                error,
+                started,
+                operation_id,
+                source_size,
+                archive_seconds,
+            )
 
-        message = f"{len(created)} Dokument(e) erstellt; Original archiviert: {archive_path.name}"
+        total_seconds = time.perf_counter() - started
+        message = (
+            f"{len(created)} Dokument(e) erstellt; Original archiviert: {archive_path.name}; "
+            f"Dauer: {total_seconds:.2f} s"
+        )
         LOGGER.info(
-            "Verarbeitung erfolgreich: %s; Dauer %.2f s; Ausgaben: %s",
+            "Vorgang abgeschlossen; id=%s; status=erfolgreich; datei=%s; groesse_bytes=%s; "
+            "seiten=%s; dokumente=%s; typen=%s; archiv_s=%.3f; erkennung_s=%.3f; "
+            "ausgabe_s=%.3f; gesamt_s=%.3f; ausgaben=%s",
+            operation_id,
             source_name,
-            time.perf_counter() - started,
+            source_size,
+            page_count,
+            len(created),
+            ",".join(document_types),
+            archive_seconds,
+            recognition_seconds,
+            output_seconds,
+            total_seconds,
             ", ".join(path.name for path in created),
         )
         return ProcessResult(source_name, True, message, tuple(str(path) for path in created))
@@ -105,37 +170,55 @@ class DocumentProcessor:
         source_name: str,
         error: Exception,
         started: float,
+        operation_id: str,
+        source_size: int,
+        archive_seconds: float,
     ) -> ProcessResult:
         try:
             forwarded, review_copy = self._forward_archived_original(archived_source, source_name)
         except Exception as forward_error:
-            LOGGER.exception("Fehlerdatei konnte nicht vollständig weitergeleitet werden: %s", source_name)
+            duration = time.perf_counter() - started
+            LOGGER.exception(
+                "Vorgang fehlgeschlagen; id=%s; status=fehler; phase=fehlerdatei_weiterleiten; "
+                "datei=%s; groesse_bytes=%s; archiv_s=%.3f; gesamt_s=%.3f",
+                operation_id,
+                source_name,
+                source_size,
+                archive_seconds,
+                duration,
+            )
             return ProcessResult(
                 source_name,
                 False,
                 f"Verarbeitung fehlgeschlagen ({error}); Original ist im Archiv, "
-                f"Weiterleitung fehlgeschlagen ({forward_error}).",
+                f"Weiterleitung fehlgeschlagen ({forward_error}); Dauer: {duration:.2f} s.",
             )
+        duration = time.perf_counter() - started
         message = (
             f"Nicht erkannt: Original unverändert weitergeleitet; "
-            f"Prüfkopie: {review_copy.name} ({error})."
+            f"Prüfkopie: {review_copy.name} ({error}); Dauer: {duration:.2f} s."
         )
         LOGGER.warning(
-            "Nicht erkannt: %s; Dauer %.2f s; Ziel: %s; Prüfkopie: %s; Grund: %s",
+            "Vorgang abgeschlossen; id=%s; status=nicht_erkannt; datei=%s; groesse_bytes=%s; "
+            "archiv_s=%.3f; gesamt_s=%.3f; ziel=%s; pruefkopie=%s; grund=%s",
+            operation_id,
             source_name,
-            time.perf_counter() - started,
+            source_size,
+            archive_seconds,
+            duration,
             forwarded,
             review_copy,
             error,
         )
         return ProcessResult(source_name, False, message, (str(forwarded), str(review_copy)))
 
-    def _split_and_store(self, source: Path) -> list[Path]:
+    def _split_and_store(self, source: Path) -> tuple[list[Path], int, tuple[str, ...], float, float]:
         try:
             import fitz
         except ImportError as error:  # pragma: no cover - dependency check at runtime
             raise ProcessingError("PyMuPDF ist nicht installiert.") from error
 
+        recognition_started = time.perf_counter()
         recognise_document = getattr(self.recognizer, "recognise_document", None)
         if callable(recognise_document):
             detections = recognise_document(source)
@@ -143,7 +226,9 @@ class DocumentProcessor:
             with fitz.open(source) as scan:
                 detections = [self.recognizer.recognise(page) for page in scan]
         groups = group_page_detections(detections)
+        recognition_seconds = time.perf_counter() - recognition_started
 
+        output_started = time.perf_counter()
         reader = PdfReader(source)
         created: list[Path] = []
         for group in groups:
@@ -156,7 +241,11 @@ class DocumentProcessor:
                 writer.write(stream)
             temporary.replace(destination)
             created.append(destination)
-        return created
+        output_seconds = time.perf_counter() - output_started
+        document_types = tuple(
+            f"{group.detected.document_type}:{len(group.page_indexes)}S" for group in groups
+        )
+        return created, len(detections), document_types, recognition_seconds, output_seconds
 
     def _forward_archived_original(self, source: Path, source_name: str) -> tuple[Path, Path]:
         output_path = self._unique_path(Path(self.settings.output_folder), source_name)
