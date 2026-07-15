@@ -14,6 +14,7 @@ from pathlib import Path
 from . import __version__
 from .config import Settings, bundled_folder, default_settings_path, load_settings, save_settings
 from .models import ProcessResult
+from .version_info import VersionEntry, collect_version_information
 from .watcher import FolderWatcher
 
 
@@ -222,9 +223,11 @@ class SettingsWindow:
         self._window_icon: object | None = None
         self._header_logo: object | None = None
         self._native_icon_handles: list[int] = []
+        self._info_dialog: object | None = None
+        self._info_logo: object | None = None
 
         self.root = tk.Tk()
-        self.root.title(f"Dokumenten-Scanner-Sortierung – Version {__version__}")
+        self.root.title("Dokumenten-Scanner-Sortierung")
         screen_width = self.root.winfo_screenwidth()
         screen_height = self.root.winfo_screenheight()
         width, height, x, y = initial_window_geometry(screen_width, screen_height)
@@ -320,6 +323,7 @@ class SettingsWindow:
             "Primary.TButton": ("#176FA6", "#FFFFFF", "#125B89"),
             "Secondary.TButton": ("#E8EEF3", "#243746", "#D8E2EA"),
             "Quiet.TButton": ("#FFFFFF", "#355064", "#EDF2F6"),
+            "Header.TButton": ("#284B62", "#EAF3F8", "#365F78"),
             "Danger.TButton": ("#B63A3A", "#FFFFFF", "#952F2F"),
         }
         for name, (background, foreground, active) in button_styles.items():
@@ -338,6 +342,7 @@ class SettingsWindow:
                 background=[("disabled", "#DDE4E9"), ("pressed", active), ("active", active)],
                 foreground=[("disabled", "#91A0AA")],
             )
+        style.configure("Header.TButton", padding=(11, 6), font=("Segoe UI Semibold", 8))
 
     def _card(self, parent: object, title: str, subtitle: str) -> tuple[object, object, object]:
         card = self.tk.Frame(
@@ -463,14 +468,12 @@ class SettingsWindow:
             pady=6,
         )
         self.header_status_badge.pack(side="left", padx=(0, 8))
-        self.tk.Label(
+        self._button(
             badges,
-            text=f"Version {__version__}",
-            background="#284B62",
-            foreground="#EAF3F8",
-            font=("Segoe UI Semibold", 8),
-            padx=11,
-            pady=6,
+            "Info",
+            self.show_version_info,
+            "Zeigt die Versionen der Anwendung, der OCR-Komponenten und der verwendeten Bibliotheken.",
+            style="Header.TButton",
         ).pack(side="left")
 
         content = self.tk.Frame(shell, background="#F2F5F8")
@@ -764,6 +767,148 @@ class SettingsWindow:
             os.startfile(str(self.log_path.parent))
         except Exception as error:
             self._messagebox.showerror("Protokollordner", f"Ordner konnte nicht geöffnet werden:\n{error}")
+
+    def show_version_info(self) -> None:
+        if self._info_dialog is not None and self._info_dialog.winfo_exists():
+            self._info_dialog.deiconify()
+            self._info_dialog.lift()
+            self._info_dialog.focus_force()
+            return
+
+        report = collect_version_information(
+            self.fields["tesseract_path"].get(),
+            str(self.tk.TclVersion),
+            str(self.tk.TkVersion),
+        )
+        dialog = self.tk.Toplevel(self.root)
+        self._info_dialog = dialog
+        dialog.title("Info – Dokumenten-Scanner-Sortierung")
+        dialog.configure(background="#F2F5F8")
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+
+        def close() -> None:
+            self._info_dialog = None
+            self._info_logo = None
+            dialog.destroy()
+
+        dialog.protocol("WM_DELETE_WINDOW", close)
+        header = self.tk.Frame(dialog, background="#17354B", height=84)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+        from PIL import ImageTk
+
+        self._info_logo = ImageTk.PhotoImage(self._app_image(42), master=dialog)
+        self.tk.Label(
+            header,
+            image=self._info_logo,
+            background="#17354B",
+        ).pack(side="left", padx=(20, 14), pady=18)
+        title_box = self.tk.Frame(header, background="#17354B")
+        title_box.pack(side="left", fill="y", pady=16)
+        self.tk.Label(
+            title_box,
+            text="Info & Versionen",
+            background="#17354B",
+            foreground="#FFFFFF",
+            font=("Segoe UI Semibold", 15),
+        ).pack(anchor="w")
+        self.tk.Label(
+            title_box,
+            text=f"Dokumenten-Scanner-Sortierung {__version__}",
+            background="#17354B",
+            foreground="#BFD0DC",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(2, 0))
+
+        content = self.tk.Frame(dialog, background="#F2F5F8")
+        content.pack(fill="both", expand=True, padx=20, pady=16)
+
+        def section(title: str, entries: tuple[VersionEntry, ...]) -> None:
+            card = self.tk.Frame(
+                content,
+                background="#FFFFFF",
+                highlightbackground="#D8E2EA",
+                highlightthickness=1,
+            )
+            card.pack(fill="x", pady=(0, 10))
+            self.tk.Label(
+                card,
+                text=title,
+                background="#FFFFFF",
+                foreground="#172A3A",
+                font=("Segoe UI Semibold", 10),
+            ).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(11, 7))
+            card.columnconfigure(0, weight=1)
+            for row, entry in enumerate(entries, start=1):
+                background = "#F7F9FB" if row % 2 else "#FFFFFF"
+                self.tk.Label(
+                    card,
+                    text=entry.name,
+                    background=background,
+                    foreground="#355064",
+                    anchor="w",
+                    padx=10,
+                    pady=5,
+                ).grid(row=row, column=0, sticky="ew", padx=(14, 0))
+                self.tk.Label(
+                    card,
+                    text=entry.version,
+                    background=background,
+                    foreground="#172A3A",
+                    font=("Segoe UI Semibold", 9),
+                    anchor="e",
+                    padx=10,
+                    pady=5,
+                ).grid(row=row, column=1, sticky="ew", padx=(0, 14))
+            card.grid_columnconfigure(1, minsize=170)
+            self.tk.Frame(card, background="#FFFFFF", height=8).grid(
+                row=len(entries) + 1,
+                column=0,
+                columnspan=2,
+            )
+
+        section("Anwendung & Laufzeit", report.application)
+        section("OCR-Komponenten", report.ocr)
+        section("Verwendete Bibliotheken", report.libraries)
+
+        if report.tesseract_path is None:
+            tesseract_source = "Tesseract wurde nicht gefunden."
+        elif bundled_folder() is not None:
+            tesseract_source = "Tesseract wird direkt mit der Anwendung mitgeliefert."
+        else:
+            tesseract_source = f"Tesseract: {report.tesseract_path}"
+        self.tk.Label(
+            content,
+            text=tesseract_source,
+            background="#E7F1F7",
+            foreground="#365C73",
+            font=("Segoe UI", 8),
+            anchor="w",
+            justify="left",
+            wraplength=620,
+            padx=12,
+            pady=8,
+        ).pack(fill="x")
+
+        footer = self.tk.Frame(dialog, background="#F2F5F8")
+        footer.pack(fill="x", padx=20, pady=(0, 18))
+        self._button(
+            footer,
+            "Schließen",
+            close,
+            "Schließt die Versionsübersicht.",
+            style="Primary.TButton",
+        ).pack(side="right")
+
+        dialog.update_idletasks()
+        width = 660
+        height = min(780, dialog.winfo_reqheight(), self.root.winfo_screenheight() - 60)
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - width) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - height) // 2)
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+        dialog.grab_set()
+        dialog.focus_force()
 
     @staticmethod
     def _tray_image() -> object:

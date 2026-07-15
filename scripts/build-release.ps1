@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.14",
+    [string]$Version = "0.1.15",
     [string]$TesseractDir = ""
 )
 
@@ -63,6 +63,12 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --collect-all fitz `
     --collect-all zxingcpp `
     --collect-all pystray `
+    --copy-metadata Pillow `
+    --copy-metadata PyMuPDF `
+    --copy-metadata pypdf `
+    --copy-metadata pytesseract `
+    --copy-metadata pystray `
+    --copy-metadata zxing-cpp `
     --add-binary "$(Join-Path $DllRoot '_tkinter.pyd');." `
     --add-binary "$(Join-Path $DllRoot 'tcl86t.dll');." `
     --add-binary "$(Join-Path $DllRoot 'tk86t.dll');." `
