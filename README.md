@@ -1,6 +1,6 @@
 # Dokumenten-Scanner-Sortierung
 
-Windows-Anwendung zur automatischen Verarbeitung von Stapel-Scans. Sie überwacht einen konfigurierbaren Eingangsordner, trennt erkannte Dokumente, benennt sie und legt sie im Zielordner ab.
+Windows-Anwendung zur automatischen Verarbeitung von Stapel-Scans. Sie überwacht einen konfigurierbaren Eingangsordner, erkennt Dokumentgrenzen, benennt die getrennten PDFs und legt sie sicher im Zielordner ab.
 
 ## Verarbeitungsablauf
 
@@ -8,144 +8,176 @@ Windows-Anwendung zur automatischen Verarbeitung von Stapel-Scans. Sie überwach
 Scanner-PDF im Eingangsordner
         |
         v
-Barcode- und OCR-Erkennung je Seite
+Original dauerhaft archivieren und Vorgang protokollieren
         |
-        +-- erkannt --> einzelne, benannte PDFs im Zielordner
-        |                Originalscan im Archiv
+        v
+Barcode-, Text- und OCR-Erkennung je Seite
         |
-        +-- nicht erkannt --> Originalscan unverändert im Zielordner
-                              zusätzliche Kopie im Prüfordner
-                              Originalscan im Archiv
+        +-- erkannt ------> einzelne, benannte PDFs im Zielordner
+        |
+        +-- nicht erkannt -> Original unverändert im Zielordner
+                             zusätzliche Kopie im Prüfordner
 ```
 
-Archivdateien werden nach der in den Einstellungen festgelegten Aufbewahrungsdauer gelöscht. Die Frist beginnt mit der Archivierung, unabhängig vom ursprünglichen Datei-Zeitstempel. Standard: **30 Tage**.
+Mehrseitige Dokumente bleiben zusammen. Werden in einem Scan mehrere Dokumentanfänge erkannt, erzeugt die Anwendung entsprechend mehrere PDFs.
 
 ## Unterstützte Dokumente
 
 | Dokumenttyp | Erkennungsmerkmale | Dateiname |
 | --- | --- | --- |
-| Aufmaßblatt | Barcode oder `AUFMASSBLATT` | `AM_<Dokumentnummer>.pdf` |
+| Aufmaßschein/-blatt | Barcode oder Dokumentüberschrift | `AM_<Dokumentnummer>.pdf` |
 | Empfangsschein | Barcode oder `Empfangsschein-Nr.` | `EM_<Empfangsschein-Nr.>.pdf` |
-| Montagebericht | `Montagebericht` und Auftragsnummer | `MI_<Auftragsnummer>.pdf` |
-| Nowak-Lieferschein | `NOWAK GLAS` und Lieferscheinnummer | `LS-Nowak-<Lieferscheinnummer>.pdf` |
+| Montageinfo/-bericht | Überschrift und Auftragsnummer | `MI_<Auftragsnummer>.pdf` |
+| Nowak-Lieferschein | `NOWAK GLAS` und vollständige Lieferscheinnummer, einschließlich führender `47` | `LS-Nowak-<Lieferscheinnummer>.pdf` |
 | Heitzer-Lieferschein | `Heitzer AG` und Lieferscheinnummer | `LS-Heitzer-<Lieferscheinnummer>.pdf` |
 | Pauli-Lieferschein | `Pauli + Sohn` und Nummer/Datum | `LS-Pauli-<Lieferscheinnummer>.pdf` |
 
-Mehrseitige Dokumente bleiben zusammen. Beispiel: Die Seiten `1 von 2` und `2 von 2` des Heitzer-Lieferscheins `26060887` ergeben `LS-Heitzer-26060887.pdf`.
+Vorhandener PDF-Text und Barcodes werden vor der langsameren OCR ausgewertet. Falls OCR nötig ist, wird zuerst nur der Kopfbereich geprüft. Bei mehrseitigen Scans arbeiten höchstens zwei OCR-Prozesse gleichzeitig.
+
+## Datensicherheit und Wiederanlauf
+
+Ab Version 0.1.24 wird jeder Scan als persistenter Vorgang verarbeitet:
+
+1. Das unveränderte Original wird in einen datierten, von der Anwendung markierten Archivordner kopiert und mit SHA-256 geprüft.
+2. Erst wenn Archivkopie und Vorgangsdatei dauerhaft geschrieben sind, wird die Eingangsdatei atomar übernommen.
+3. Alle Teildokumente werden zunächst im eigenen Vorgangsordner erzeugt und geprüft.
+4. Zielseitige Dateien werden ohne Überschreiben vorhandener Dateien veröffentlicht. Bei Namenskonflikten wird eine laufende Nummer ergänzt.
+5. Unterbrochene Vorgänge unter `Archiv\.dokumentensortierer\pending` werden beim Start und anschließend regelmäßig automatisch fortgesetzt.
+
+Ein Ziel- oder Netzwerkfehler führt deshalb nicht zu einem unvollständigen Dokumentstapel oder zum Verlust des Originals. Beim kontrollierten Beenden wird ein bereits gestarteter Vorgang fertiggestellt; danach beginnt kein weiterer Scan. Eine serverweite Sperre verhindert, dass derselbe Eingangsordner gleichzeitig von mehreren Sitzungen überwacht wird.
+
+Die Archivbereinigung löscht ausschließlich direkt abgelegte PDFs mit gültigem Eigentums- und Prüfsummennachweis. Dateien offener Vorgänge sowie unbekannte, verschachtelte oder manuell hinzugefügte Dateien bleiben unangetastet. Archive aus Versionen vor 0.1.24 besitzen diesen Nachweis noch nicht und werden absichtlich **nicht automatisch gelöscht**. Diese Altbestände müssen nach einer manuellen Prüfung separat bereinigt werden.
 
 ## Einstellungen
 
-Die Oberfläche verwaltet diese Werte:
+Die Oberfläche verwaltet:
 
-- Eingangsordner auf dem Server
-- Zielordner für verarbeitete Dateien
-- Archivordner
-- Prüfordner für nicht erkannte Scans
-- Archiv-Aufbewahrung in Tagen (Standard: 30)
-- Dateistabilität nach einem Scan (Standard: 2 Sekunden)
-- Wartezeit für unvollständige oder beschädigte PDFs (Standard: 60 Sekunden)
-- optionaler Pfad zu Tesseract OCR, falls Tesseract nicht mitgeliefert oder systemweit installiert ist
+- Eingangsordner für neue Scanner-PDFs
+- Zielordner für erkannte oder unverändert weitergeleitete Dokumente
+- Archivordner für Originalscans und offene Vorgänge
+- Prüfordner für nicht erkannte oder beschädigte Scans
+- Archiv-Aufbewahrung in Tagen, Standard 30
+- Dateistabilität nach der letzten Änderung, Standard 2 Sekunden
+- Wartezeit für unvollständige PDFs, Standard 60 Sekunden
+- optionaler eigener Pfad zu `tesseract.exe`
 
-Die Oberfläche startet auf üblichen Full-HD-Bildschirmen in einer großzügigen, zentrierten Ansicht und passt sich auf kleineren Bildschirmen automatisch an. Sie verwendet eine übersichtliche Kartenansicht mit klar getrennten Haupt-, Neben- und Beenden-Aktionen. Wenn der Mauszeiger kurz über einem Button stehen bleibt, erklärt ein Hinweis dessen Funktion und Auswirkungen.
+Eingangs-, Ziel-, Archiv- und Prüfordner müssen getrennt sein und dürfen nicht gefährlich ineinander liegen. Bleibt der Prüfordner leer, wird `Nicht_erkannt` im Zielordner verwendet. Das Ausführungskonto benötigt Änderungsrechte in allen vier Ordnern.
 
-Die Schaltflächensymbole stammen aus dem freien, MIT-lizenzierten Paket [Tabler Icons](https://tabler.io/icons). Es werden nur die tatsächlich benötigten Symbole mitgeliefert; der vollständige Lizenztext steht in `THIRD_PARTY_NOTICES.md`.
+Die Stabilitätszeit verhindert, dass die Anwendung eine PDF öffnet, während Scanner oder Netzwerk sie noch schreiben. Zusätzlich wird die PDF-Struktur geprüft. Bleibt sie nach der Fehlerwartezeit unvollständig, wird sie unverändert in Ziel- und Prüfordner weitergeleitet.
 
-Das eigene Dokumenten- und Scanner-Symbol wird durchgängig für Anwendung, Setup, Desktop-Verknüpfung, Fenstertitel, Kopfbereich und Windows-Infobereich verwendet. Das Setup installiert dafür zusätzlich eine eigene ICO-Datei und meldet Änderungen an die Windows-Oberfläche, damit veraltete Symbole nicht aus dem Explorer-Cache übernommen werden.
+Schutzgrenzen für den unbeaufsichtigten Betrieb:
 
-Die Stabilitätszeit verhindert, dass eine PDF verarbeitet wird, während der Scanner oder das Netzwerk sie noch schreibt. Zusätzlich prüft die Anwendung, ob die PDF-Struktur vollständig lesbar ist. Bleibt sie nach der konfigurierten Fehlerwartezeit unvollständig, wird das Original archiviert und unverändert in Ziel- und Prüfordner weitergeleitet. Das Eingangsverzeichnis wird jede Sekunde geprüft, sodass fertige Scans gewöhnlich nach wenigen Sekunden starten.
+- maximal 500 MiB pro PDF
+- maximal 250 Seiten pro PDF
+- maximal 50 Millionen gerenderte Pixel pro Seite
+- maximal 60 Sekunden pro Tesseract-Aufruf
 
-Für eine schnellere Erkennung werden vorhandener PDF-Text und Barcodes vor der OCR ausgewertet. Code-39-Barcodes mit führender Füllnull und Prüfzeichen werden direkt in die Dokumentnummer übersetzt. Ist OCR erforderlich, wird zuerst nur der Kopfbereich geprüft; lediglich bei erfolgloser Schnellerkennung folgt die bisherige Vollseiten-OCR. Bei mehrseitigen Scans werden höchstens zwei Seiten gleichzeitig per OCR verarbeitet, damit die Laufzeit sinkt, ohne den Server unnötig auszulasten.
+Bei Überschreitung bleibt das Original erhalten und wird als nicht verarbeitet zur Prüfung weitergeleitet. Abgebrochene OCR-Aufträge einer langen PDF werden nicht unnötig weiter ausgeführt.
 
-Eingangs-, Ziel-, Archiv- und Prüfordner müssen unterschiedlich sein. Bleibt der Prüfordner leer, wird `Nicht_erkannt` im Zielordner verwendet. Gleichnamige Dateien werden nicht überschrieben, sondern mit einer laufenden Nummer abgelegt. Das Ausführungskonto benötigt Löschrechte im Eingangsordner. Kann eine Eingangsdatei nicht entfernt werden, entstehen keine Ausgabedokumente und die vorläufige Archivkopie wird zurückgerollt.
-
-## Protokolle
-
-Für jeden Kalendertag wird unter `%APPDATA%\DokumentenScannerSortierung\logs` eine eigene UTF-8-Datei angelegt, zum Beispiel `dokumentensortierer-2026-07-15.log`. Der Tageswechsel erfolgt auch dann automatisch, wenn die Anwendung dauerhaft läuft. Die Datei wird nur zum Schreiben eines einzelnen Eintrags geöffnet und danach wieder geschlossen, damit Updates, Sicherungen und Supportkopien nicht durch eine Dateisperre behindert werden.
-
-Jeder Verarbeitungsvorgang erhält eine kurze Vorgangs-ID. Die Zusammenfassung enthält Ergebnisstatus, Dateiname und Dateigröße, Seiten- und Dokumentanzahl, erkannte Dokumenttypen, erzeugte Ausgabedateien sowie die Zeiten für Archivierung, Erkennung, PDF-Ausgabe und den gesamten Vorgang. Bei Fehlern werden Bearbeitungsphase, Weiterleitungsziel, Prüfkopie, Fehlergrund und bei unerwarteten Ausnahmen ein Stacktrace protokolliert. Beim Programm- und Überwachungsstart werden außerdem Versionen, Betriebssystem, Prozess-ID, Ordner, Wartezeiten, Aufbewahrung und OCR-Einstellungen festgehalten. Erkannter Dokumenttext und vollständige OCR-Inhalte werden bewusst nicht gespeichert.
-
-## Installation auf Windows Server 2025
-
-Voraussetzungen fuer die Entwicklung: Python 3.11 oder neuer sowie Tesseract OCR mit deutschem Sprachpaket (`deu`). Bei der Setup-EXE kann Tesseract mitgeliefert werden.
-
-```powershell
-git clone https://github.com/simon1806/dokumenten-scanner-sortierung.git
-cd dokumenten-scanner-sortierung
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -e .
-.\.venv\Scripts\dokumentensortierer.exe
-```
-
-Beim ersten Start werden die Ordner und die Aufbewahrungsdauer in der Oberfläche eingetragen. Die Einstellungen liegen standardmäßig unter:
+Die Einstellungen liegen standardmäßig unter:
 
 ```text
 %APPDATA%\DokumentenScannerSortierung\settings.json
 ```
 
-Falls Tesseract nicht mit der EXE mitgeliefert und nicht im Windows-Pfad hinterlegt ist, wird seine `tesseract.exe` in den Einstellungen eingetragen.
+Die Datei wird atomar gespeichert. Eine beschädigte oder falsch typisierte Einstellungsdatei erzeugt eine verständliche Fehlermeldung und wird nicht stillschweigend überschrieben.
 
-## EXE für Test und Updates
+## Protokolle
 
-Das Release wird als zwei EXE-Dateien erzeugt:
+Für jeden Kalendertag entsteht unter `%APPDATA%\DokumentenScannerSortierung\logs` eine eigene UTF-8-Datei, zum Beispiel:
 
-- `DokumentenScannerSortierung-<Version>.exe` ist die portable Anwendung.
-- `DokumentenScannerSortierung-Setup.exe` fragt vor jeder Änderung nach. Bei einer Erstinstallation steht **Installation ausführen**, bei einer vorhandenen Version **Update ausführen** zur Auswahl; **Abbrechen** beendet das Setup ohne Änderungen. Bei Updates zeigt die Maske die installierte Version, die neue Version und den Versionswechsel an. Anschließend installiert das Setup die Anwendung unter `%LOCALAPPDATA%\Programs\DokumentenScannerSortierung` und erstellt eine Desktop-Verknüpfung. Die gleich gestaltete Abschlussmaske enthält die standardmäßig aktivierte Checkbox **Anwendung starten** sowie die Schaltfläche **Installation beenden**.
-
-Die Setup-Version wird zusätzlich unter **Windows-Einstellungen > Apps > Installierte Apps** registriert. Dort erscheint sie mit Version, Programmsymbol und dem Herausgeber `Simon Hagen – Glas Hagen`. Als Supportkontakt ist `simon.hagen@glashagen.de` hinterlegt. Die Windows-Schaltfläche **Deinstallieren** entfernt Programmdateien, Desktop-Verknüpfung und Registrierung. Einstellungen und Protokolle unter `%APPDATA%\DokumentenScannerSortierung` sowie sämtliche Eingangs-, Ziel-, Archiv- und Prüfordner bleiben erhalten.
-
-Für ein Update wird die neue `DokumentenScannerSortierung-Setup.exe` gestartet, nachdem die Anwendung geschlossen wurde. Erkennt das Setup noch einen laufenden installierten Programmprozess, wird das Update vor dem Ersetzen von Dateien abgebrochen. Einstellungen und Archivdateien bleiben erhalten, weil sie getrennt von der installierten EXE gespeichert werden.
-
-Die laufende Anwendung zeigt ein Symbol im Windows-Infobereich unten rechts. Das Schließen des Fensters blendet es nur aus; die Überwachung läuft weiter. Über das Symbol können das Fenster geöffnet, die Überwachung gestartet oder beendet und die Anwendung vollständig beendet werden. Windows kann das Symbol zunächst hinter dem Pfeil für ausgeblendete Symbole anzeigen.
-
-Pro Einstellungsdatei kann nur eine Programminstanz laufen. Ein erneuter Start über die Desktop-Verknüpfung oder eine portable EXE erzeugt deshalb keine zusätzlichen Überwachungen oder Infobereich-Symbole. Oben rechts neben dem Betriebsstatus öffnet die Schaltfläche **Info** eine Übersicht mit den tatsächlich verwendeten Versionen der Anwendung, Tesseract OCR, Leptonica, Python/Tk und der eingebundenen Bibliotheken. Im Fenstertitel wird bewusst keine Versionsnummer mehr angezeigt.
-
-Zum Erzeugen der Dateien im Entwicklungsordner:
-
-```powershell
-.\scripts\build-release.ps1 -Version 0.1.23
+```text
+dokumentensortierer-2026-07-15.log
 ```
 
-Die Dateien liegen danach im Ordner `release`.
+Tagesprotokolle werden 90 Tage aufbewahrt. Andere Dateien im Protokollordner werden von der Bereinigung nicht gelöscht.
 
-Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
+Jeder Vorgang erhält eine ID. Protokolliert werden unter anderem Ergebnisstatus, Dateiname und Größe, Seiten- und Dokumentanzahl, erkannte Typen, Ausgabedateien sowie Zeiten für Archivierung, Erkennung, Ausgabe und Gesamtverarbeitung. Startmeldungen enthalten Anwendung, Python, Tesseract, Leptonica, System, Prozess-ID und die wesentlichen Betriebseinstellungen. Vollständiger OCR-Text wird bewusst nicht gespeichert.
 
-```powershell
-.\scripts\build-release.ps1 -Version 0.1.23 -TesseractDir "C:\Program Files\Tesseract-OCR"
+## Installation und Update
+
+Der freigegebene Build liegt versionsbezogen unter `release\<Version>`:
+
+- `DokumentenScannerSortierung-<Version>.exe`: portable Anwendung
+- `DokumentenScannerSortierung-Setup.exe`: Installation, Update und Reparatur
+- `SHA256SUMS.txt`: SHA-256-Prüfsummen
+- `RELEASE-MANIFEST.json`: Build-, Versions- und Komponenteninformationen
+- `THIRD_PARTY_NOTICES.md`: Hinweise und Lizenzen externer Komponenten
+- `README.md`: Betriebs-, Installations- und Wiederanlaufanleitung
+- `CHANGELOG.md`: Änderungen und Migrationshinweise der Version
+
+Für die Installation auf dem Server wird nur `DokumentenScannerSortierung-Setup.exe` benötigt. Das Setup prüft seine eingebetteten Dateien vor jeder Änderung und installiert pro Windows-Benutzer nach:
+
+```text
+%LOCALAPPDATA%\Programs\DokumentenScannerSortierung
 ```
 
-Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
+Es erstellt eine Desktop-Verknüpfung und registriert die Anwendung unter **Windows-Einstellungen > Apps > Installierte Apps** mit dem Herausgeber `Simon Hagen – Glas Hagen` und dem Kontakt `simon.hagen@glashagen.de`.
 
-Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
+Vorhandene Versionen werden als Update oder Reparatur erkannt. Ein unbeabsichtigtes Downgrade und eine Installation über eine unbekannte/defekte Versionslage werden standardmäßig blockiert. Programmdateien, Registry-Eintrag und Desktop-Verknüpfung werden transaktional ausgetauscht; bei Fehlern wird die alte Installation wiederhergestellt. Einstellungen, Protokolle und Dokumentordner werden weder bei Updates noch bei der Deinstallation gelöscht.
+
+Die administrativen Schalter `--allow-downgrade` und `--allow-unknown-version` heben die jeweilige Sperre bewusst auf und sollten nur nach Sicherung und Prüfung der vorhandenen Installation verwendet werden. Mit `--self-test` prüft das Setup ausschließlich Version, Manifest und eingebettete Nutzdaten; es verändert dabei weder Installation noch Einstellungen.
+
+Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmaske bietet die standardmäßig aktivierte Option **Anwendung starten**.
+
+## Mitgelieferte OCR-Komponenten
+
+Release 0.1.24 enthält:
+
+- Tesseract OCR 5.5.2
+- Leptonica 1.87.0
+- Sprachmodelle `deu`, `eng` und `osd`
+
+Die Versionen werden beim Build geprüft und im Infofenster sowie im Release-Manifest ausgewiesen. Weitere verwendete Bibliotheken und ihre Lizenzhinweise stehen in `THIRD_PARTY_NOTICES.md`. Insbesondere PyMuPDF ist dual unter AGPL und kommerzieller Lizenz verfügbar; der Betreiber muss vor einer Weitergabe oder Bereitstellung die passende Lizenzgrundlage festlegen.
+
+## Automatischer Betrieb auf Windows Server 2025
+
+Zuerst wird das Setup mit genau dem Windows-Konto ausgeführt, unter dem die spätere Aufgabe laufen soll. Anschließend kann die Oberfläche mit einer zentralen Einstellungsdatei geöffnet werden:
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\DokumentenScannerSortierung\DokumentenScannerSortierung.exe" `
+  --settings "C:\ProgramData\DokumentenScannerSortierung\settings.json"
+```
+
+Nach dem Speichern wird in der Windows-Aufgabenplanung eine Aufgabe eingerichtet:
+
+- Auslöser: **Beim Starten des Computers**
+- Ausführen unabhängig von der Benutzeranmeldung
+- Programm: installierte `DokumentenScannerSortierung.exe`
+- Argumente: `--run --settings "C:\ProgramData\DokumentenScannerSortierung\settings.json"`
+- Bei bereits laufender Aufgabe: **Keine neue Instanz starten**
+- Bei Fehlern: Neustart nach einer kurzen Wartezeit aktivieren
+
+Für Netzwerkfreigaben sind UNC-Pfade wie `\\server\freigabe\scanner\eingang` robuster als benutzerabhängige Laufwerksbuchstaben. Das Dienstkonto benötigt Lesen/Ändern/Löschen im Eingang sowie Lesen/Schreiben/Ändern in Ziel, Archiv, Prüfordner und am Ordner der zentralen `settings.json`.
+
+Bei einem vorübergehenden Ausfall eines Serverpfads wartet die Anwendung mit exponentiellem Backoff zwischen 1 und 60 Sekunden und setzt die Überwachung nach der Wiederkehr automatisch fort.
+
+## Sicherheitsgrenzen
+
+PDFs werden als nicht vertrauenswürdige Eingaben behandelt. Dateigröße, Seitenzahl, gerenderte Pixelzahl und OCR-Laufzeit sind begrenzt; unerwartete Dateien werden nicht überschrieben. Tesseract erhält ausschließlich lokal gerenderte Bilddateien und keine URLs. Die mit dem Windows-OCR-Paket transitiv gelieferten Netzwerkbibliotheken werden vom Sortierer nicht für Netzwerkzugriffe verwendet; auf dem Server sollte ausgehender Netzwerkverkehr der Anwendung dennoch nach dem Prinzip der geringsten Rechte gesperrt werden.
+
+SHA-256-Prüfsummen erkennen beschädigte Release-Dateien, ersetzen aber keine Herausgebersignatur. Ohne ein bereitgestelltes Authenticode-Zertifikat bleiben Anwendung und Setup als `signed: false` gekennzeichnet. Vor dem produktiven Einsatz ist außerdem die in `THIRD_PARTY_NOTICES.md` beschriebene AGPL- oder kommerzielle Lizenzgrundlage für PyMuPDF verbindlich festzulegen.
+
+## Entwicklung, Tests und Release-Build
+
+Voraussetzung ist Python 3.12 auf Windows x64. Die Build-Abhängigkeiten sind in `constraints-build.txt` exakt fixiert; `requirements-build.lock` bindet zusätzlich die geprüften Windows-Wheels an SHA-256-Hashes.
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --require-hashes --only-binary=:all: --requirement requirements-build.lock
+.\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation --editable .
+.\.venv\Scripts\python.exe -m pip check
+.\.venv\Scripts\ruff.exe check src installer tests
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+OCR-Paket vorbereiten und Release 0.1.24 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.23
+.\scripts\build-release.ps1 -Version 0.1.24
 ```
 
-Der Release 0.1.23 liefert Tesseract `5.5.2` mit Leptonica `1.87.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Fuer Windows werden `tesseract.exe`, `libtesseract-5.5.dll` und `libleptonica-6.dll` aus den offiziellen MSYS2-Paketen verwendet. Das Leptonica-Paket `mingw-w64-x86_64-leptonica-1.87.0-1` wird mit der SHA-256-Pruefsumme `702D6EE60255B083AA37A3CBBE1A53EF253D9119204D0478D025EFEA2D0C91F9` verifiziert; die Tesseract-Pruefsumme lautet `6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA`.
+Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.
 
-Die passend fixierten GCC- und Winpthreads-Laufzeitpakete werden ebenfalls nur nach erfolgreicher SHA-256-Pruefung eingebunden. Die uebrigen Bild-, Archiv- und Netzwerkbibliotheken stammen aus dem bereits geprueften Windows-Laufzeitunterbau des Releases 5.5.0. Das Vorbereitungsskript dokumentiert alle Paketversionen und Pruefsummen direkt in seinen Parametern.
-
-## Automatischer Betrieb
-
-Für den Serverbetrieb wird in der Windows-Aufgabenplanung eine Aufgabe mit dem Auslöser **Beim Starten des Computers** eingerichtet. Als Programm wird verwendet:
-
-```text
-C:\Pfad\zum\Projekt\.venv\Scripts\dokumentensortierer.exe
-```
-
-Argumente:
-
-```text
---run --settings "C:\ProgramData\DokumentenScannerSortierung\settings.json"
-```
-
-Das verwendete Dienstkonto benötigt Änderungsrechte für Eingangs-, Ziel-, Archiv- und Prüfordner. Die Anwendung zeigt die letzten Aktivitäten direkt im Fenster und schreibt ein dauerhaftes Protokoll im Unterordner `logs` neben der verwendeten `settings.json`. Die Logdatei wird bei 5 MB rotiert; fünf ältere Dateien werden aufbewahrt.
-
-## Entwicklung und Tests
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m unittest discover -s tests -v
-```
+Ein bewusst nicht reproduzierbarer Entwicklungs-Build aus einem geänderten Arbeitsverzeichnis ist mit `-AllowDirtySource` möglich. Ein bereits vorhandener versionsbezogener Release-Ordner wird nur mit `-ForceRebuild` ersetzt. Anwendung und Setup unterstützen `--self-test`; der Release-Build führt beide Selbsttests zeitlich begrenzt aus, bevor er die Artefakte veröffentlicht.

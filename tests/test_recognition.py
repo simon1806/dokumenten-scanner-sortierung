@@ -4,10 +4,39 @@ import unittest
 from unittest.mock import patch
 
 from scanner_sorter.config import Settings
-from scanner_sorter.recognition import PageRecognizer, detect_document_from_text
+from scanner_sorter.recognition import (
+    MAX_RENDER_PIXELS,
+    OCR_TIMEOUT_SECONDS,
+    PageRecognizer,
+    detect_document_from_text,
+)
 
 
 class RecognitionTests(unittest.TestCase):
+    @patch("pytesseract.image_to_string", return_value="Montagebericht Auftrag: 3260551")
+    @patch("scanner_sorter.recognition.find_tesseract_executable", return_value=None)
+    def test_ocr_uses_server_timeout(self, _mock_find: object, image_to_string: object) -> None:
+        recognizer = PageRecognizer(Settings())
+
+        recognizer._read_ocr(object())
+
+        self.assertEqual(OCR_TIMEOUT_SECONDS, image_to_string.call_args.kwargs["timeout"])
+
+    def test_render_rejects_unusually_large_page(self) -> None:
+        class Rect:
+            width = MAX_RENDER_PIXELS
+            height = 2
+
+        class Page:
+            rect = Rect()
+
+            @staticmethod
+            def get_pixmap(**_kwargs: object) -> object:
+                raise AssertionError("Eine zu grosse Seite darf nicht gerendert werden.")
+
+        with self.assertRaisesRegex(RuntimeError, "Render-Limit"):
+            PageRecognizer._render(Page())
+
     def test_typed_barcode_skips_slow_ocr(self) -> None:
         class ScanPage:
             @staticmethod

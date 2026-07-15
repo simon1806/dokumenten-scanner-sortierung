@@ -1,3 +1,3 @@
 """Dokumenten-Scanner-Sortierung."""
 
-__version__ = "0.1.23"
+__version__ = "0.1.24"

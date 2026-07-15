@@ -1,5 +1,30 @@
 # Drittanbieter-Hinweise
 
+## Python, Tcl/Tk und PyInstaller
+
+Die Windows-Anwendung enthaelt die Python-Laufzeit, Tcl/Tk sowie den
+PyInstaller-Bootloader.
+
+- Python: Python Software Foundation License 2.0
+- Tcl/Tk: Tcl/Tk License
+- PyInstaller-Bootloader: GPL-2.0-or-later mit der PyInstaller-Bootloader-Ausnahme
+
+## Python-Bibliotheken
+
+Die Anwendung verwendet und verteilt folgende direkte Laufzeitabhaengigkeiten:
+
+- PyMuPDF: GNU Affero General Public License 3.0 oder kommerzielle Artifex-Lizenz
+- pypdf: BSD 3-Clause License
+- Pillow: MIT-CMU License
+- pytesseract: Apache License 2.0
+- pystray: GNU Lesser General Public License v3.0
+- zxing-cpp: Apache License 2.0
+
+PyMuPDF und MuPDF werden dual unter AGPL und kommerziellen Lizenzvereinbarungen
+angeboten. Der Betreiber beziehungsweise Verteiler der Anwendung muss
+sicherstellen, dass die gewaehlte Lizenzgrundlage fuer den konkreten Einsatz
+eingehalten wird. Weitere Informationen: https://pymupdf.readthedocs.io/en/latest/about.html#license-and-copyright
+
 ## Tesseract OCR
 
 Die Anwendung liefert Tesseract OCR `5.5.2` mit Leptonica `1.87.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` mit.
@@ -19,6 +44,15 @@ Fuer Tesseract 5.5.2 werden die MSYS2-Pakete `mingw-w64-x86_64-gcc-libs` und `mi
 - GCC-Laufzeitbibliotheken: GPL-3.0-or-later mit GCC Runtime Library Exception 3.1 sowie LGPL-2.1-or-later
 - Winpthreads: MIT und BSD-3-Clause-Clear
 - Paketquelle: https://packages.msys2.org/
+
+## Weitere native Tesseract-Abhaengigkeiten
+
+Das Windows-Laufzeitpaket von Tesseract enthaelt weitere Bild-, Schrift-,
+Kompressions-, Archiv- und Netzwerkbibliotheken, unter anderem libarchive,
+libcurl, cairo, fontconfig, freetype, glib, harfbuzz, ICU, libjpeg-turbo,
+libpng, libtiff, libwebp, OpenJPEG und zlib. Die konkreten Dateien und Versionen
+werden im Release-Manifest beziehungsweise in der Tesseract-Versionsausgabe
+dokumentiert. Fuer diese Komponenten gelten die jeweiligen Upstream-Lizenzen.
 
 ## Tabler Icons
 

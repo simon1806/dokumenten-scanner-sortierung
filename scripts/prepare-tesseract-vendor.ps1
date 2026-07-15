@@ -23,6 +23,13 @@ if (-not $Destination) {
 }
 
 $Destination = [System.IO.Path]::GetFullPath($Destination)
+$ResolvedProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot).TrimEnd("\")
+if (-not $Destination.StartsWith(
+        $ResolvedProjectRoot + "\",
+        [System.StringComparison]::OrdinalIgnoreCase
+    )) {
+    throw "Der Vendor-Zielordner muss innerhalb des Projekts liegen: $Destination"
+}
 $DownloadDir = Join-Path $ProjectRoot ".artifacts\downloads"
 $ExtractionRoot = Join-Path $ProjectRoot ".artifacts\tesseract-packages"
 $TesseractExe = Join-Path $Destination "tesseract.exe"

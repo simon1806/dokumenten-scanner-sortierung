@@ -1,0 +1,3 @@
+# Versionsauflösung erfolgt ausschliesslich ueber constraints-build.txt.
+PyInstaller
+ruff

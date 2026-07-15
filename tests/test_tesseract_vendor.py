@@ -36,6 +36,10 @@ class TesseractVendorTests(unittest.TestCase):
         self.assertIn('Join-Path $env:ProgramFiles "Tesseract-OCR"', self.script)
         self.assertIn('Copy-Item -Path (Join-Path $installedBase "*")', self.script)
 
+    def test_preparation_rejects_vendor_destination_outside_project(self) -> None:
+        self.assertIn("Der Vendor-Zielordner muss innerhalb des Projekts liegen", self.script)
+        self.assertIn("[System.StringComparison]::OrdinalIgnoreCase", self.script)
+
 
 if __name__ == "__main__":
     unittest.main()

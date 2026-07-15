@@ -3,17 +3,29 @@ from __future__ import annotations
 import argparse
 import hashlib
 import logging
+import ntpath
 import os
 import platform
+import queue
+import re
 import signal
+import subprocess
 import sys
 import threading
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from . import __version__
-from .config import Settings, bundled_folder, default_settings_path, load_settings, save_settings
+from .config import (
+    ConfigurationError,
+    Settings,
+    bundled_folder,
+    default_settings_path,
+    find_tesseract_executable,
+    load_settings,
+    save_settings,
+)
 from .models import ProcessResult
 from .version_info import VersionEntry, collect_version_information
 from .watcher import FolderWatcher
@@ -21,6 +33,13 @@ from .watcher import FolderWatcher
 
 ERROR_ALREADY_EXISTS = 183
 WINDOWS_APP_ID = "GlasHagen.DokumentenScannerSortierung"
+LOG_RETENTION_DAYS = 90
+LOG_FILENAME_PATTERN = re.compile(r"^dokumentensortierer-(\d{4}-\d{2}-\d{2})\.log$")
+DRIVE_UNKNOWN = 0
+DRIVE_NO_ROOT_DIR = 1
+DRIVE_REMOTE = 4
+NO_ERROR = 0
+ERROR_MORE_DATA = 234
 
 
 def initial_window_geometry(screen_width: int, screen_height: int) -> tuple[int, int, int, int]:
@@ -59,16 +78,131 @@ def configure_windows_app_identity() -> None:
         logging.warning("Windows-App-ID konnte nicht gesetzt werden: HRESULT %s", result)
 
 
-def acquire_single_instance(settings_path: Path) -> tuple[bool, tuple[object, int] | None]:
-    """Acquire one Windows mutex per settings file, independent of the EXE filename."""
+def _windows_drive_type(root: str) -> int:
+    import ctypes
+
+    kernel32 = ctypes.windll.kernel32
+    kernel32.GetDriveTypeW.argtypes = [ctypes.c_wchar_p]
+    kernel32.GetDriveTypeW.restype = ctypes.c_uint
+    return int(kernel32.GetDriveTypeW(root))
+
+
+def _windows_universal_name(local_path: str) -> str | None:
+    """Resolve a mapped path to its full UNC path using the Windows network API."""
+    if os.name != "nt":
+        return None
+    import ctypes
+
+    class UniversalNameInfo(ctypes.Structure):
+        _fields_ = [("universal_name", ctypes.c_wchar_p)]
+
+    mpr = ctypes.WinDLL("mpr", use_last_error=True)
+    function = mpr.WNetGetUniversalNameW
+    function.argtypes = [ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint)]
+    function.restype = ctypes.c_uint
+    required = ctypes.c_uint(0)
+    result = int(function(local_path, 1, None, ctypes.byref(required)))
+    if result != ERROR_MORE_DATA or required.value == 0:
+        return None
+    buffer = ctypes.create_string_buffer(required.value)
+    result = int(function(local_path, 1, buffer, ctypes.byref(required)))
+    if result != NO_ERROR:
+        return None
+    universal = ctypes.cast(buffer, ctypes.POINTER(UniversalNameInfo)).contents.universal_name
+    return str(universal) if universal else None
+
+
+def _windows_drive_connection(drive: str) -> str | None:
+    """Resolve even a remembered/disconnected mapped drive to its UNC share."""
+    if os.name != "nt":
+        return None
+    import ctypes
+
+    mpr = ctypes.WinDLL("mpr", use_last_error=True)
+    function = mpr.WNetGetConnectionW
+    function.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.POINTER(ctypes.c_uint)]
+    function.restype = ctypes.c_uint
+    size = ctypes.c_uint(1024)
+    for _attempt in range(2):
+        buffer = ctypes.create_unicode_buffer(size.value)
+        result = int(function(drive, buffer, ctypes.byref(size)))
+        if result == NO_ERROR:
+            return buffer.value or None
+        if result != ERROR_MORE_DATA or size.value == 0:
+            return None
+    return None
+
+
+def canonicalize_windows_network_path(
+    path: str,
+    drive_type_resolver: Callable[[str], int] = _windows_drive_type,
+    universal_name_resolver: Callable[[str], str | None] = _windows_universal_name,
+    drive_connection_resolver: Callable[[str], str | None] = _windows_drive_connection,
+) -> str:
+    """Canonicalize mapped drives to UNC and fail closed if their target is unclear."""
+    drive, tail = ntpath.splitdrive(path)
+    if not re.fullmatch(r"[A-Za-z]:", drive) or not tail.startswith(("\\", "/")):
+        return path
+    root = f"{drive}\\"
+    drive_type = drive_type_resolver(root)
+    if drive_type not in {DRIVE_REMOTE, DRIVE_UNKNOWN, DRIVE_NO_ROOT_DIR}:
+        return path
+
+    universal = universal_name_resolver(path)
+    if universal and universal.startswith("\\\\"):
+        return universal
+
+    connection = drive_connection_resolver(drive)
+    if connection and connection.startswith("\\\\"):
+        suffix = tail.lstrip("\\/")
+        return connection.rstrip("\\/") + (f"\\{suffix}" if suffix else "")
+
+    raise OSError(
+        f"Das Laufwerk {drive} ist nicht verfügbar oder sein Netzwerkziel konnte nicht sicher ermittelt "
+        "werden. Verwenden Sie für den Eingangsordner einen stabilen UNC-Pfad "
+        r"(z. B. \\server\freigabe\eingang)."
+    )
+
+
+def single_instance_identity(settings_path: Path, input_folder: str = "") -> str:
+    """Return a stable identity for an app or input-folder lock.
+
+    An input folder takes precedence.  Until it has been configured, the
+    normalized settings path is used as a safe fallback.
+    """
+    configured_input = input_folder.strip()
+    raw_path = configured_input or str(settings_path)
+    expanded = os.path.expandvars(os.path.expanduser(raw_path))
+    try:
+        absolute = Path(expanded).resolve(strict=False)
+    except OSError:
+        absolute = Path(os.path.abspath(expanded))
+    absolute_text = str(absolute)
+    if os.name == "nt" and configured_input:
+        absolute_text = canonicalize_windows_network_path(absolute_text)
+    normalized = os.path.normcase(os.path.normpath(absolute_text)).casefold()
+    identity_type = "input" if configured_input else "settings"
+    return f"{identity_type}:{normalized}"
+
+
+def single_instance_mutex_name(settings_path: Path, input_folder: str = "") -> str:
+    identity = single_instance_identity(settings_path, input_folder).encode("utf-8")
+    digest = hashlib.sha256(identity).hexdigest()[:20]
+    return f"Global\\DokumentenScannerSortierung-{digest}"
+
+
+def acquire_single_instance(
+    settings_path: Path,
+    input_folder: str = "",
+) -> tuple[bool, tuple[object, int] | None]:
+    """Acquire a server-wide Windows mutex for one settings file or input folder."""
     if os.name != "nt":
         return True, None
 
     import ctypes
 
-    settings_key = str(settings_path.resolve()).casefold().encode("utf-8")
-    digest = hashlib.sha256(settings_key).hexdigest()[:20]
-    mutex_name = f"Local\\DokumentenScannerSortierung-{digest}"
+    # Global\ spans all interactive and service sessions on a Windows server.
+    mutex_name = single_instance_mutex_name(settings_path, input_folder)
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
     kernel32.CreateMutexW.restype = ctypes.c_void_p
@@ -125,9 +259,49 @@ def notify_already_running() -> None:
         print(message, file=sys.stderr)
 
 
+def notify_configuration_error(error: ConfigurationError) -> None:
+    """Show a readable startup error without exposing a Python traceback."""
+    message = f"Die Anwendung kann die Einstellungen nicht laden.\n\n{error}"
+    if os.name == "nt":
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(None, message, "Einstellungen beschädigt", 0x10)
+    else:
+        print(message, file=sys.stderr)
+
+
 def log_file_path(settings_path: Path, log_date: date | None = None) -> Path:
     log_date = log_date or date.today()
     return settings_path.parent / "logs" / f"dokumentensortierer-{log_date.isoformat()}.log"
+
+
+def cleanup_old_logs(
+    log_directory: Path,
+    retention_days: int = LOG_RETENTION_DAYS,
+    today: date | None = None,
+) -> int:
+    """Delete only dated application logs older than the retention period."""
+    cutoff = (today or date.today()) - timedelta(days=max(1, retention_days))
+    removed = 0
+    if not log_directory.exists():
+        return removed
+    for path in log_directory.iterdir():
+        if not path.is_file():
+            continue
+        match = LOG_FILENAME_PATTERN.fullmatch(path.name)
+        if match is None:
+            continue
+        try:
+            log_date = date.fromisoformat(match.group(1))
+        except ValueError:
+            continue
+        if log_date < cutoff:
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                logging.warning("Alte Protokolldatei konnte nicht gelöscht werden: %s", path, exc_info=True)
+    return removed
 
 
 class DailyFileHandler(logging.Handler):
@@ -166,7 +340,20 @@ def configure_logging(settings_path: Path) -> Path:
         handlers=handlers,
         force=True,
     )
-    report = collect_version_information()
+    removed_logs = cleanup_old_logs(log_path.parent)
+    if removed_logs:
+        logging.info("Protokollbereinigung: %s Datei(en) älter als %s Tage gelöscht.", removed_logs, LOG_RETENTION_DAYS)
+    configured_tesseract_path = ""
+    try:
+        configured_tesseract_path = load_settings(settings_path).tesseract_path
+    except ConfigurationError as error:
+        logging.warning("Tesseract-Pfad konnte nicht aus den Einstellungen gelesen werden: %s", error)
+    except Exception:
+        logging.warning(
+            "Tesseract-Pfad konnte für die Versionsabfrage nicht aus den Einstellungen gelesen werden.",
+            exc_info=True,
+        )
+    report = collect_version_information(configured_tesseract_path)
     ocr_versions = {entry.name: entry.version for entry in report.ocr}
     logging.info(
         "Anwendung gestartet; version=%s; python=%s; tesseract=%s; leptonica=%s; "
@@ -181,6 +368,65 @@ def configure_logging(settings_path: Path) -> Path:
         log_path,
     )
     return log_path
+
+
+def run_self_test() -> int:
+    """Exercise packaged runtime components without opening the GUI or changing data."""
+    try:
+        import fitz  # noqa: F401
+        import PIL  # noqa: F401
+        import pypdf  # noqa: F401
+        import pystray  # noqa: F401
+        import pytesseract  # noqa: F401
+        import tkinter
+        import zxingcpp  # noqa: F401
+
+        # This catches missing _tkinter/Tcl data in a packed executable without
+        # requiring an interactive desktop or creating a visible window.
+        interpreter = tkinter.Tcl()
+        if not interpreter.eval("info patchlevel"):
+            raise RuntimeError("Tcl/Tk-Laufzeit meldet keine Version.")
+
+        tesseract = find_tesseract_executable()
+        if tesseract is None:
+            raise RuntimeError("Tesseract OCR wurde im Laufzeitpaket nicht gefunden.")
+        version_result = subprocess.run(
+            [str(tesseract), "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        version_output = version_result.stdout + "\n" + version_result.stderr
+        if (
+            version_result.returncode != 0
+            or re.search(r"(?im)^tesseract\s+v?5\.5\.2\b", version_output) is None
+            or re.search(r"(?im)^\s*leptonica[-\s]+1\.87\.0\b", version_output) is None
+        ):
+            raise RuntimeError(
+                "Tesseract OCR 5.5.2 mit Leptonica 1.87.0 konnte nicht erfolgreich gestartet werden."
+            )
+        language_result = subprocess.run(
+            [str(tesseract), "--list-langs"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=20,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        languages = set(language_result.stdout.split())
+        missing = {"deu", "eng", "osd"} - languages
+        if language_result.returncode != 0 or missing:
+            raise RuntimeError(
+                "Tesseract-Sprachmodelle fehlen: " + ", ".join(sorted(missing or {"unbekannt"}))
+            )
+    except Exception as error:
+        logging.exception("Laufzeit-Selbsttest fehlgeschlagen: %s", error)
+        if sys.stderr is not None:
+            print(f"Laufzeit-Selbsttest fehlgeschlagen: {error}", file=sys.stderr)
+        return 4
+    return 0
 
 
 class ToolTip:
@@ -253,6 +499,9 @@ class SettingsWindow:
         self.log_path = log_file_path(settings_path)
         self.settings = load_settings(settings_path)
         self.watcher: FolderWatcher | None = None
+        self._monitor_instance: tuple[object, int] | None = None
+        self._worker_messages: queue.Queue[str] = queue.Queue()
+        self._worker_poll_after_id: str | None = None
         self.tray_icon: object | None = None
         self._quitting = False
         self._tooltips: list[ToolTip] = []
@@ -287,6 +536,7 @@ class SettingsWindow:
         }
         self.status = tk.StringVar(value="Einstellungen speichern und Überwachung starten.")
         self._build()
+        self._schedule_worker_message_poll()
         self._apply_window_icon()
         self._start_tray_icon()
 
@@ -676,7 +926,7 @@ class SettingsWindow:
         control_card.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         actions = self.tk.Frame(control_body, background="#FFFFFF")
         actions.pack(fill="x")
-        save_button = self._button(
+        self.save_button = self._button(
             actions,
             "Einstellungen speichern",
             self.save,
@@ -684,7 +934,7 @@ class SettingsWindow:
             "Secondary.TButton",
             icon="device-floppy",
         )
-        save_button.pack(side="left")
+        self.save_button.pack(side="left")
         self.start_button = self._button(
             actions,
             "Überwachung starten",
@@ -1052,6 +1302,13 @@ class SettingsWindow:
         )
 
     def save(self) -> Settings | None:
+        if self.watcher and self.watcher.running:
+            self._messagebox.showwarning(
+                "Überwachung aktiv",
+                "Die Einstellungen können während der laufenden Überwachung nicht geändert werden. "
+                "Beenden Sie zuerst die Überwachung.",
+            )
+            return None
         try:
             settings = self._current_settings()
         except ValueError as error:
@@ -1071,34 +1328,104 @@ class SettingsWindow:
     def start(self) -> None:
         if self.watcher and self.watcher.running:
             return
+        if self._monitor_instance is not None:
+            release_single_instance(self._monitor_instance)
+            self._monitor_instance = None
         settings = self.save()
         if settings is None:
             return
         try:
+            acquired, monitor_instance = acquire_single_instance(
+                self.settings_path,
+                settings.input_folder,
+            )
+        except OSError as error:
+            self._messagebox.showerror(
+                "Überwachungssperre nicht verfügbar",
+                "Der Eingangsordner kann nicht sicher gegen eine zweite Instanz gesperrt werden.\n\n"
+                f"{error}",
+            )
+            return
+        if not acquired:
+            self._messagebox.showerror(
+                "Eingangsordner bereits überwacht",
+                "Der konfigurierte Eingangsordner wird bereits von einer anderen Instanz oder "
+                "Serversitzung überwacht.",
+            )
+            return
+        self._monitor_instance = monitor_instance
+        try:
             self.watcher = FolderWatcher(settings, self._from_worker, self._result_from_worker)
             self.watcher.start()
         except Exception as error:
+            release_single_instance(self._monitor_instance)
+            self._monitor_instance = None
+            self.watcher = None
             self._messagebox.showerror("Start fehlgeschlagen", str(error))
             return
+        self.save_button.configure(state="disabled")
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self._update_monitoring_badge()
         self._update_tray_status()
 
     def stop(self) -> None:
-        if self.watcher:
-            self.watcher.stop()
+        if self.watcher and self.watcher.running:
+            if self.watcher.processing:
+                message = "Überwachung wird beendet; der laufende Vorgang wird sicher abgeschlossen."
+            else:
+                message = "Überwachung wird kontrolliert beendet."
+            self.status.set(message)
+            self._append_activity(message)
+            self.stop_button.configure(state="disabled")
+            self.root.update_idletasks()
+            try:
+                self.watcher.stop()
+            finally:
+                release_single_instance(self._monitor_instance)
+                self._monitor_instance = None
+        elif self._monitor_instance is not None:
+            release_single_instance(self._monitor_instance)
+            self._monitor_instance = None
+        self.save_button.configure(state="normal")
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self._update_monitoring_badge()
         self._update_tray_status()
 
     def _from_worker(self, message: str) -> None:
-        def update() -> None:
+        # Worker callbacks must never call Tk.  Tk may currently be waiting for
+        # the worker during a controlled shutdown and is not thread-safe.
+        self._worker_messages.put(message)
+
+    def _schedule_worker_message_poll(self) -> None:
+        if self._quitting:
+            return
+        self._worker_poll_after_id = self.root.after(100, self._poll_worker_messages)
+
+    def _poll_worker_messages(self) -> None:
+        """Drain worker events exclusively in the Tk main thread."""
+        self._worker_poll_after_id = None
+        if self._quitting:
+            return
+        while True:
+            try:
+                message = self._worker_messages.get_nowait()
+            except queue.Empty:
+                break
             self.status.set(message)
             self._append_activity(message)
+        self._schedule_worker_message_poll()
 
-        self.root.after(0, update)
+    def _cancel_worker_message_poll(self) -> None:
+        after_id = self._worker_poll_after_id
+        self._worker_poll_after_id = None
+        if after_id is None:
+            return
+        try:
+            self.root.after_cancel(after_id)
+        except self.tk.TclError:
+            pass
 
     def _result_from_worker(self, result: ProcessResult) -> None:
         # The worker sends the user-facing result immediately afterwards via on_status.
@@ -1109,6 +1436,7 @@ class SettingsWindow:
         if self._quitting:
             return
         self._quitting = True
+        self._cancel_worker_message_poll()
         self.stop()
         if self.tray_icon is not None:
             self.tray_icon.stop()
@@ -1119,17 +1447,40 @@ class SettingsWindow:
         try:
             self.root.mainloop()
         finally:
+            self._cancel_worker_message_poll()
+            if self.watcher is not None:
+                self.watcher.stop()
+            release_single_instance(self._monitor_instance)
+            self._monitor_instance = None
             if self.tray_icon is not None:
                 self.tray_icon.stop()
                 self.tray_icon = None
 
 
 def run_headless(settings_path: Path) -> int:
-    settings = load_settings(settings_path)
+    try:
+        settings = load_settings(settings_path)
+    except ConfigurationError as error:
+        logging.error("Einstellungen konnten nicht geladen werden: %s", error)
+        print(str(error), file=sys.stderr)
+        return 2
     errors = settings.validate()
     if errors:
         print("Ungültige Einstellungen:\n- " + "\n- ".join(errors), file=sys.stderr)
         return 2
+
+    try:
+        acquired, monitor_instance = acquire_single_instance(settings_path, settings.input_folder)
+    except OSError as error:
+        message = f"Der Eingangsordner kann nicht sicher gesperrt werden: {error}"
+        logging.error(message)
+        print(message, file=sys.stderr)
+        return 3
+    if not acquired:
+        message = "Der konfigurierte Eingangsordner wird bereits von einer anderen Serversitzung überwacht."
+        logging.error(message)
+        print(message, file=sys.stderr)
+        return 3
 
     finished = threading.Event()
     watcher = FolderWatcher(
@@ -1143,20 +1494,34 @@ def run_headless(settings_path: Path) -> int:
 
     signal.signal(signal.SIGINT, stop)
     signal.signal(signal.SIGTERM, stop)
-    watcher.start()
     try:
+        watcher.start()
         finished.wait()
     finally:
         watcher.stop()
+        release_single_instance(monitor_instance)
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Dokumenten-Scanner-Sortierung")
     parser.add_argument("--run", action="store_true", help="Überwachung ohne Benutzeroberfläche starten")
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help="Mitgelieferte Laufzeitkomponenten prüfen und ohne Datenänderung beenden",
+    )
     parser.add_argument("--settings", type=Path, default=default_settings_path(), help="Pfad zur settings.json")
     args = parser.parse_args(argv)
-    acquired, instance = acquire_single_instance(args.settings)
+    if args.self_test:
+        return run_self_test()
+    try:
+        acquired, instance = acquire_single_instance(args.settings)
+    except OSError as error:
+        logging.error("Einzelinstanz-Sperre konnte nicht erstellt werden: %s", error)
+        if sys.stderr is not None:
+            print(f"Anwendungssperre konnte nicht erstellt werden: {error}", file=sys.stderr)
+        return 3
     if not acquired:
         notify_already_running()
         return 0
@@ -1169,12 +1534,17 @@ def main(argv: list[str] | None = None) -> int:
             args.settings,
         )
 
-        if args.run:
-            return run_headless(args.settings)
+        try:
+            if args.run:
+                return run_headless(args.settings)
 
-        window = SettingsWindow(args.settings)
-        window.run()
-        return 0
+            window = SettingsWindow(args.settings)
+            window.run()
+            return 0
+        except ConfigurationError as error:
+            logging.error("Einstellungen konnten nicht geladen werden: %s", error)
+            notify_configuration_error(error)
+            return 2
     finally:
         logging.info("Anwendung beendet; version=%s", __version__)
         release_single_instance(instance)

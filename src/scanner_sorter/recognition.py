@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import io
+import logging
+import math
 import re
 import unicodedata
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Iterable
 
@@ -11,6 +13,15 @@ from .config import Settings, find_tesseract_executable
 from .models import DetectedDocument
 
 NUMBER = r"(\d{6,12})"
+LOGGER = logging.getLogger(__name__)
+
+# Schutzgrenzen fuer unbeaufsichtigte Serververarbeitung. Uebliche Scanner-PDFs
+# liegen weit darunter; auffaellige Dateien werden unveraendert zur Pruefung
+# weitergeleitet, statt den einzigen Verarbeitungs-Worker zu blockieren.
+MAX_PDF_BYTES = 500 * 1024 * 1024
+MAX_PDF_PAGES = 250
+MAX_RENDER_PIXELS = 50_000_000
+OCR_TIMEOUT_SECONDS = 60
 
 
 def normalise(text: str) -> str:
@@ -102,15 +113,42 @@ class PageRecognizer:
         """Recognise pages in order while allowing two OCR processes to work concurrently."""
         import fitz
 
+        source_size = source.stat().st_size
+        if source_size > MAX_PDF_BYTES:
+            raise RuntimeError(
+                f"PDF ist mit {source_size / (1024 * 1024):.1f} MB groesser als das erlaubte Limit "
+                f"von {MAX_PDF_BYTES // (1024 * 1024)} MB."
+            )
+
         with fitz.open(source) as document:
             page_count = document.page_count
         if page_count == 0:
             return []
+        if page_count > MAX_PDF_PAGES:
+            raise RuntimeError(
+                f"PDF hat {page_count} Seiten und ueberschreitet das erlaubte Limit von "
+                f"{MAX_PDF_PAGES} Seiten."
+            )
         if page_count == 1:
             return [self._recognise_file_page(source, 0)]
 
-        with ThreadPoolExecutor(max_workers=min(2, page_count), thread_name_prefix="ocr") as executor:
-            return list(executor.map(lambda index: self._recognise_file_page(source, index), range(page_count)))
+        executor = ThreadPoolExecutor(max_workers=min(2, page_count), thread_name_prefix="ocr")
+        futures: list[Future[DetectedDocument | None]] = []
+        try:
+            futures = [
+                executor.submit(self._recognise_file_page, source, page_index)
+                for page_index in range(page_count)
+            ]
+            # Read results in page order. If one page fails, queued pages are
+            # cancelled instead of allowing a long PDF to continue spawning OCR
+            # processes after the document has already been rejected.
+            return [future.result() for future in futures]
+        except Exception:
+            for future in futures:
+                future.cancel()
+            raise
+        finally:
+            executor.shutdown(wait=True, cancel_futures=True)
 
     def _recognise_file_page(self, source: Path, page_index: int) -> DetectedDocument | None:
         import fitz
@@ -147,7 +185,17 @@ class PageRecognizer:
 
     @staticmethod
     def _render(page: object):
-        pixmap = page.get_pixmap(matrix=__import__("fitz").Matrix(2.5, 2.5), alpha=False)
+        scale = 2.5
+        page_rect = page.rect
+        width = max(1, math.ceil(float(page_rect.width) * scale))
+        height = max(1, math.ceil(float(page_rect.height) * scale))
+        pixels = width * height
+        if pixels > MAX_RENDER_PIXELS:
+            raise RuntimeError(
+                f"PDF-Seite wuerde {pixels:,} Pixel erzeugen und ueberschreitet das Render-Limit "
+                f"von {MAX_RENDER_PIXELS:,} Pixeln."
+            )
+        pixmap = page.get_pixmap(matrix=__import__("fitz").Matrix(scale, scale), alpha=False)
         from PIL import Image
 
         return Image.open(io.BytesIO(pixmap.tobytes("png")))
@@ -165,6 +213,7 @@ class PageRecognizer:
             return tuple(result.text.strip() for result in zxingcpp.read_barcodes(image) if result.text.strip())
         except Exception:
             # OCR remains available when a page contains no readable barcode.
+            LOGGER.warning("Barcode-Erkennung fehlgeschlagen; OCR wird als Ersatz verwendet.", exc_info=True)
             return ()
 
     def _read_ocr(self, image: object) -> str:
@@ -186,11 +235,22 @@ class PageRecognizer:
         last_error: Exception | None = None
         for language in languages:
             try:
-                return pytesseract.image_to_string(image, lang=language, config="--psm 6")
+                return pytesseract.image_to_string(
+                    image,
+                    lang=language,
+                    config="--psm 6",
+                    timeout=OCR_TIMEOUT_SECONDS,
+                )
             except pytesseract.TesseractNotFoundError as error:
                 raise RuntimeError(
                     "Tesseract OCR ist nicht installiert oder wurde nicht mit der Anwendung gefunden."
                 ) from error
             except pytesseract.TesseractError as error:
                 last_error = error
+            except RuntimeError as error:
+                if "timeout" in str(error).casefold():
+                    raise RuntimeError(
+                        f"Tesseract OCR hat das Zeitlimit von {OCR_TIMEOUT_SECONDS} Sekunden ueberschritten."
+                    ) from error
+                raise
         raise RuntimeError("Tesseract OCR konnte nicht gestartet werden.") from last_error

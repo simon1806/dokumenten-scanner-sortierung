@@ -3,8 +3,30 @@ from __future__ import annotations
 import json
 import os
 import sys
+import uuid
 from dataclasses import asdict, dataclass, fields
 from pathlib import Path
+
+
+class ConfigurationError(ValueError):
+    """Raised when the persisted application settings cannot be read safely."""
+
+
+def _resolved_path(value: str | Path) -> Path:
+    return Path(value).expanduser().resolve(strict=False)
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    """Return True if either directory contains the other one."""
+    first_key = os.path.normcase(str(first))
+    second_key = os.path.normcase(str(second))
+    if first_key == second_key:
+        return True
+    try:
+        common = os.path.normcase(os.path.commonpath((first_key, second_key)))
+    except ValueError:  # Different Windows drives do not overlap.
+        return False
+    return common in {first_key, second_key}
 
 
 @dataclass(slots=True)
@@ -32,9 +54,31 @@ class Settings:
             if not value.strip():
                 errors.append(f"{label} ist nicht festgelegt.")
 
-        configured = [Path(value).resolve() for value in named_paths.values() if value.strip()]
+        configured_items = [
+            (label, _resolved_path(value))
+            for label, value in named_paths.items()
+            if value.strip()
+        ]
+        configured = [path for _label, path in configured_items]
         if len(configured) != len(set(configured)):
             errors.append("Eingangs-, Ziel-, Archiv- und Prüfordner müssen unterschiedlich sein.")
+        elif any(
+            _paths_overlap(first, second)
+            and not (
+                first_label == "Zielordner"
+                and second_label == "Prüfordner"
+                and first in second.parents
+            )
+            for index, (first_label, first) in enumerate(configured_items)
+            for second_label, second in configured_items[index + 1 :]
+        ):
+            errors.append(
+                "Eingangs-, Ziel-, Archiv- und Prüfordner dürfen nicht ineinander liegen."
+            )
+
+        for label, path in configured_items:
+            if path == Path(path.anchor):
+                errors.append(f"{label} darf kein Laufwerks-, Freigabe- oder Dateisystemstamm sein.")
         if self.archive_retention_days < 1:
             errors.append("Die Archiv-Aufbewahrung muss mindestens einen Tag betragen.")
         if self.settle_seconds < 1:
@@ -104,14 +148,63 @@ def load_settings(path: Path | None = None) -> Settings:
     if not path.exists():
         return Settings()
 
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ConfigurationError(
+            f"Die Einstellungsdatei '{path}' ist beschädigt oder nicht lesbar. "
+            "Bitte stellen Sie eine Sicherung wieder her oder benennen Sie die Datei um."
+        ) from error
+    if not isinstance(raw, dict):
+        raise ConfigurationError(
+            f"Die Einstellungsdatei '{path}' hat ein ungültiges Format (JSON-Objekt erwartet)."
+        )
     known_fields = {field.name for field in fields(Settings)}
     values = {key: value for key, value in raw.items() if key in known_fields}
-    return Settings(**values)
+    string_fields = {
+        "input_folder",
+        "output_folder",
+        "archive_folder",
+        "review_folder",
+        "tesseract_path",
+        "ocr_languages",
+    }
+    integer_fields = {
+        "archive_retention_days",
+        "settle_seconds",
+        "invalid_pdf_timeout_seconds",
+        "poll_interval_seconds",
+    }
+    invalid_fields = [
+        key
+        for key, value in values.items()
+        if (key in string_fields and not isinstance(value, str))
+        or (key in integer_fields and (not isinstance(value, int) or isinstance(value, bool)))
+    ]
+    if invalid_fields:
+        raise ConfigurationError(
+            f"Die Einstellungsdatei '{path}' enthält ungültige Werte für: "
+            f"{', '.join(sorted(invalid_fields))}."
+        )
+    try:
+        return Settings(**values)
+    except (TypeError, ValueError) as error:
+        raise ConfigurationError(
+            f"Die Einstellungsdatei '{path}' enthält ungültige Werte."
+        ) from error
 
 
 def save_settings(settings: Settings, path: Path | None = None) -> Path:
     path = path or default_settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(asdict(settings), indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    payload = json.dumps(asdict(settings), indent=2, ensure_ascii=False) + "\n"
+    try:
+        with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return path
