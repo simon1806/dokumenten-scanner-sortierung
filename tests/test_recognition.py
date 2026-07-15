@@ -25,6 +25,80 @@ class RecognitionTests(unittest.TestCase):
         self.assertIsNotNone(detected)
         self.assertEqual("AM_3250672.pdf", detected.filename)
 
+    def test_code39_barcode_with_padding_and_check_character_skips_ocr(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=object()),
+            patch.object(recognizer, "_read_barcodes", return_value=("EM-06260367G",)),
+            patch.object(recognizer, "_read_ocr", side_effect=AssertionError("OCR darf nicht laufen")),
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("EM_6260367.pdf", detected.filename)
+
+    def test_header_ocr_skips_full_page_ocr_when_document_is_detected(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                self.assertEqual((0, 0, 1000, 490), box)
+                return "Kopfbereich"
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(recognizer, "_read_ocr", return_value="Montagebericht Auftrag: 3260635") as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("MI_3260635.pdf", detected.filename)
+        read_ocr.assert_called_once_with("Kopfbereich")
+
+    def test_full_page_ocr_remains_fallback_after_unsuccessful_header(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(_box: tuple[int, int, int, int]) -> object:
+                return "Kopfbereich"
+
+        image = ScanImage()
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=image),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Kein Dokumentkopf", "Empfangsschein-Nr. 6260367"),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("EM_6260367.pdf", detected.filename)
+        self.assertEqual(("Kopfbereich",), read_ocr.call_args_list[0].args)
+        self.assertEqual((image,), read_ocr.call_args_list[1].args)
+
     def test_aufmassblatt(self) -> None:
         detected = detect_document_from_text("AUFMASSBLATT 3250672\nKunden-Nummer 11959", ["3250672"])
         self.assertIsNotNone(detected)

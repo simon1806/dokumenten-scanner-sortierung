@@ -83,9 +83,12 @@ def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> Detect
             return DetectedDocument("AM", number)
 
     for barcode in barcode_values:
-        match = re.fullmatch(r"(AM|EM|MI)[-_]?(\d{6,12})", barcode.strip(), flags=re.IGNORECASE)
+        match = re.fullmatch(r"(AM|EM|MI)[-_]?(\d{6,12})(?:[A-Z])?", barcode.strip(), flags=re.IGNORECASE)
         if match:
-            return DetectedDocument(match.group(1).upper(), match.group(2))
+            number = match.group(2)
+            if len(number) == 8 and number.startswith("0"):
+                number = number[1:]
+            return DetectedDocument(match.group(1).upper(), number)
     return None
 
 
@@ -134,6 +137,11 @@ class PageRecognizer:
         if detected:
             return detected
 
+        header_text = self._read_ocr(self._header_crop(image))
+        detected = detect_document_from_text(header_text, barcodes)
+        if detected:
+            return detected
+
         text = self._read_ocr(image)
         return detect_document_from_text(text, barcodes)
 
@@ -143,6 +151,11 @@ class PageRecognizer:
         from PIL import Image
 
         return Image.open(io.BytesIO(pixmap.tobytes("png")))
+
+    @staticmethod
+    def _header_crop(image: object):
+        width, height = image.size
+        return image.crop((0, 0, width, max(1, round(height * 0.35))))
 
     @staticmethod
     def _read_barcodes(image: object) -> tuple[str, ...]:

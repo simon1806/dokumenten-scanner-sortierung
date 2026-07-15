@@ -54,7 +54,7 @@ Das eigene Dokumenten- und Scanner-Symbol wird durchgängig für Anwendung, Setu
 
 Die Stabilitätszeit verhindert, dass eine PDF verarbeitet wird, während der Scanner oder das Netzwerk sie noch schreibt. Zusätzlich prüft die Anwendung, ob die PDF-Struktur vollständig lesbar ist. Bleibt sie nach der konfigurierten Fehlerwartezeit unvollständig, wird das Original archiviert und unverändert in Ziel- und Prüfordner weitergeleitet. Das Eingangsverzeichnis wird jede Sekunde geprüft, sodass fertige Scans gewöhnlich nach wenigen Sekunden starten.
 
-Für eine schnellere Erkennung werden vorhandener PDF-Text und Barcodes vor der OCR ausgewertet. Bei mehrseitigen Scans werden höchstens zwei Seiten gleichzeitig per OCR verarbeitet, damit die Laufzeit sinkt, ohne den Server unnötig auszulasten.
+Für eine schnellere Erkennung werden vorhandener PDF-Text und Barcodes vor der OCR ausgewertet. Code-39-Barcodes mit führender Füllnull und Prüfzeichen werden direkt in die Dokumentnummer übersetzt. Ist OCR erforderlich, wird zuerst nur der Kopfbereich geprüft; lediglich bei erfolgloser Schnellerkennung folgt die bisherige Vollseiten-OCR. Bei mehrseitigen Scans werden höchstens zwei Seiten gleichzeitig per OCR verarbeitet, damit die Laufzeit sinkt, ohne den Server unnötig auszulasten.
 
 Eingangs-, Ziel-, Archiv- und Prüfordner müssen unterschiedlich sein. Bleibt der Prüfordner leer, wird `Nicht_erkannt` im Zielordner verwendet. Gleichnamige Dateien werden nicht überschrieben, sondern mit einer laufenden Nummer abgelegt. Das Ausführungskonto benötigt Löschrechte im Eingangsordner. Kann eine Eingangsdatei nicht entfernt werden, entstehen keine Ausgabedokumente und die vorläufige Archivkopie wird zurückgerollt.
 
@@ -103,7 +103,7 @@ Pro Einstellungsdatei kann nur eine Programminstanz laufen. Ein erneuter Start �
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.22
+.\scripts\build-release.ps1 -Version 0.1.23
 ```
 
 Die Dateien liegen danach im Ordner `release`.
@@ -111,7 +111,7 @@ Die Dateien liegen danach im Ordner `release`.
 Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.22 -TesseractDir "C:\Program Files\Tesseract-OCR"
+.\scripts\build-release.ps1 -Version 0.1.23 -TesseractDir "C:\Program Files\Tesseract-OCR"
 ```
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
@@ -120,10 +120,10 @@ Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.22
+.\scripts\build-release.ps1 -Version 0.1.23
 ```
 
-Der Release 0.1.22 liefert Tesseract `5.5.2` mit Leptonica `1.87.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Fuer Windows werden `tesseract.exe`, `libtesseract-5.5.dll` und `libleptonica-6.dll` aus den offiziellen MSYS2-Paketen verwendet. Das Leptonica-Paket `mingw-w64-x86_64-leptonica-1.87.0-1` wird mit der SHA-256-Pruefsumme `702D6EE60255B083AA37A3CBBE1A53EF253D9119204D0478D025EFEA2D0C91F9` verifiziert; die Tesseract-Pruefsumme lautet `6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA`.
+Der Release 0.1.23 liefert Tesseract `5.5.2` mit Leptonica `1.87.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Fuer Windows werden `tesseract.exe`, `libtesseract-5.5.dll` und `libleptonica-6.dll` aus den offiziellen MSYS2-Paketen verwendet. Das Leptonica-Paket `mingw-w64-x86_64-leptonica-1.87.0-1` wird mit der SHA-256-Pruefsumme `702D6EE60255B083AA37A3CBBE1A53EF253D9119204D0478D025EFEA2D0C91F9` verifiziert; die Tesseract-Pruefsumme lautet `6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA`.
 
 Die passend fixierten GCC- und Winpthreads-Laufzeitpakete werden ebenfalls nur nach erfolgreicher SHA-256-Pruefung eingebunden. Die uebrigen Bild-, Archiv- und Netzwerkbibliotheken stammen aus dem bereits geprueften Windows-Laufzeitunterbau des Releases 5.5.0. Das Vorbereitungsskript dokumentiert alle Paketversionen und Pruefsummen direkt in seinen Parametern.
 

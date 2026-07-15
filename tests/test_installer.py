@@ -11,20 +11,20 @@ from installer import installer, windows_dialog
 
 class InstallerTests(unittest.TestCase):
     def test_first_install_prompt_uses_installation_action(self) -> None:
-        title, instruction, _content, action = installer.prompt_text(False, "0.1.22")
+        title, instruction, _content, action = installer.prompt_text(False, "0.1.23")
 
         self.assertEqual("Installation bestätigen", title)
-        self.assertIn("0.1.22", instruction)
+        self.assertIn("0.1.23", instruction)
         self.assertEqual("Installation ausführen", action)
 
     def test_update_prompt_uses_update_action(self) -> None:
-        title, instruction, content, action = installer.prompt_text(True, "0.1.22", "0.1.14")
+        title, instruction, content, action = installer.prompt_text(True, "0.1.23", "0.1.14")
 
         self.assertEqual("Update bestätigen", title)
-        self.assertIn("0.1.22", instruction)
+        self.assertIn("0.1.23", instruction)
         self.assertIn("Installierte Version: 0.1.14", content)
-        self.assertIn("Neue Version: 0.1.22", content)
-        self.assertIn("Update: 0.1.14 → 0.1.22", content)
+        self.assertIn("Neue Version: 0.1.23", content)
+        self.assertIn("Update: 0.1.14 → 0.1.23", content)
         self.assertIn("Einstellungen", content)
         self.assertEqual("Update ausführen", action)
 
@@ -47,11 +47,11 @@ class InstallerTests(unittest.TestCase):
         target = Path(r"C:\Users\Test\AppData\Local\Programs\DokumentenScannerSortierung\app.exe")
         uninstaller = target.parent / installer.UNINSTALLER_FILENAME
 
-        values = installer.installed_app_values(target, uninstaller, "0.1.22", 123_456)
+        values = installer.installed_app_values(target, uninstaller, "0.1.23", 123_456)
 
         self.assertEqual("Simon Hagen – Glas Hagen", values["Publisher"])
         self.assertEqual("simon.hagen@glashagen.de", values["Contact"])
-        self.assertEqual("0.1.22", values["DisplayVersion"])
+        self.assertEqual("0.1.23", values["DisplayVersion"])
         self.assertIn(str(uninstaller), str(values["UninstallString"]))
         self.assertEqual(1, values["NoModify"])
         self.assertEqual(1, values["NoRepair"])
@@ -62,11 +62,11 @@ class InstallerTests(unittest.TestCase):
     def test_update_completion_contains_version_transition(self) -> None:
         target = Path(r"C:\Users\Test\AppData\Local\Programs\DokumentenScannerSortierung\app.exe")
 
-        title, instruction, content = installer.completion_text(True, "0.1.22", "0.1.14", target)
+        title, instruction, content = installer.completion_text(True, "0.1.23", "0.1.14", target)
 
         self.assertEqual("Update abgeschlossen", title)
         self.assertEqual("Update erfolgreich abgeschlossen", instruction)
-        self.assertIn("Update: 0.1.14 → 0.1.22", content)
+        self.assertIn("Update: 0.1.14 → 0.1.23", content)
         self.assertIn(str(target.parent), content)
 
     def test_legacy_version_is_detected_from_existing_log(self) -> None:
@@ -88,11 +88,11 @@ class InstallerTests(unittest.TestCase):
     def test_installed_version_file_has_priority(self) -> None:
         with TemporaryDirectory() as directory:
             target = Path(directory) / installer.APPLICATION_FILENAME
-            (target.parent / installer.VERSION_FILENAME).write_text("0.1.22\n", encoding="utf-8")
+            (target.parent / installer.VERSION_FILENAME).write_text("0.1.23\n", encoding="utf-8")
 
             version = installer.installed_application_version(target)
 
-        self.assertEqual("0.1.22", version)
+        self.assertEqual("0.1.23", version)
 
     @patch("installer.windows_dialog.subprocess.run")
     def test_completion_dialog_offers_checked_launch_and_finish_button(self, run: object) -> None:
@@ -101,7 +101,7 @@ class InstallerTests(unittest.TestCase):
         should_launch = windows_dialog.show_completion(
             "Update abgeschlossen",
             "Update erfolgreich abgeschlossen",
-            "Update: 0.1.14 → 0.1.22",
+            "Update: 0.1.14 → 0.1.23",
             Path("app.ico"),
         )
 
@@ -119,8 +119,8 @@ class InstallerTests(unittest.TestCase):
 
         confirmed = windows_dialog.show_confirmation(
             "Update bestätigen",
-            "Update auf Version 0.1.22 ausführen?",
-            "Installierte Version: 0.1.19\nNeue Version: 0.1.22\nUpdate: 0.1.19 → 0.1.22",
+            "Update auf Version 0.1.23 ausführen?",
+            "Installierte Version: 0.1.19\nNeue Version: 0.1.23\nUpdate: 0.1.19 → 0.1.23",
             "Update ausführen",
             Path("app.ico"),
         )
