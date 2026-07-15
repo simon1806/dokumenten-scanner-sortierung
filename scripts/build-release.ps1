@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.15",
+    [string]$Version = "0.1.16",
     [string]$TesseractDir = ""
 )
 
@@ -15,6 +15,7 @@ $IconAssets = Join-Path $ProjectRoot "src\scanner_sorter\assets\icons\tabler"
 $AppAssets = Join-Path $ProjectRoot "src\scanner_sorter\assets\app"
 $AppIcon = Join-Path $AppAssets "dokumenten-scanner-sortierung.ico"
 $ThirdPartyNotices = Join-Path $ProjectRoot "THIRD_PARTY_NOTICES.md"
+$VersionPayload = Join-Path $BuildRoot "version.txt"
 
 if (-not (Test-Path $Python)) {
     throw "Virtuelle Umgebung nicht gefunden: $Python"
@@ -44,6 +45,7 @@ if ($TesseractDir) {
 }
 
 New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
+[System.IO.File]::WriteAllText($VersionPayload, "$Version`n", [System.Text.Encoding]::UTF8)
 
 & $Python -m PyInstaller `
     --noconfirm `
@@ -94,6 +96,7 @@ New-Item -ItemType Directory -Force -Path $MainDist, $Release | Out-Null
     --add-data "$MainExecutable;payload" `
     --add-data "$ThirdPartyNotices;payload" `
     --add-data "$AppIcon;payload" `
+    --add-data "$VersionPayload;payload" `
     --distpath $Release `
     --workpath (Join-Path $BuildRoot "work-setup") `
     --specpath (Join-Path $BuildRoot "spec") `

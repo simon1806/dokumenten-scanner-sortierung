@@ -8,6 +8,21 @@ from installer import installer
 
 
 class InstallerTests(unittest.TestCase):
+    def test_first_install_prompt_uses_installation_action(self) -> None:
+        title, instruction, _content, action = installer.prompt_text(False, "0.1.16")
+
+        self.assertEqual("Installation bestätigen", title)
+        self.assertIn("0.1.16", instruction)
+        self.assertEqual("Installation ausführen", action)
+
+    def test_update_prompt_uses_update_action(self) -> None:
+        title, instruction, content, action = installer.prompt_text(True, "0.1.16")
+
+        self.assertEqual("Update bestätigen", title)
+        self.assertIn("0.1.16", instruction)
+        self.assertIn("Einstellungen", content)
+        self.assertEqual("Update ausführen", action)
+
     @patch("installer.installer.subprocess.run")
     def test_desktop_shortcut_points_to_installed_application(self, run: object) -> None:
         target = Path(r"C:\Users\Test\AppData\Local\Programs\DokumentenScannerSortierung\app.exe")

@@ -84,7 +84,7 @@ Falls Tesseract nicht mit der EXE mitgeliefert und nicht im Windows-Pfad hinterl
 Das Release wird als zwei EXE-Dateien erzeugt:
 
 - `DokumentenScannerSortierung-<Version>.exe` ist die portable Anwendung.
-- `DokumentenScannerSortierung-Setup.exe` installiert die Anwendung unter `%LOCALAPPDATA%\Programs\DokumentenScannerSortierung`, erstellt eine Desktop-Verknüpfung und startet sie anschließend.
+- `DokumentenScannerSortierung-Setup.exe` fragt vor jeder Änderung nach. Bei einer Erstinstallation steht **Installation ausführen**, bei einer vorhandenen Version **Update ausführen** zur Auswahl; **Abbrechen** beendet das Setup ohne Änderungen. Anschließend installiert das Setup die Anwendung unter `%LOCALAPPDATA%\Programs\DokumentenScannerSortierung`, erstellt eine Desktop-Verknüpfung und startet sie.
 
 Für ein Update wird die neue `DokumentenScannerSortierung-Setup.exe` gestartet, nachdem die Anwendung geschlossen wurde. Einstellungen und Archivdateien bleiben erhalten, weil sie getrennt von der installierten EXE gespeichert werden.
 
@@ -95,7 +95,7 @@ Pro Einstellungsdatei kann nur eine Programminstanz laufen. Ein erneuter Start �
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.15
+.\scripts\build-release.ps1 -Version 0.1.16
 ```
 
 Die Dateien liegen danach im Ordner `release`.
@@ -103,7 +103,7 @@ Die Dateien liegen danach im Ordner `release`.
 Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.15 -TesseractDir "C:\Program Files\Tesseract-OCR"
+.\scripts\build-release.ps1 -Version 0.1.16 -TesseractDir "C:\Program Files\Tesseract-OCR"
 ```
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
@@ -112,10 +112,10 @@ Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.15
+.\scripts\build-release.ps1 -Version 0.1.16
 ```
 
-Der Release 0.1.15 liefert Tesseract `5.5.0.20241111` mit Leptonica `1.85.0` sowie den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Grundlage ist der offizielle Windows-x64-Installer des Tesseract-Releases 5.5.0. Seine SHA-256-Pruefsumme lautet `F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC`.
+Der Release 0.1.16 liefert Tesseract `5.5.0.20241111` mit Leptonica `1.85.0` sowie den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Grundlage ist der offizielle Windows-x64-Installer des Tesseract-Releases 5.5.0. Seine SHA-256-Pruefsumme lautet `F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC`.
 
 Hinweis: Das offizielle Tesseract-Release 5.5.2 stellt auf GitHub nur Quellcodearchive bereit. Fuer die Windows-EXE wird deshalb der offizielle fertige Windows-Build 5.5.0 verwendet.
 

@@ -20,6 +20,7 @@ SHORTCUT_FILENAME = "Dokumenten-Scanner-Sortierung.lnk"
 NOTICE_FILENAME = "THIRD_PARTY_NOTICES.md"
 ICON_FILENAME = "DokumentenScannerSortierung.ico"
 PAYLOAD_ICON_FILENAME = "dokumenten-scanner-sortierung.ico"
+VERSION_FILENAME = "version.txt"
 
 
 def payload_path() -> Path:
@@ -35,6 +36,18 @@ def notice_payload_path() -> Path:
 def icon_payload_path() -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
     return base / "payload" / PAYLOAD_ICON_FILENAME
+
+
+def version_payload_path() -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    return base / "payload" / VERSION_FILENAME
+
+
+def application_version() -> str:
+    try:
+        return version_payload_path().read_text(encoding="utf-8-sig").strip() or "Unbekannt"
+    except OSError:
+        return "Unbekannt"
 
 
 def installation_path() -> Path:
@@ -103,8 +116,89 @@ def show_message(kind: str, title: str, message: str) -> None:
     ctypes.windll.user32.MessageBoxW(None, message, title, icon)
 
 
+def prompt_text(is_update: bool, version: str) -> tuple[str, str, str, str]:
+    if is_update:
+        return (
+            "Update bestätigen",
+            f"Update auf Version {version} ausführen?",
+            "Die vorhandene Anwendung wird ersetzt. Einstellungen, Protokolle und archivierte Dokumente "
+            "bleiben erhalten. Bitte schließen Sie die laufende Anwendung vor dem Update vollständig.",
+            "Update ausführen",
+        )
+    return (
+        "Installation bestätigen",
+        f"Dokumenten-Scanner-Sortierung {version} installieren?",
+        "Die Anwendung wird für den aktuell angemeldeten Windows-Benutzer installiert. "
+        "Zusätzlich wird eine Verknüpfung auf dem Desktop erstellt.",
+        "Installation ausführen",
+    )
+
+
+def confirm_installation(is_update: bool, version: str) -> bool:
+    if "--silent" in sys.argv:
+        return True
+    title, instruction, content, action_text = prompt_text(is_update, version)
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "Add-Type -AssemblyName System.Drawing; "
+        "$form = New-Object System.Windows.Forms.Form; "
+        f"$form.Text = {_powershell_quote(title)}; "
+        "$form.ClientSize = New-Object System.Drawing.Size(560,245); "
+        "$form.StartPosition = 'CenterScreen'; "
+        "$form.FormBorderStyle = 'FixedDialog'; "
+        "$form.MaximizeBox = $false; $form.MinimizeBox = $false; $form.ShowInTaskbar = $true; "
+        f"$iconPath = {_powershell_quote(str(icon_payload_path()))}; "
+        "if (Test-Path -LiteralPath $iconPath) { $form.Icon = New-Object System.Drawing.Icon($iconPath) }; "
+        "$header = New-Object System.Windows.Forms.Panel; $header.Dock = 'Top'; $header.Height = 70; "
+        "$header.BackColor = [System.Drawing.Color]::FromArgb(23,53,75); $form.Controls.Add($header); "
+        "$titleLabel = New-Object System.Windows.Forms.Label; $titleLabel.AutoSize = $false; "
+        "$titleLabel.Location = New-Object System.Drawing.Point(22,15); "
+        "$titleLabel.Size = New-Object System.Drawing.Size(510,40); "
+        "$titleLabel.ForeColor = [System.Drawing.Color]::White; "
+        "$titleLabel.Font = New-Object System.Drawing.Font('Segoe UI Semibold',14); "
+        f"$titleLabel.Text = {_powershell_quote(instruction)}; $header.Controls.Add($titleLabel); "
+        "$contentLabel = New-Object System.Windows.Forms.Label; $contentLabel.AutoSize = $false; "
+        "$contentLabel.Location = New-Object System.Drawing.Point(24,91); "
+        "$contentLabel.Size = New-Object System.Drawing.Size(510,70); "
+        "$contentLabel.Font = New-Object System.Drawing.Font('Segoe UI',9); "
+        f"$contentLabel.Text = {_powershell_quote(content)}; $form.Controls.Add($contentLabel); "
+        "$action = New-Object System.Windows.Forms.Button; "
+        "$action.Location = New-Object System.Drawing.Point(274,186); "
+        "$action.Size = New-Object System.Drawing.Size(150,36); "
+        "$action.BackColor = [System.Drawing.Color]::FromArgb(23,111,166); "
+        "$action.ForeColor = [System.Drawing.Color]::White; $action.FlatStyle = 'Flat'; "
+        f"$action.Text = {_powershell_quote(action_text)}; "
+        "$action.Add_Click({ $form.Tag = 'confirmed'; $form.Close() }); $form.Controls.Add($action); "
+        "$cancel = New-Object System.Windows.Forms.Button; "
+        "$cancel.Location = New-Object System.Drawing.Point(434,186); "
+        "$cancel.Size = New-Object System.Drawing.Size(100,36); $cancel.Text = 'Abbrechen'; "
+        "$cancel.Add_Click({ $form.Close() }); $form.Controls.Add($cancel); "
+        "$form.AcceptButton = $action; $form.CancelButton = $cancel; "
+        "$form.Add_Shown({ $action.Focus() }); [void]$form.ShowDialog(); "
+        "if ($form.Tag -eq 'confirmed') { exit 0 } else { exit 1 }"
+    )
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-STA",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+        check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    return result.returncode == 0
+
+
 def main() -> int:
     target = installation_path()
+    is_update = target.exists()
+    version = application_version()
+    if not confirm_installation(is_update, version):
+        return 0
     try:
         if "--silent" in sys.argv:
             print(f"Installiere {payload_path()} nach {target}")
@@ -132,8 +226,8 @@ def main() -> int:
         subprocess.Popen([str(target)], close_fds=True)
     show_message(
         "showinfo",
-        "Installation abgeschlossen",
-        f"Die Anwendung wurde installiert unter:\n{target.parent}\n\n"
+        "Update abgeschlossen" if is_update else "Installation abgeschlossen",
+        f"Die Anwendung wurde {'aktualisiert' if is_update else 'installiert'} unter:\n{target.parent}\n\n"
         "Eine Verknüpfung wurde auf dem Desktop erstellt.\n\n"
         "Spätere Versionen werden mit derselben Setup-EXE installiert.",
     )
