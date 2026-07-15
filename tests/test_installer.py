@@ -1,25 +1,30 @@
 from __future__ import annotations
 
 import unittest
+from tempfile import TemporaryDirectory
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
-from installer import installer
+from installer import installer, windows_dialog
 
 
 class InstallerTests(unittest.TestCase):
     def test_first_install_prompt_uses_installation_action(self) -> None:
-        title, instruction, _content, action = installer.prompt_text(False, "0.1.19")
+        title, instruction, _content, action = installer.prompt_text(False, "0.1.20")
 
         self.assertEqual("Installation bestätigen", title)
-        self.assertIn("0.1.19", instruction)
+        self.assertIn("0.1.20", instruction)
         self.assertEqual("Installation ausführen", action)
 
     def test_update_prompt_uses_update_action(self) -> None:
-        title, instruction, content, action = installer.prompt_text(True, "0.1.19")
+        title, instruction, content, action = installer.prompt_text(True, "0.1.20", "0.1.14")
 
         self.assertEqual("Update bestätigen", title)
-        self.assertIn("0.1.19", instruction)
+        self.assertIn("0.1.20", instruction)
+        self.assertIn("Installierte Version: 0.1.14", content)
+        self.assertIn("Neue Version: 0.1.20", content)
+        self.assertIn("Update: 0.1.14 → 0.1.20", content)
         self.assertIn("Einstellungen", content)
         self.assertEqual("Update ausführen", action)
 
@@ -42,17 +47,69 @@ class InstallerTests(unittest.TestCase):
         target = Path(r"C:\Users\Test\AppData\Local\Programs\DokumentenScannerSortierung\app.exe")
         uninstaller = target.parent / installer.UNINSTALLER_FILENAME
 
-        values = installer.installed_app_values(target, uninstaller, "0.1.19", 123_456)
+        values = installer.installed_app_values(target, uninstaller, "0.1.20", 123_456)
 
         self.assertEqual("Simon Hagen – Glas Hagen", values["Publisher"])
         self.assertEqual("simon.hagen@glashagen.de", values["Contact"])
-        self.assertEqual("0.1.19", values["DisplayVersion"])
+        self.assertEqual("0.1.20", values["DisplayVersion"])
         self.assertIn(str(uninstaller), str(values["UninstallString"]))
         self.assertEqual(1, values["NoModify"])
         self.assertEqual(1, values["NoRepair"])
 
     def test_uninstaller_payload_uses_embedded_source_filename(self) -> None:
         self.assertEqual("uninstall.ps1", installer.uninstaller_payload_path().name)
+
+    def test_update_completion_contains_version_transition(self) -> None:
+        target = Path(r"C:\Users\Test\AppData\Local\Programs\DokumentenScannerSortierung\app.exe")
+
+        title, instruction, content = installer.completion_text(True, "0.1.20", "0.1.14", target)
+
+        self.assertEqual("Update abgeschlossen", title)
+        self.assertEqual("Update erfolgreich abgeschlossen", instruction)
+        self.assertIn("Update: 0.1.14 → 0.1.20", content)
+        self.assertIn(str(target.parent), content)
+
+    def test_legacy_version_is_detected_from_existing_log(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "Programme" / installer.APPLICATION_FILENAME
+            log_folder = root / "Roaming" / installer.APPLICATION_FOLDER / "logs"
+            log_folder.mkdir(parents=True)
+            (log_folder / "dokumentensortierer.log").write_text(
+                "2026-07-14 INFO root: Anwendung gestartet; Version 0.1.14\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict("os.environ", {"APPDATA": str(root / "Roaming")}):
+                version = installer.installed_application_version(target)
+
+        self.assertEqual("0.1.14", version)
+
+    def test_installed_version_file_has_priority(self) -> None:
+        with TemporaryDirectory() as directory:
+            target = Path(directory) / installer.APPLICATION_FILENAME
+            (target.parent / installer.VERSION_FILENAME).write_text("0.1.20\n", encoding="utf-8")
+
+            version = installer.installed_application_version(target)
+
+        self.assertEqual("0.1.20", version)
+
+    @patch("installer.windows_dialog.subprocess.run")
+    def test_completion_dialog_offers_checked_launch_and_finish_button(self, run: object) -> None:
+        run.return_value = SimpleNamespace(returncode=0)
+
+        should_launch = windows_dialog.show_completion(
+            "Update abgeschlossen",
+            "Update erfolgreich abgeschlossen",
+            "Update: 0.1.14 → 0.1.20",
+            Path("app.ico"),
+        )
+
+        script = run.call_args.args[0][-1]
+        self.assertTrue(should_launch)
+        self.assertIn("$launch.Checked = $true", script)
+        self.assertIn("Anwendung starten", script)
+        self.assertIn("Installation beenden", script)
 
 
 if __name__ == "__main__":

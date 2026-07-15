@@ -90,7 +90,7 @@ Falls Tesseract nicht mit der EXE mitgeliefert und nicht im Windows-Pfad hinterl
 Das Release wird als zwei EXE-Dateien erzeugt:
 
 - `DokumentenScannerSortierung-<Version>.exe` ist die portable Anwendung.
-- `DokumentenScannerSortierung-Setup.exe` fragt vor jeder Änderung nach. Bei einer Erstinstallation steht **Installation ausführen**, bei einer vorhandenen Version **Update ausführen** zur Auswahl; **Abbrechen** beendet das Setup ohne Änderungen. Anschließend installiert das Setup die Anwendung unter `%LOCALAPPDATA%\Programs\DokumentenScannerSortierung`, erstellt eine Desktop-Verknüpfung und startet sie.
+- `DokumentenScannerSortierung-Setup.exe` fragt vor jeder Änderung nach. Bei einer Erstinstallation steht **Installation ausführen**, bei einer vorhandenen Version **Update ausführen** zur Auswahl; **Abbrechen** beendet das Setup ohne Änderungen. Bei Updates zeigt die Maske die installierte Version, die neue Version und den Versionswechsel an. Anschließend installiert das Setup die Anwendung unter `%LOCALAPPDATA%\Programs\DokumentenScannerSortierung` und erstellt eine Desktop-Verknüpfung. Die gleich gestaltete Abschlussmaske enthält die standardmäßig aktivierte Checkbox **Anwendung starten** sowie die Schaltfläche **Installation beenden**.
 
 Die Setup-Version wird zusätzlich unter **Windows-Einstellungen > Apps > Installierte Apps** registriert. Dort erscheint sie mit Version, Programmsymbol und dem Herausgeber `Simon Hagen – Glas Hagen`. Als Supportkontakt ist `simon.hagen@glashagen.de` hinterlegt. Die Windows-Schaltfläche **Deinstallieren** entfernt Programmdateien, Desktop-Verknüpfung und Registrierung. Einstellungen und Protokolle unter `%APPDATA%\DokumentenScannerSortierung` sowie sämtliche Eingangs-, Ziel-, Archiv- und Prüfordner bleiben erhalten.
 
@@ -103,7 +103,7 @@ Pro Einstellungsdatei kann nur eine Programminstanz laufen. Ein erneuter Start �
 Zum Erzeugen der Dateien im Entwicklungsordner:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.19
+.\scripts\build-release.ps1 -Version 0.1.20
 ```
 
 Die Dateien liegen danach im Ordner `release`.
@@ -111,7 +111,7 @@ Die Dateien liegen danach im Ordner `release`.
 Soll Tesseract direkt in die Anwendung eingebettet werden, wird der installierte Tesseract-Ordner angegeben. Der Ordner muss `tesseract.exe` und `tessdata` enthalten:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.19 -TesseractDir "C:\Program Files\Tesseract-OCR"
+.\scripts\build-release.ps1 -Version 0.1.20 -TesseractDir "C:\Program Files\Tesseract-OCR"
 ```
 
 Alternativ kann der Ordner als `vendor\Tesseract-OCR` ins Projekt gelegt werden; dann wird er automatisch mitgenommen.
@@ -120,10 +120,10 @@ Zum Vorbereiten dieses Ordners kann das Hilfsskript verwendet werden:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.19
+.\scripts\build-release.ps1 -Version 0.1.20
 ```
 
-Der Release 0.1.19 liefert Tesseract `5.5.2` mit Leptonica `1.85.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Das signierte GitHub-Release 5.5.2 stellt nur Quellcodearchive bereit. Fuer Windows werden deshalb `tesseract.exe` und `libtesseract-5.5.dll` aus dem MSYS2-Paket `mingw-w64-x86_64-tesseract-ocr-5.5.2-1` verwendet, das aus diesem Release gebaut wurde. Seine SHA-256-Pruefsumme lautet `6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA`.
+Der Release 0.1.20 liefert Tesseract `5.5.2` mit Leptonica `1.85.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` direkt in der Anwendung mit. Das signierte GitHub-Release 5.5.2 stellt nur Quellcodearchive bereit. Fuer Windows werden deshalb `tesseract.exe` und `libtesseract-5.5.dll` aus dem MSYS2-Paket `mingw-w64-x86_64-tesseract-ocr-5.5.2-1` verwendet, das aus diesem Release gebaut wurde. Seine SHA-256-Pruefsumme lautet `6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA`.
 
 Die passend fixierten GCC- und Winpthreads-Laufzeitpakete werden ebenfalls nur nach erfolgreicher SHA-256-Pruefung eingebunden. Die uebrigen Bild-, Archiv- und Netzwerkbibliotheken stammen aus dem bereits geprueften Windows-Laufzeitunterbau des Releases 5.5.0. Das Vorbereitungsskript dokumentiert alle Paketversionen und Pruefsummen direkt in seinen Parametern.
 

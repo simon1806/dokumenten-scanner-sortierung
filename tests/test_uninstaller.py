@@ -16,6 +16,7 @@ class UninstallerTests(unittest.TestCase):
         self.assertIn("$ShortcutFilename", script)
         self.assertIn("$RegistryPath", script)
         self.assertIn("Remove-Item -LiteralPath $installedFile -Force -ErrorAction Stop", script)
+        self.assertIn('$VersionFilename = "version.txt"', script)
 
     def test_windows_uninstall_command_uses_hidden_powershell_script(self) -> None:
         self.assertTrue(product.UNINSTALLER_FILENAME.endswith(".ps1"))

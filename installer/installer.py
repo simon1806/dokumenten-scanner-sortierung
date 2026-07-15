@@ -8,6 +8,7 @@ als Update-Mechanismus.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,7 +32,7 @@ if __package__:
         UNINSTALLER_FILENAME,
         VERSION_FILENAME,
     )
-    from .windows_dialog import powershell_quote, show_confirmation
+    from .windows_dialog import powershell_quote, show_completion, show_confirmation
 else:
     from product import (  # type: ignore[no-redef]
         APPLICATION_FILENAME,
@@ -49,7 +50,7 @@ else:
         UNINSTALLER_FILENAME,
         VERSION_FILENAME,
     )
-    from windows_dialog import powershell_quote, show_confirmation  # type: ignore[no-redef]
+    from windows_dialog import powershell_quote, show_completion, show_confirmation  # type: ignore[no-redef]
 
 
 def payload_path() -> Path:
@@ -147,7 +148,7 @@ def show_message(kind: str, title: str, message: str) -> None:
     ctypes.windll.user32.MessageBoxW(None, message, title, icon)
 
 
-def prompt_text(is_update: bool, version: str) -> tuple[str, str, str, str]:
+def _base_prompt_text(is_update: bool, version: str) -> tuple[str, str, str, str]:
     if is_update:
         return (
             "Update bestätigen",
@@ -165,11 +166,86 @@ def prompt_text(is_update: bool, version: str) -> tuple[str, str, str, str]:
     )
 
 
-def confirm_installation(is_update: bool, version: str) -> bool:
+def installed_application_version(target: Path | None = None) -> str | None:
+    target = target or installation_path()
+    version_file = target.parent / VERSION_FILENAME
+    try:
+        version = version_file.read_text(encoding="utf-8-sig").strip()
+        if version:
+            return version
+    except OSError:
+        pass
+
+    try:
+        import winreg
+
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, UNINSTALL_REGISTRY_PATH) as key:
+            value, _value_type = winreg.QueryValueEx(key, "DisplayVersion")
+    except (ImportError, OSError):
+        pass
+    else:
+        version = str(value).strip()
+        if version:
+            return version
+
+    app_data = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    log_folder = app_data / APPLICATION_FOLDER / "logs"
+    log_files = [log_folder / "dokumentensortierer.log"]
+    log_files.extend(sorted(log_folder.glob("dokumentensortierer-*.log"), reverse=True))
+    pattern = re.compile(r"Anwendung gestartet;\s*(?:Version\s+|version=)(\d+(?:\.\d+)+)", re.IGNORECASE)
+    for log_file in log_files:
+        try:
+            matches = pattern.findall(log_file.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            continue
+        if matches:
+            return matches[-1]
+    return None
+
+
+def prompt_text(is_update: bool, version: str, installed_version: str | None = None) -> tuple[str, str, str, str]:
+    title, instruction, content, action_text = _base_prompt_text(is_update, version)
+    if is_update:
+        current_version = installed_version or "Unbekannt"
+        content = (
+            f"Installierte Version: {current_version}\n"
+            f"Neue Version: {version}\n"
+            f"Update: {current_version} → {version}\n\n"
+            f"{content}"
+        )
+    return title, instruction, content, action_text
+
+
+def confirm_installation(is_update: bool, version: str, installed_version: str | None = None) -> bool:
     if "--silent" in sys.argv:
         return True
-    title, instruction, content, action_text = prompt_text(is_update, version)
+    title, instruction, content, action_text = prompt_text(is_update, version, installed_version)
     return show_confirmation(title, instruction, content, action_text, icon_payload_path())
+
+
+def completion_text(
+    is_update: bool,
+    version: str,
+    installed_version: str | None,
+    target: Path,
+) -> tuple[str, str, str]:
+    if is_update:
+        current_version = installed_version or "Unbekannt"
+        return (
+            "Update abgeschlossen",
+            "Update erfolgreich abgeschlossen",
+            f"Installierte Version: {current_version}\n"
+            f"Neue Version: {version}\n"
+            f"Update: {current_version} → {version}\n\n"
+            f"Installationsordner: {target.parent}",
+        )
+    return (
+        "Installation abgeschlossen",
+        "Installation erfolgreich abgeschlossen",
+        f"Installierte Version: {version}\n\n"
+        f"Installationsordner: {target.parent}\n"
+        "Eine Verknüpfung wurde auf dem Desktop erstellt.",
+    )
 
 
 def installed_app_values(target: Path, uninstaller: Path, version: str, estimated_size_kb: int) -> dict[str, str | int]:
@@ -209,7 +285,8 @@ def main() -> int:
     target = installation_path()
     is_update = target.exists()
     version = application_version()
-    if not confirm_installation(is_update, version):
+    installed_version = installed_application_version(target) if is_update else None
+    if not confirm_installation(is_update, version, installed_version):
         return 0
     try:
         if "--silent" in sys.argv:
@@ -221,6 +298,8 @@ def main() -> int:
         shutil.copy2(notice_payload_path(), installed_notice)
         installed_icon = target.parent / ICON_FILENAME
         shutil.copy2(icon_payload_path(), installed_icon)
+        installed_version_file = target.parent / VERSION_FILENAME
+        shutil.copy2(version_payload_path(), installed_version_file)
         installed_uninstaller = target.parent / UNINSTALLER_FILENAME
         shutil.copy2(uninstaller_payload_path(), installed_uninstaller)
         (target.parent / LEGACY_UNINSTALLER_FILENAME).unlink(missing_ok=True)
@@ -229,7 +308,7 @@ def main() -> int:
             target,
             installed_uninstaller,
             version,
-            (target, installed_notice, installed_icon, installed_uninstaller),
+            (target, installed_notice, installed_icon, installed_version_file, installed_uninstaller),
         )
         notify_shell_icon_change(installed_icon)
         notify_shell_icon_change(Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop" / SHORTCUT_FILENAME)
@@ -245,15 +324,24 @@ def main() -> int:
         show_message("showerror", "Installation fehlgeschlagen", str(error))
         return 1
 
-    if "--no-launch" not in sys.argv:
+    if "--silent" in sys.argv:
+        should_launch = "--no-launch" not in sys.argv
+        show_message(
+            "showinfo",
+            "Update abgeschlossen" if is_update else "Installation abgeschlossen",
+            f"Version {version} wurde erfolgreich installiert.",
+        )
+    else:
+        title, instruction, content = completion_text(is_update, version, installed_version, target)
+        should_launch = show_completion(
+            title,
+            instruction,
+            content,
+            icon_payload_path(),
+            start_application="--no-launch" not in sys.argv,
+        )
+    if should_launch:
         subprocess.Popen([str(target)], close_fds=True)
-    show_message(
-        "showinfo",
-        "Update abgeschlossen" if is_update else "Installation abgeschlossen",
-        f"Die Anwendung wurde {'aktualisiert' if is_update else 'installiert'} unter:\n{target.parent}\n\n"
-        "Eine Verknüpfung wurde auf dem Desktop erstellt.\n\n"
-        "Spätere Versionen werden mit derselben Setup-EXE installiert.",
-    )
     return 0
 
 

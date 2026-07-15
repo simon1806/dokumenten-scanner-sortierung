@@ -69,3 +69,68 @@ def show_confirmation(
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     return result.returncode == 0
+
+
+def show_completion(
+    title: str,
+    instruction: str,
+    content: str,
+    icon_path: Path,
+    start_application: bool = True,
+) -> bool:
+    checked = "$true" if start_application else "$false"
+    script = (
+        "Add-Type -AssemblyName System.Windows.Forms; "
+        "Add-Type -AssemblyName System.Drawing; "
+        "$form = New-Object System.Windows.Forms.Form; "
+        f"$form.Text = {powershell_quote(title)}; "
+        "$form.ClientSize = New-Object System.Drawing.Size(560,275); "
+        "$form.StartPosition = 'CenterScreen'; $form.FormBorderStyle = 'FixedDialog'; "
+        "$form.MaximizeBox = $false; $form.MinimizeBox = $false; $form.ShowInTaskbar = $true; "
+        f"$iconPath = {powershell_quote(str(icon_path))}; "
+        "if (Test-Path -LiteralPath $iconPath) { $form.Icon = New-Object System.Drawing.Icon($iconPath) }; "
+        "$header = New-Object System.Windows.Forms.Panel; $header.Dock = 'Top'; $header.Height = 70; "
+        "$header.BackColor = [System.Drawing.Color]::FromArgb(23,53,75); $form.Controls.Add($header); "
+        "$titleLabel = New-Object System.Windows.Forms.Label; $titleLabel.AutoSize = $false; "
+        "$titleLabel.Location = New-Object System.Drawing.Point(22,15); "
+        "$titleLabel.Size = New-Object System.Drawing.Size(510,40); "
+        "$titleLabel.ForeColor = [System.Drawing.Color]::White; "
+        "$titleLabel.Font = New-Object System.Drawing.Font('Segoe UI Semibold',14); "
+        f"$titleLabel.Text = {powershell_quote(instruction)}; $header.Controls.Add($titleLabel); "
+        "$contentLabel = New-Object System.Windows.Forms.Label; $contentLabel.AutoSize = $false; "
+        "$contentLabel.Location = New-Object System.Drawing.Point(24,91); "
+        "$contentLabel.Size = New-Object System.Drawing.Size(510,82); "
+        "$contentLabel.Font = New-Object System.Drawing.Font('Segoe UI',9); "
+        f"$contentLabel.Text = {powershell_quote(content)}; $form.Controls.Add($contentLabel); "
+        "$launch = New-Object System.Windows.Forms.CheckBox; "
+        "$launch.Location = New-Object System.Drawing.Point(24,181); "
+        "$launch.Size = New-Object System.Drawing.Size(250,28); "
+        "$launch.Font = New-Object System.Drawing.Font('Segoe UI',9); "
+        "$launch.Text = 'Anwendung starten'; "
+        f"$launch.Checked = {checked}; $form.Controls.Add($launch); "
+        "$finish = New-Object System.Windows.Forms.Button; "
+        "$finish.Location = New-Object System.Drawing.Point(354,218); "
+        "$finish.Size = New-Object System.Drawing.Size(180,36); "
+        "$finish.BackColor = [System.Drawing.Color]::FromArgb(23,111,166); "
+        "$finish.ForeColor = [System.Drawing.Color]::White; $finish.FlatStyle = 'Flat'; "
+        "$finish.Text = 'Installation beenden'; "
+        "$finish.Add_Click({ if ($launch.Checked) { $form.Tag = 'launch' } "
+        "else { $form.Tag = 'close' }; $form.Close() }); $form.Controls.Add($finish); "
+        "$form.AcceptButton = $finish; "
+        "$form.Add_Shown({ $finish.Focus() }); [void]$form.ShowDialog(); "
+        "if ($form.Tag -eq 'launch') { exit 0 } else { exit 2 }"
+    )
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-STA",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+        check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    return result.returncode == 0

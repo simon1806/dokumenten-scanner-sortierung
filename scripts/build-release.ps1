@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.19",
+    [string]$Version = "0.1.20",
     [string]$TesseractDir = ""
 )
 

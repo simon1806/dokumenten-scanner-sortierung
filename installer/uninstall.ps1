@@ -8,6 +8,7 @@ $ApplicationFolder = "DokumentenScannerSortierung"
 $ApplicationFilename = "DokumentenScannerSortierung.exe"
 $NoticeFilename = "THIRD_PARTY_NOTICES.md"
 $IconFilename = "DokumentenScannerSortierung.ico"
+$VersionFilename = "version.txt"
 $LegacyUninstallerFilename = "DokumentenScannerSortierung-Deinstallieren.exe"
 $ShortcutFilename = "Dokumenten-Scanner-Sortierung.lnk"
 $RegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DokumentenScannerSortierung"
@@ -111,6 +112,7 @@ try {
         $ApplicationFilename,
         $NoticeFilename,
         $IconFilename,
+        $VersionFilename,
         $LegacyUninstallerFilename
     )) {
         $installedFile = Join-Path $InstallFolder $filename
