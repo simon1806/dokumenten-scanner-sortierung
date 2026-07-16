@@ -28,11 +28,11 @@ Mehrseitige Dokumente bleiben zusammen. Werden in einem Scan mehrere Dokumentanf
 | Aufmaßschein/-blatt | Barcode oder Dokumentüberschrift | `AM_<Dokumentnummer>.pdf` |
 | Empfangsschein | Barcode oder `Empfangsschein-Nr.` | `EM_<Empfangsschein-Nr.>.pdf` |
 | Montageinfo/-bericht | Überschrift und Auftragsnummer | `MI_<Auftragsnummer>.pdf` |
-| Nowak-Lieferschein | `NOWAK GLAS` und vollständige Lieferscheinnummer, einschließlich führender `47` | `LS-Nowak-<Lieferscheinnummer>.pdf` |
+| Nowak-Lieferschein | Nowak-Kopf und vollständige Lieferscheinnummer ohne festen Nummernpräfix | `LS-Nowak-<Lieferscheinnummer>.pdf` |
 | Heitzer-Lieferschein | `Heitzer AG` und Lieferscheinnummer | `LS-Heitzer-<Lieferscheinnummer>.pdf` |
 | Pauli-Lieferschein | `Pauli + Sohn` und Nummer/Datum | `LS-Pauli-<Lieferscheinnummer>.pdf` |
 
-Vorhandener PDF-Text und Barcodes werden vor der langsameren OCR ausgewertet. Falls OCR nötig ist, wird zuerst nur der Kopfbereich geprüft. Bei mehrseitigen Scans arbeiten höchstens zwei OCR-Prozesse gleichzeitig.
+Vorhandener PDF-Text und Barcodes werden vor der langsameren OCR ausgewertet. Bei Nowak wird gezielt der kleine Bereich oben rechts neben dem Barcode gelesen; dadurch entfällt normalerweise die Ganzseiten-OCR. Falls weitere OCR nötig ist, wird zuerst nur der allgemeine Kopfbereich geprüft. Bei mehrseitigen Scans arbeiten höchstens zwei OCR-Prozesse gleichzeitig.
 
 ## Datensicherheit und Wiederanlauf
 
@@ -122,7 +122,7 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.1.24 enthält:
+Release 0.1.25 enthält:
 
 - Tesseract OCR 5.5.2
 - Leptonica 1.87.0
@@ -171,11 +171,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.1.24 bauen:
+OCR-Paket vorbereiten und Release 0.1.25 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.1.24
+.\scripts\build-release.ps1 -Version 0.1.25
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.

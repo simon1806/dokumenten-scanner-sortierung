@@ -47,12 +47,24 @@ def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> Detect
     normalised = normalise(text)
     barcode_values = tuple(barcodes)
 
-    if "NOWAK GLAS" in normalised:
+    nowak_name = bool(
+        re.search(r"\bNOWAK\s+G[A-Z]{1,5}\b", normalised)
+        or "GLAS-NOWAK" in normalised
+        or "GLAS NOWAK" in normalised
+    )
+    nowak_contact = "LIEFERSCHEIN" in normalised and "60686" in normalised
+    if nowak_name or nowak_contact:
         number = extract_number(
             normalised,
-            r"(?:LIEFERSCHEIN\s*(?:NR\.?\s*)?)?\b(47\d{5,10})\b",
+            rf"LIEFERSCHEIN\s*(?:NR\.?\s*)?{NUMBER}",
             barcode_values,
         )
+        if not number:
+            # Manche OCR-Laeufe erkennen das Wort "Lieferschein" nicht, lesen
+            # die sieben- bis zwoelfstellige Belegnummer unter dem Nowak-Kopf
+            # aber korrekt. Kurze Kunden- und Routennummern bleiben unberuehrt.
+            match = re.search(r"\b(\d{7,12})\b", normalised)
+            number = match.group(1) if match else None
         if number:
             return DetectedDocument("LS", number, "Nowak")
 
@@ -175,6 +187,17 @@ class PageRecognizer:
         if detected:
             return detected
 
+        # Nowak druckt Lieferant, Belegart und Lieferscheinnummer stets in
+        # einem kleinen Bereich oben rechts direkt neben dem Barcode. Dieser
+        # gezielte OCR-Lauf benoetigt weniger als ein Fuenftel des bisherigen
+        # Kopfbereichs. Andere Dokumenttypen werden hier absichtlich nicht
+        # akzeptiert und durchlaufen weiterhin die allgemeine Erkennung.
+        nowak_text = self._read_ocr(self._nowak_header_crop(image))
+        detected = detect_document_from_text(nowak_text, barcodes)
+        if detected and detected.supplier == "Nowak":
+            LOGGER.info("Nowak-Schnellerkennung verwendet; lieferschein=%s", detected.number)
+            return detected
+
         header_text = self._read_ocr(self._header_crop(image))
         detected = detect_document_from_text(header_text, barcodes)
         if detected:
@@ -204,6 +227,18 @@ class PageRecognizer:
     def _header_crop(image: object):
         width, height = image.size
         return image.crop((0, 0, width, max(1, round(height * 0.35))))
+
+    @staticmethod
+    def _nowak_header_crop(image: object):
+        width, height = image.size
+        return image.crop(
+            (
+                round(width * 0.39),
+                round(height * 0.025),
+                max(1, round(width * 0.75)),
+                max(1, round(height * 0.205)),
+            )
+        )
 
     @staticmethod
     def _read_barcodes(image: object) -> tuple[str, ...]:

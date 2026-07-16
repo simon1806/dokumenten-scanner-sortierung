@@ -72,6 +72,8 @@ class RecognitionTests(unittest.TestCase):
         self.assertEqual("EM_6260367.pdf", detected.filename)
 
     def test_header_ocr_skips_full_page_ocr_when_document_is_detected(self) -> None:
+        crop_boxes: list[tuple[int, int, int, int]] = []
+
         class ScanPage:
             @staticmethod
             def get_text(_mode: str) -> str:
@@ -82,20 +84,25 @@ class RecognitionTests(unittest.TestCase):
 
             @staticmethod
             def crop(box: tuple[int, int, int, int]) -> object:
-                self.assertEqual((0, 0, 1000, 490), box)
+                crop_boxes.append(box)
                 return "Kopfbereich"
 
         recognizer = PageRecognizer(Settings())
         with (
             patch.object(recognizer, "_render", return_value=ScanImage()),
             patch.object(recognizer, "_read_barcodes", return_value=()),
-            patch.object(recognizer, "_read_ocr", return_value="Montagebericht Auftrag: 3260635") as read_ocr,
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Kein Nowak-Lieferschein", "Montagebericht Auftrag: 3260635"),
+            ) as read_ocr,
         ):
             detected = recognizer.recognise(ScanPage())
 
         self.assertIsNotNone(detected)
         self.assertEqual("MI_3260635.pdf", detected.filename)
-        read_ocr.assert_called_once_with("Kopfbereich")
+        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 490)], crop_boxes)
+        self.assertEqual(("Kopfbereich",), read_ocr.call_args_list[1].args)
 
     def test_full_page_ocr_remains_fallback_after_unsuccessful_header(self) -> None:
         class ScanPage:
@@ -118,15 +125,19 @@ class RecognitionTests(unittest.TestCase):
             patch.object(
                 recognizer,
                 "_read_ocr",
-                side_effect=("Kein Dokumentkopf", "Empfangsschein-Nr. 6260367"),
+                side_effect=(
+                    "Kein Nowak-Lieferschein",
+                    "Kein Dokumentkopf",
+                    "Empfangsschein-Nr. 6260367",
+                ),
             ) as read_ocr,
         ):
             detected = recognizer.recognise(ScanPage())
 
         self.assertIsNotNone(detected)
         self.assertEqual("EM_6260367.pdf", detected.filename)
-        self.assertEqual(("Kopfbereich",), read_ocr.call_args_list[0].args)
-        self.assertEqual((image,), read_ocr.call_args_list[1].args)
+        self.assertEqual(("Kopfbereich",), read_ocr.call_args_list[1].args)
+        self.assertEqual((image,), read_ocr.call_args_list[2].args)
 
     def test_aufmassblatt(self) -> None:
         detected = detect_document_from_text("AUFMASSBLATT 3250672\nKunden-Nummer 11959", ["3250672"])
@@ -157,6 +168,56 @@ class RecognitionTests(unittest.TestCase):
         detected = detect_document_from_text("NOWAK GLAS\nFirma Inh. Andreas Hagen 4783804 Kreuzstrasse")
         self.assertIsNotNone(detected)
         self.assertEqual("LS-Nowak-4783804.pdf", detected.filename)
+
+    def test_nowak_delivery_note_accepts_previous_46_prefix(self) -> None:
+        detected = detect_document_from_text("NOWAK GLAS\nLIEFERSCHEIN 4683804")
+        self.assertIsNotNone(detected)
+        self.assertEqual("LS-Nowak-4683804.pdf", detected.filename)
+
+    def test_nowak_delivery_note_accepts_future_48_prefix(self) -> None:
+        detected = detect_document_from_text("Glas-Nowak Marl GmbH\nLIEFERSCHEIN 4883804")
+        self.assertIsNotNone(detected)
+        self.assertEqual("LS-Nowak-4883804.pdf", detected.filename)
+
+    def test_nowak_ocr_contact_signature_tolerates_imperfect_logo(self) -> None:
+        detected = detect_document_from_text(
+            "x Nowak Gis\nTel: 02365/60686-0\nLIEFERSCHEIN\n4783804"
+        )
+        self.assertIsNotNone(detected)
+        self.assertEqual("LS-Nowak-4783804.pdf", detected.filename)
+
+    def test_numeric_barcode_without_nowak_signature_is_not_a_nowak_document(self) -> None:
+        detected = detect_document_from_text("Unbekannter Lieferant", ["4783804"])
+        self.assertIsNone(detected)
+
+    def test_nowak_fast_area_skips_large_ocr_regions(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                return_value="Tel: 02365/60686-0 LIEFERSCHEIN 4883804",
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("LS-Nowak-4883804.pdf", detected.filename)
+        read_ocr.assert_called_once_with(("Ausschnitt", (390, 35, 750, 287)))
 
     def test_heitzer_delivery_note(self) -> None:
         detected = detect_document_from_text("Heitzer AG\nLIEFERSCHEIN 26060887 vom 16.06.2026")

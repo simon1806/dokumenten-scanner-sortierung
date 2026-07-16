@@ -1,5 +1,12 @@
 # Änderungsprotokoll
 
+## 0.1.25 – 2026-07-16
+
+- Nowak-Lieferscheine werden über einen kleinen, gezielten Kopfbereich oben rechts deutlich schneller erkannt.
+- Die Lieferscheinnummer ist nicht mehr auf den bisherigen Präfix `47` beschränkt; auch vorherige, künftige und andere vollständige Nummern werden unterstützt.
+- Unvollständig gelesene Nowak-Logos werden mit dem stabilen Lieferantenkopf abgesichert, ohne beliebige numerische Barcodes fälschlich Nowak zuzuordnen.
+- Der vorhandene 5-seitige Nowak-Testscan wird weiterhin in vier Dokumente getrennt; die Erkennungszeit sank im lokalen Vergleich von 17,54 auf etwa 3,6 Sekunden.
+
 ## 0.1.24 – 2026-07-15
 
 - Transaktionale Verarbeitung mit persistenten Pending-Vorgängen und automatischem Wiederanlauf ergänzt.
