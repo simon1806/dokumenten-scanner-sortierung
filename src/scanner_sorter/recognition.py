@@ -13,6 +13,9 @@ from .config import Settings, find_tesseract_executable
 from .models import DetectedDocument
 
 NUMBER = r"(\d{6,12})"
+NOWAK_NUMBER = r"(\d{7,12})"
+NOWAK_CONTACT_FRAGMENT = "60686"
+NOWAK_FAST_CROP = (0.39, 0.025, 0.75, 0.205)
 LOGGER = logging.getLogger(__name__)
 
 # Schutzgrenzen fuer unbeaufsichtigte Serververarbeitung. Uebliche Scanner-PDFs
@@ -42,18 +45,23 @@ def extract_number(text: str, expression: str, barcodes: Iterable[str]) -> str |
     return None
 
 
+def is_nowak_header(text: str) -> bool:
+    """Recognise the stable Nowak header even when the logo OCR is imperfect."""
+    has_name = bool(
+        re.search(r"\bNOWAK\s+G[A-Z]{1,5}\b", text)
+        or "GLAS-NOWAK" in text
+        or "GLAS NOWAK" in text
+    )
+    has_contact = "LIEFERSCHEIN" in text and NOWAK_CONTACT_FRAGMENT in text
+    return has_name or has_contact
+
+
 def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> DetectedDocument | None:
     """Recognise the supported document headers from OCR text and barcode values."""
     normalised = normalise(text)
     barcode_values = tuple(barcodes)
 
-    nowak_name = bool(
-        re.search(r"\bNOWAK\s+G[A-Z]{1,5}\b", normalised)
-        or "GLAS-NOWAK" in normalised
-        or "GLAS NOWAK" in normalised
-    )
-    nowak_contact = "LIEFERSCHEIN" in normalised and "60686" in normalised
-    if nowak_name or nowak_contact:
+    if is_nowak_header(normalised):
         number = extract_number(
             normalised,
             rf"LIEFERSCHEIN\s*(?:NR\.?\s*)?{NUMBER}",
@@ -63,7 +71,7 @@ def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> Detect
             # Manche OCR-Laeufe erkennen das Wort "Lieferschein" nicht, lesen
             # die sieben- bis zwoelfstellige Belegnummer unter dem Nowak-Kopf
             # aber korrekt. Kurze Kunden- und Routennummern bleiben unberuehrt.
-            match = re.search(r"\b(\d{7,12})\b", normalised)
+            match = re.search(rf"\b{NOWAK_NUMBER}\b", normalised)
             number = match.group(1) if match else None
         if number:
             return DetectedDocument("LS", number, "Nowak")
@@ -231,12 +239,13 @@ class PageRecognizer:
     @staticmethod
     def _nowak_header_crop(image: object):
         width, height = image.size
+        left, top, right, bottom = NOWAK_FAST_CROP
         return image.crop(
             (
-                round(width * 0.39),
-                round(height * 0.025),
-                max(1, round(width * 0.75)),
-                max(1, round(height * 0.205)),
+                round(width * left),
+                round(height * top),
+                max(1, round(width * right)),
+                max(1, round(height * bottom)),
             )
         )
 

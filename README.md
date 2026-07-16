@@ -120,6 +120,12 @@ Die administrativen Schalter `--allow-downgrade` und `--allow-unknown-version` h
 
 Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmaske bietet die standardmäßig aktivierte Option **Anwendung starten**.
 
+## Server-Pilot und Freigaben
+
+Version 0.1.25 ist die vorbereitete Pilotversion für den Serverbetrieb. Vor einer produktiven Freigabe werden mit den tatsächlichen Serverpfaden mindestens je ein Aufmaßschein, Empfangsschein, Montageinfo, Nowak-Lieferschein und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner sowie ein Wiederanlauf der Anwendung geprüft.
+
+Version 0.2 wird erst nach diesem erfolgreichen Server-Pilot erstellt. Sie steht dann für die bestätigte produktive Inbetriebnahme, nicht lediglich für einen weiteren technischen Zwischenstand.
+
 ## Mitgelieferte OCR-Komponenten
 
 Release 0.1.25 enthält:

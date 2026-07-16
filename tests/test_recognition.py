@@ -9,6 +9,7 @@ from scanner_sorter.recognition import (
     OCR_TIMEOUT_SECONDS,
     PageRecognizer,
     detect_document_from_text,
+    is_nowak_header,
 )
 
 
@@ -185,6 +186,11 @@ class RecognitionTests(unittest.TestCase):
         )
         self.assertIsNotNone(detected)
         self.assertEqual("LS-Nowak-4783804.pdf", detected.filename)
+
+    def test_nowak_header_requires_name_or_stable_contact_signature(self) -> None:
+        self.assertTrue(is_nowak_header("NOWAK GLAS"))
+        self.assertTrue(is_nowak_header("LIEFERSCHEIN 4783804 TEL: 02365/60686-0"))
+        self.assertFalse(is_nowak_header("LIEFERSCHEIN 4783804"))
 
     def test_numeric_barcode_without_nowak_signature_is_not_a_nowak_document(self) -> None:
         detected = detect_document_from_text("Unbekannter Lieferant", ["4783804"])
