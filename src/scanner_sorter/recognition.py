@@ -16,6 +16,7 @@ NUMBER = r"(\d{6,12})"
 NOWAK_NUMBER = r"(\d{7,12})"
 NOWAK_CONTACT_FRAGMENT = "60686"
 NOWAK_FAST_CROP = (0.39, 0.025, 0.75, 0.205)
+MONTAGE_FAST_CROP = (0.0, 0.02, 1.0, 0.24)
 ASSIGNMENT_DECLARATION_SIGNAL = "ABTRETUNGSERKLARUNG"
 ASSIGNMENT_NUMBER_CROP = (0.08, 0.43, 0.78, 0.67)
 ASSIGNMENT_NUMBER = r"((?:32|52)\d{5})"
@@ -86,6 +87,11 @@ def is_assignment_declaration(text: str) -> bool:
     # The fixed word stem remains specific enough to avoid accepting unrelated
     # documents while still recognising the scanned original template.
     return bool(re.search(r"\bABTRETUNGSERK[A-Z]{0,5}RUNG\b", normalise(text)))
+
+
+def has_montage_order_hint(text: str) -> bool:
+    """Return whether the small top-right OCR crop warrants an MI lookup."""
+    return bool(re.search(r"\bAUFTRAG\s*:", normalise(text)))
 
 
 def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> DetectedDocument | None:
@@ -246,6 +252,16 @@ class PageRecognizer:
             LOGGER.info("Nowak-Schnellerkennung verwendet; lieferschein=%s", detected.number)
             return detected
 
+        # Montageberichte drucken ihre Auftragsnummer im selben kleinen Bereich
+        # wie Nowak oben rechts. Sie erhalten nur bei diesem Hinweis einen
+        # schmalen Formularstreifen statt des deutlich größeren Kopfbereichs.
+        if has_montage_order_hint(nowak_text):
+            montage_text = self._read_ocr(self._montage_header_crop(image))
+            detected = detect_document_from_text(montage_text, barcodes)
+            if detected and detected.document_type == "MI":
+                LOGGER.info("Montageinfo-Schnellerkennung verwendet; auftrag=%s", detected.number)
+                return detected
+
         header_text = self._read_ocr(self._header_crop(image))
         detected = detect_document_from_text(header_text, barcodes)
         if detected:
@@ -293,6 +309,20 @@ class PageRecognizer:
     def _nowak_header_crop(image: object):
         width, height = image.size
         left, top, right, bottom = NOWAK_FAST_CROP
+        return image.crop(
+            (
+                round(width * left),
+                round(height * top),
+                max(1, round(width * right)),
+                max(1, round(height * bottom)),
+            )
+        )
+
+    @staticmethod
+    def _montage_header_crop(image: object):
+        """Read the short form band containing a Montagebericht's order number."""
+        width, height = image.size
+        left, top, right, bottom = MONTAGE_FAST_CROP
         return image.crop(
             (
                 round(width * left),

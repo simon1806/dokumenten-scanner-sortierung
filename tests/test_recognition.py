@@ -107,6 +107,39 @@ class RecognitionTests(unittest.TestCase):
         self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 490)], crop_boxes)
         self.assertEqual(("Kopfbereich",), read_ocr.call_args_list[1].args)
 
+    def test_montage_fast_area_skips_large_header_ocr(self) -> None:
+        crop_boxes: list[tuple[int, int, int, int]] = []
+
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                crop_boxes.append(box)
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Auftrag: 3260455", "Montagebericht Auftrag: 3260455"),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("MI_3260455.pdf", detected.filename)
+        self.assertEqual([(390, 35, 750, 287), (0, 28, 1000, 336)], crop_boxes)
+        self.assertEqual(2, read_ocr.call_count)
+
     def test_full_page_ocr_remains_fallback_after_unsuccessful_header(self) -> None:
         class ScanPage:
             @staticmethod
