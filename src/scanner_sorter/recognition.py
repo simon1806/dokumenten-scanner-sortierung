@@ -20,6 +20,7 @@ MONTAGE_FAST_CROP = (0.0, 0.02, 1.0, 0.24)
 ASSIGNMENT_DECLARATION_SIGNAL = "ABTRETUNGSERKLARUNG"
 ASSIGNMENT_NUMBER_CROP = (0.08, 0.43, 0.78, 0.67)
 ASSIGNMENT_NUMBER = r"((?:32|52)\d{5})"
+NEUMA_ORDER = r"(?:I|1|\|)\s*[-–—]\s*(20\d{2})\s*[-–—]\s*(\d{6})"
 SUPPORTED_DOCUMENT_SIGNALS = (
     "AUFMASSBLATT",
     "AUFMASS SCHEIN",
@@ -32,6 +33,7 @@ SUPPORTED_DOCUMENT_SIGNALS = (
     "GLAS NOWAK",
     "NOWAK",
     ASSIGNMENT_DECLARATION_SIGNAL,
+    "NEUMA",
 )
 LOGGER = logging.getLogger(__name__)
 
@@ -94,6 +96,12 @@ def has_montage_order_hint(text: str) -> bool:
     return bool(re.search(r"\bAUFTRAG\s*:", normalise(text)))
 
 
+def is_neuma_order(text: str) -> bool:
+    """Return whether OCR text contains a Neue Marler Baugesellschaft order."""
+    normalised = normalise(text)
+    return "NEUMA" in normalised and bool(re.search(rf"\bAUFTRAG\s+{NEUMA_ORDER}\b", normalised))
+
+
 def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> DetectedDocument | None:
     """Recognise the supported document headers from OCR text and barcode values."""
     normalised = normalise(text)
@@ -106,6 +114,12 @@ def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> Detect
         )
         if match:
             return DetectedDocument("ABTRET", match.group(1))
+
+    if is_neuma_order(normalised):
+        match = re.search(rf"\bAUFTRAG\s+{NEUMA_ORDER}\b", normalised)
+        if match:
+            year, sequence = match.groups()
+            return DetectedDocument("EM", f"I-{year}-{sequence}", "NEUMA")
 
     if is_nowak_header(normalised):
         number = extract_number(

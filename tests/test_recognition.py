@@ -11,6 +11,7 @@ from scanner_sorter.recognition import (
     detect_document_from_text,
     has_supported_document_signal,
     is_assignment_declaration,
+    is_neuma_order,
     is_nowak_header,
 )
 
@@ -294,6 +295,24 @@ class RecognitionTests(unittest.TestCase):
                 "Abtretungserklaerung bei Versicherungsschaeden\nAuftrag/Angebot 6260569"
             )
         )
+
+    def test_neuma_signed_customer_receipt(self) -> None:
+        detected = detect_document_from_text(
+            "NEUMA\nNeue Marler Baugesellschaft mbH\nAuftrag I-2026-003443 vom 05.06.2026"
+        )
+        self.assertIsNotNone(detected)
+        self.assertEqual("EM-NEUMA-I-2026-003443.pdf", detected.filename)
+
+    def test_neuma_order_normalises_ocr_variants_of_i(self) -> None:
+        for prefix in ("1", "|"):
+            text = f"NEUMA\nAuftrag {prefix}-2026-003061 vom 18.05.2026"
+            detected = detect_document_from_text(text)
+            self.assertIsNotNone(detected)
+            self.assertEqual("EM-NEUMA-I-2026-003061.pdf", detected.filename)
+            self.assertTrue(is_neuma_order(text))
+
+    def test_neuma_order_requires_customer_signature(self) -> None:
+        self.assertIsNone(detect_document_from_text("Auftrag I-2026-003443 vom 05.06.2026"))
 
     def test_nowak_delivery_note_keeps_complete_number(self) -> None:
         detected = detect_document_from_text("NOWAK GLAS\nLIEFERSCHEIN 4783804")
