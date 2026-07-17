@@ -189,6 +189,29 @@ class AppTests(unittest.TestCase):
         window.root.after.assert_called_once_with(100, window._poll_worker_messages)
         self.assertEqual("poll-id", window._worker_poll_after_id)
 
+    def test_autostart_starts_monitoring_and_hides_only_when_tray_is_available(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.start = Mock()
+        window.watcher = SimpleNamespace(running=True)
+        window.tray_icon = object()
+        window.hide_to_tray = Mock()
+
+        window._start_from_autostart()
+
+        window.start.assert_called_once_with()
+        window.hide_to_tray.assert_called_once_with()
+
+    def test_autostart_keeps_window_open_when_tray_is_unavailable(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.start = Mock()
+        window.watcher = SimpleNamespace(running=True)
+        window.tray_icon = None
+        window.hide_to_tray = Mock()
+
+        window._start_from_autostart()
+
+        window.hide_to_tray.assert_not_called()
+
     def test_headless_mode_reports_corrupt_settings_without_traceback(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "settings.json"
@@ -201,6 +224,22 @@ class AppTests(unittest.TestCase):
             self.assertEqual(2, result)
             self.assertIn("beschädigt oder nicht lesbar", stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_autostart_argument_opens_window_with_automatic_monitoring(self) -> None:
+        settings_path = Path("autostart-settings.json")
+        instance = object()
+        with (
+            patch("scanner_sorter.app.acquire_single_instance", return_value=(True, instance)),
+            patch("scanner_sorter.app.configure_logging"),
+            patch("scanner_sorter.app.release_single_instance") as release,
+            patch("scanner_sorter.app.SettingsWindow") as window_type,
+        ):
+            result = main(["--autostart", "--settings", str(settings_path)])
+
+        self.assertEqual(0, result)
+        window_type.assert_called_once_with(settings_path, start_monitoring=True)
+        window_type.return_value.run.assert_called_once_with()
+        release.assert_called_once_with(instance)
 
     def test_self_test_runs_before_mutex_and_settings_access(self) -> None:
         with (

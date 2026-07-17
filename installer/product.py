@@ -4,6 +4,8 @@ from __future__ import annotations
 APPLICATION_FILENAME = "DokumentenScannerSortierung.exe"
 APPLICATION_FOLDER = "DokumentenScannerSortierung"
 SHORTCUT_FILENAME = "Dokumenten-Scanner-Sortierung.lnk"
+STARTUP_SHORTCUT_FILENAME = "Dokumenten-Scanner-Sortierung.lnk"
+AUTOSTART_ARGUMENT = "--autostart"
 NOTICE_FILENAME = "THIRD_PARTY_NOTICES.md"
 ICON_FILENAME = "DokumentenScannerSortierung.ico"
 PAYLOAD_ICON_FILENAME = "dokumenten-scanner-sortierung.ico"

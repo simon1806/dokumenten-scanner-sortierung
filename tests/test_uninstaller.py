@@ -14,6 +14,7 @@ class UninstallerTests(unittest.TestCase):
         self.assertNotIn("APPDATA\\DokumentenScannerSortierung", script)
         self.assertIn("$ApplicationFilename", script)
         self.assertIn("$ShortcutFilename", script)
+        self.assertIn('[Environment]::GetFolderPath("Startup")', script)
         self.assertIn("$RegistryPath", script)
         self.assertIn("Remove-Item -LiteralPath $installedFile -Force -ErrorAction Stop", script)
         self.assertIn('$VersionFilename = "version.txt"', script)

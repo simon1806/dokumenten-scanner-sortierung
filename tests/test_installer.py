@@ -159,6 +159,19 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(1, values["NoModify"])
         self.assertEqual(1, values["NoRepair"])
 
+    @patch("installer.installer.subprocess.run")
+    def test_startup_shortcut_starts_application_in_autostart_mode(self, run: object) -> None:
+        target = Path(r"C:\Users\Test\Programs\DokumentenScannerSortierung\app.exe")
+        icon = target.parent / installer.ICON_FILENAME
+
+        installer.create_startup_shortcut(target, icon)
+
+        script = run.call_args.args[0][-1]
+        self.assertIn("GetFolderPath('Startup')", script)
+        self.assertIn(installer.AUTOSTART_ARGUMENT, script)
+        self.assertIn("$shortcut.Arguments", script)
+        self.assertIn(str(target), script)
+
     def test_uninstaller_payload_uses_embedded_source_filename(self) -> None:
         self.assertEqual("uninstall.ps1", installer.uninstaller_payload_path().name)
 

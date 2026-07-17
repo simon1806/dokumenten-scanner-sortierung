@@ -488,7 +488,7 @@ class ToolTip:
 
 
 class SettingsWindow:
-    def __init__(self, settings_path: Path):
+    def __init__(self, settings_path: Path, *, start_monitoring: bool = False):
         import tkinter as tk
         from tkinter import ttk
 
@@ -539,6 +539,8 @@ class SettingsWindow:
         self._schedule_worker_message_poll()
         self._apply_window_icon()
         self._start_tray_icon()
+        if start_monitoring:
+            self.root.after(250, self._start_from_autostart)
 
     @staticmethod
     def _app_image(size: int) -> object:
@@ -1278,6 +1280,12 @@ class SettingsWindow:
         self.root.withdraw()
         logging.info("Fenster in den Windows-Infobereich ausgeblendet.")
 
+    def _start_from_autostart(self) -> None:
+        """Start monitoring after logon and stay accessible through the tray icon."""
+        self.start()
+        if self.watcher and self.watcher.running and self.tray_icon is not None:
+            self.hide_to_tray()
+
     def _current_settings(self) -> Settings:
         try:
             retention = int(self.fields["archive_retention_days"].get())
@@ -1507,6 +1515,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Dokumenten-Scanner-Sortierung")
     parser.add_argument("--run", action="store_true", help="Überwachung ohne Benutzeroberfläche starten")
     parser.add_argument(
+        "--autostart",
+        action="store_true",
+        help="Nach der Windows-Anmeldung Überwachung starten und in den Infobereich ausblenden",
+    )
+    parser.add_argument(
         "--self-test",
         action="store_true",
         help="Mitgelieferte Laufzeitkomponenten prüfen und ohne Datenänderung beenden",
@@ -1538,7 +1551,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.run:
                 return run_headless(args.settings)
 
-            window = SettingsWindow(args.settings)
+            window = SettingsWindow(args.settings, start_monitoring=args.autostart)
             window.run()
             return 0
         except ConfigurationError as error:

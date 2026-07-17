@@ -122,6 +122,8 @@ try {
     }
     $desktop = [Environment]::GetFolderPath("Desktop")
     Remove-Item -LiteralPath (Join-Path $desktop $ShortcutFilename) -Force -ErrorAction SilentlyContinue
+    $startup = [Environment]::GetFolderPath("Startup")
+    Remove-Item -LiteralPath (Join-Path $startup $ShortcutFilename) -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $RegistryPath -Force -ErrorAction SilentlyContinue
 } catch [System.UnauthorizedAccessException] {
     Show-Message "Deinstallation nicht möglich" (

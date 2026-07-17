@@ -25,6 +25,7 @@ if __package__:
     from .product import (
         APPLICATION_FILENAME,
         APPLICATION_FOLDER,
+        AUTOSTART_ARGUMENT,
         DISPLAY_NAME,
         ICON_FILENAME,
         INSTALL_ACTION_DOWNGRADE,
@@ -41,6 +42,7 @@ if __package__:
         PUBLISHER,
         SETUP_MUTEX_NAME,
         SHORTCUT_FILENAME,
+        STARTUP_SHORTCUT_FILENAME,
         SUPPORT_EMAIL,
         UNINSTALL_REGISTRY_PATH,
         UNINSTALLER_FILENAME,
@@ -51,6 +53,7 @@ else:
     from product import (  # type: ignore[no-redef]
         APPLICATION_FILENAME,
         APPLICATION_FOLDER,
+        AUTOSTART_ARGUMENT,
         DISPLAY_NAME,
         ICON_FILENAME,
         INSTALL_ACTION_DOWNGRADE,
@@ -67,6 +70,7 @@ else:
         PUBLISHER,
         SETUP_MUTEX_NAME,
         SHORTCUT_FILENAME,
+        STARTUP_SHORTCUT_FILENAME,
         SUPPORT_EMAIL,
         UNINSTALL_REGISTRY_PATH,
         UNINSTALLER_FILENAME,
@@ -969,16 +973,22 @@ def installation_path() -> Path:
     return local_app_data / "Programs" / APPLICATION_FOLDER / APPLICATION_FILENAME
 
 
-def create_desktop_shortcut(
+def _create_windows_shortcut(
     target: Path,
     icon_path: Path | None = None,
     backup_path: Path | None = None,
+    *,
+    known_folder: str,
+    arguments: str = "",
+    fallback_directory: Path | None = None,
 ) -> Path:
     icon_path = icon_path or target
     quoted_target = powershell_quote(str(target))
     quoted_working_directory = powershell_quote(str(target.parent))
     quoted_shortcut_name = powershell_quote(SHORTCUT_FILENAME)
     quoted_icon = powershell_quote(str(icon_path))
+    quoted_known_folder = powershell_quote(known_folder)
+    arguments_script = f"$shortcut.Arguments = {powershell_quote(arguments)}; " if arguments else ""
     backup_script = ""
     recovery_script = (
         "if (-not $shortcutExisted -and (Test-Path -LiteralPath $shortcutPath)) { "
@@ -1002,8 +1012,8 @@ def create_desktop_shortcut(
         backup_script = "$shortcutExisted = Test-Path -LiteralPath $shortcutPath; "
     script = (
         "$ErrorActionPreference = 'Stop'; "
-        "$desktop = [Environment]::GetFolderPath('Desktop'); "
-        f"$shortcutPath = Join-Path $desktop {quoted_shortcut_name}; "
+        f"$shortcutDirectory = [Environment]::GetFolderPath({quoted_known_folder}); "
+        f"$shortcutPath = Join-Path $shortcutDirectory {quoted_shortcut_name}; "
         f"{backup_script}"
         "try { "
         "$shell = New-Object -ComObject WScript.Shell; "
@@ -1011,6 +1021,7 @@ def create_desktop_shortcut(
         f"$shortcut.TargetPath = {quoted_target}; "
         f"$shortcut.WorkingDirectory = {quoted_working_directory}; "
         f"$shortcut.IconLocation = {quoted_icon}; "
+        f"{arguments_script}"
         "$shortcut.Description = 'Dokumenten-Scanner-Sortierung'; "
         "$shortcut.Save(); Write-Output $shortcutPath "
         "} catch { "
@@ -1038,7 +1049,38 @@ def create_desktop_shortcut(
     output = result.stdout.strip() if isinstance(result.stdout, str) else ""
     if output:
         return Path(output.splitlines()[-1])
+    if fallback_directory is not None:
+        return fallback_directory / SHORTCUT_FILENAME
     return Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop" / SHORTCUT_FILENAME
+
+
+def create_desktop_shortcut(
+    target: Path,
+    icon_path: Path | None = None,
+    backup_path: Path | None = None,
+) -> Path:
+    return _create_windows_shortcut(
+        target,
+        icon_path,
+        backup_path,
+        known_folder="Desktop",
+    )
+
+
+def create_startup_shortcut(
+    target: Path,
+    icon_path: Path | None = None,
+    backup_path: Path | None = None,
+) -> Path:
+    app_data = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    return _create_windows_shortcut(
+        target,
+        icon_path,
+        backup_path,
+        known_folder="Startup",
+        arguments=AUTOSTART_ARGUMENT,
+        fallback_directory=app_data / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup",
+    )
 
 
 def is_application_running(target: Path) -> bool:
@@ -1459,8 +1501,7 @@ def run_installation() -> int:
     transaction: InstallationTransaction | None = None
     registry_snapshot: dict[str, tuple[object, int]] | None = None
     registry_touched = False
-    shortcut_path: Path | None = None
-    shortcut_backup: Path | None = None
+    shortcuts_to_restore: list[tuple[Path, Path]] = []
     cleanup_warning: str | None = None
     try:
         files = validate_payload_bundle(version, payload_files(target))
@@ -1473,8 +1514,12 @@ def run_installation() -> int:
         installed_icon = target.parent / ICON_FILENAME
         installed_version_file = target.parent / VERSION_FILENAME
         installed_uninstaller = target.parent / UNINSTALLER_FILENAME
-        shortcut_backup = transaction.backup_directory / SHORTCUT_FILENAME
-        shortcut_path = create_desktop_shortcut(target, installed_icon, shortcut_backup)
+        desktop_shortcut_backup = transaction.backup_directory / f"desktop-{SHORTCUT_FILENAME}"
+        desktop_shortcut = create_desktop_shortcut(target, installed_icon, desktop_shortcut_backup)
+        shortcuts_to_restore.append((desktop_shortcut, desktop_shortcut_backup))
+        startup_shortcut_backup = transaction.backup_directory / f"startup-{STARTUP_SHORTCUT_FILENAME}"
+        startup_shortcut = create_startup_shortcut(target, installed_icon, startup_shortcut_backup)
+        shortcuts_to_restore.append((startup_shortcut, startup_shortcut_backup))
         registry_touched = True
         register_installed_application(
             target,
@@ -1485,8 +1530,7 @@ def run_installation() -> int:
         cleanup_warning = transaction.commit()
         transaction = None
         registry_touched = False
-        shortcut_path = None
-        shortcut_backup = None
+        shortcuts_to_restore.clear()
     except Exception as error:
         rollback_errors: list[str] = []
         if registry_touched:
@@ -1494,14 +1538,14 @@ def run_installation() -> int:
                 restore_installed_application_registration(registry_snapshot)
             except Exception as rollback_error:
                 rollback_errors.append(f"Windows-Registrierung: {rollback_error}")
-        if shortcut_path is not None:
+        for shortcut_path, shortcut_backup in reversed(shortcuts_to_restore):
             try:
-                if shortcut_backup is not None and shortcut_backup.exists():
+                if shortcut_backup.exists():
                     os.replace(shortcut_backup, shortcut_path)
                 elif shortcut_path.exists():
                     shortcut_path.unlink()
             except OSError as rollback_error:
-                rollback_errors.append(f"Desktop-Verknüpfung: {rollback_error}")
+                rollback_errors.append(f"Autostart- oder Desktop-Verknüpfung: {rollback_error}")
         if transaction is not None:
             try:
                 transaction.rollback()

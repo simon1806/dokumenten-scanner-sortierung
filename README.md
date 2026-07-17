@@ -86,6 +86,10 @@ Die Einstellungen liegen standardmäßig unter:
 
 Die Datei wird atomar gespeichert. Eine beschädigte oder falsch typisierte Einstellungsdatei erzeugt eine verständliche Fehlermeldung und wird nicht stillschweigend überschrieben.
 
+## Autostart
+
+Das Setup legt eine Verknüpfung im Windows-Startordner des installierenden Benutzerkontos an. Nach dessen Windows-Anmeldung startet die Anwendung die Überwachung mit den gespeicherten Einstellungen und wird in den Windows-Infobereich ausgeblendet. Sind die Einstellungen unvollständig oder ungültig, bleibt das Fenster zur Korrektur geöffnet. Die Deinstallation entfernt auch diese Autostart-Verknüpfung.
+
 ## Protokolle
 
 Für jeden Kalendertag entsteht unter `%APPDATA%\DokumentenScannerSortierung\logs` eine eigene UTF-8-Datei, zum Beispiel:
