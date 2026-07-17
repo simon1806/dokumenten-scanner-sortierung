@@ -16,6 +16,9 @@ NUMBER = r"(\d{6,12})"
 NOWAK_NUMBER = r"(\d{7,12})"
 NOWAK_CONTACT_FRAGMENT = "60686"
 NOWAK_FAST_CROP = (0.39, 0.025, 0.75, 0.205)
+ASSIGNMENT_DECLARATION_SIGNAL = "ABTRETUNGSERKLARUNG"
+ASSIGNMENT_NUMBER_CROP = (0.08, 0.43, 0.78, 0.67)
+ASSIGNMENT_NUMBER = r"((?:32|52)\d{5})"
 SUPPORTED_DOCUMENT_SIGNALS = (
     "AUFMASSBLATT",
     "AUFMASS SCHEIN",
@@ -27,6 +30,7 @@ SUPPORTED_DOCUMENT_SIGNALS = (
     "GLAS-NOWAK",
     "GLAS NOWAK",
     "NOWAK",
+    ASSIGNMENT_DECLARATION_SIGNAL,
 )
 LOGGER = logging.getLogger(__name__)
 
@@ -71,13 +75,31 @@ def is_nowak_header(text: str) -> bool:
 def has_supported_document_signal(text: str) -> bool:
     """Return whether header OCR warrants the expensive full-page OCR fallback."""
     normalised = normalise(text)
-    return any(signal in normalised for signal in SUPPORTED_DOCUMENT_SIGNALS)
+    return is_assignment_declaration(normalised) or any(
+        signal in normalised for signal in SUPPORTED_DOCUMENT_SIGNALS
+    )
+
+
+def is_assignment_declaration(text: str) -> bool:
+    """Return whether the page is a Glas Hagen assignment declaration."""
+    # Scanner-OCR occasionally reads the "la" in "Erklaerung" as "ld".
+    # The fixed word stem remains specific enough to avoid accepting unrelated
+    # documents while still recognising the scanned original template.
+    return bool(re.search(r"\bABTRETUNGSERK[A-Z]{0,5}RUNG\b", normalise(text)))
 
 
 def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> DetectedDocument | None:
     """Recognise the supported document headers from OCR text and barcode values."""
     normalised = normalise(text)
     barcode_values = tuple(barcodes)
+
+    if is_assignment_declaration(normalised):
+        match = re.search(
+            rf"AUF?T{{1,2}}RAG\s*/\s*ANGEBOT\s*(?:NR\.?\s*)?(?::\s*)?{ASSIGNMENT_NUMBER}",
+            normalised,
+        )
+        if match:
+            return DetectedDocument("ABTRET", match.group(1))
 
     if is_nowak_header(normalised):
         number = extract_number(
@@ -229,6 +251,13 @@ class PageRecognizer:
         if detected:
             return detected
 
+        if is_assignment_declaration(header_text):
+            assignment_text = self._read_ocr(self._assignment_number_crop(image))
+            detected = detect_document_from_text(f"{header_text}\n{assignment_text}", barcodes)
+            if detected:
+                LOGGER.info("Abtretungserklaerung-Schnellerkennung verwendet; auftrag=%s", detected.number)
+                return detected
+
         if not has_supported_document_signal(header_text):
             LOGGER.info(
                 "Ganzseiten-OCR uebersprungen; keine bekannte Dokument-Signatur im Kopfbereich."
@@ -264,6 +293,20 @@ class PageRecognizer:
     def _nowak_header_crop(image: object):
         width, height = image.size
         left, top, right, bottom = NOWAK_FAST_CROP
+        return image.crop(
+            (
+                round(width * left),
+                round(height * top),
+                max(1, round(width * right)),
+                max(1, round(height * bottom)),
+            )
+        )
+
+    @staticmethod
+    def _assignment_number_crop(image: object):
+        """Read the fixed Auftrag/Angebot field of an assignment declaration."""
+        width, height = image.size
+        left, top, right, bottom = ASSIGNMENT_NUMBER_CROP
         return image.crop(
             (
                 round(width * left),

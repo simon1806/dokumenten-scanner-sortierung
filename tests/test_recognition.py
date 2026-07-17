@@ -10,6 +10,7 @@ from scanner_sorter.recognition import (
     PageRecognizer,
     detect_document_from_text,
     has_supported_document_signal,
+    is_assignment_declaration,
     is_nowak_header,
 )
 
@@ -172,6 +173,43 @@ class RecognitionTests(unittest.TestCase):
         self.assertEqual(2, read_ocr.call_count)
         self.assertIn("Ganzseiten-OCR uebersprungen", "\n".join(captured.output))
 
+    def test_assignment_declaration_reads_targeted_order_field(self) -> None:
+        crop_boxes: list[tuple[int, int, int, int]] = []
+
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                crop_boxes.append(box)
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=(
+                    "Kein Nowak-Lieferschein",
+                    "Abtretungserklaerung bei Versicherungsschaeden",
+                    "Auftrag/Angebot 3260569",
+                ),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("ABTRET_3260569.pdf", detected.filename)
+        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 490), (80, 602, 780, 938)], crop_boxes)
+        self.assertEqual(3, read_ocr.call_count)
+
     def test_aufmassblatt(self) -> None:
         detected = detect_document_from_text("AUFMASSBLATT 3250672\nKunden-Nummer 11959", ["3250672"])
         self.assertIsNotNone(detected)
@@ -191,6 +229,38 @@ class RecognitionTests(unittest.TestCase):
         detected = detect_document_from_text("Montagebericht Auftrag: 3260551 [MI-Nr. 1]")
         self.assertIsNotNone(detected)
         self.assertEqual("MI_3260551.pdf", detected.filename)
+
+    def test_assignment_declaration(self) -> None:
+        detected = detect_document_from_text(
+            "Abtretungserklaerung bei Versicherungsschaeden\nAuftrag / Angebot 3260569"
+        )
+        self.assertIsNotNone(detected)
+        self.assertEqual("ABTRET_3260569.pdf", detected.filename)
+
+    def test_assignment_declaration_accepts_52_prefix(self) -> None:
+        detected = detect_document_from_text(
+            "Abtretungserklaerung bei Versicherungsschaeden\nAuftrag/Angebot: 5212345"
+        )
+        self.assertIsNotNone(detected)
+        self.assertEqual("ABTRET_5212345.pdf", detected.filename)
+
+    def test_assignment_declaration_accepts_scanner_ocr_for_auftrag_label(self) -> None:
+        detected = detect_document_from_text(
+            "Abtretungserkldrung bei Versicherungsschaden\nAuttrag/Angebot 3260569"
+        )
+        self.assertIsNotNone(detected)
+        self.assertEqual("ABTRET_3260569.pdf", detected.filename)
+
+    def test_assignment_declaration_requires_document_type_and_expected_number_prefix(self) -> None:
+        self.assertTrue(is_assignment_declaration("Abtretungserklaerung bei Versicherungsschaeden"))
+        self.assertTrue(is_assignment_declaration("Abtretungserkldrung bei Versicherungsschaden"))
+        self.assertTrue(has_supported_document_signal("Abtretungserklaerung bei Versicherungsschaeden"))
+        self.assertIsNone(detect_document_from_text("Auftrag/Angebot 3260569"))
+        self.assertIsNone(
+            detect_document_from_text(
+                "Abtretungserklaerung bei Versicherungsschaeden\nAuftrag/Angebot 6260569"
+            )
+        )
 
     def test_nowak_delivery_note_keeps_complete_number(self) -> None:
         detected = detect_document_from_text("NOWAK GLAS\nLIEFERSCHEIN 4783804")
