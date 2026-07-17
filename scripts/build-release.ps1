@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.1.25",
+    [string]$Version = "0.2.0",
     [string]$TesseractDir = "",
     [switch]$WithoutBundledTesseract,
     [string]$SignToolPath = "",

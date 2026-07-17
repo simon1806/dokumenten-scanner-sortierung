@@ -1,5 +1,14 @@
 # Änderungsprotokoll
 
+## 0.2.0 – 2026-07-17
+
+- Unbekannte Dokumente werden nach einer erfolglosen Kopferkennung ohne langsame Ganzseiten-OCR unverändert in Ziel- und Prüfordner weitergeleitet.
+- Abtretungserklärungen werden über das Feld `Auftrag/Angebot` als `ABTRET_<Auftrag>.pdf` erkannt.
+- Montageinfos werden über einen gezielten Kopfbereich schneller erkannt und stets als einzelne Seite ausgegeben, auch bei gleicher Auftragsnummer.
+- Neuma-Empfangsscheine werden anhand der Neuma-Auftragsnummer als `EM-NEUMA-I-<Jahr>-<Nummer>.pdf` erkannt.
+- Das Setup richtet den Autostart nach Windows-Anmeldung ein; die Überwachung startet bei gültigen gespeicherten Einstellungen im Windows-Infobereich.
+- Reale manuelle Testscans für Montageinfos und Neuma werden lokal dokumentiert, aber wegen der enthaltenen Daten nicht in das Repository übertragen.
+
 ## 0.1.25 – 2026-07-16
 
 - Nowak-Lieferscheine werden über einen kleinen, gezielten Kopfbereich oben rechts deutlich schneller erkannt.
