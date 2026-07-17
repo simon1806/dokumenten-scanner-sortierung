@@ -304,11 +304,14 @@ class DocumentProcessor:
             )
             LOGGER.warning(
                 "Vorgang abgeschlossen; id=%s; status=nicht_erkannt; datei=%s; groesse_bytes=%s; "
-                "archiv_s=%.3f; gesamt_s=%.3f; ziel=%s; pruefkopie=%s; grund=%s",
+                "archiv_s=%.3f; erkennung_s=%.3f; ausgabe_s=%.3f; gesamt_s=%.3f; "
+                "ziel=%s; pruefkopie=%s; grund=%s",
                 operation_id,
                 source_name,
                 source_size,
                 archive_seconds,
+                recognition_seconds,
+                output_seconds,
                 total_seconds,
                 created[0],
                 created[-1],

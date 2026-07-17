@@ -9,6 +9,7 @@ from scanner_sorter.recognition import (
     OCR_TIMEOUT_SECONDS,
     PageRecognizer,
     detect_document_from_text,
+    has_supported_document_signal,
     is_nowak_header,
 )
 
@@ -128,7 +129,7 @@ class RecognitionTests(unittest.TestCase):
                 "_read_ocr",
                 side_effect=(
                     "Kein Nowak-Lieferschein",
-                    "Kein Dokumentkopf",
+                    "Empfangsschein ohne lesbare Nummer",
                     "Empfangsschein-Nr. 6260367",
                 ),
             ) as read_ocr,
@@ -139,6 +140,37 @@ class RecognitionTests(unittest.TestCase):
         self.assertEqual("EM_6260367.pdf", detected.filename)
         self.assertEqual(("Kopfbereich",), read_ocr.call_args_list[1].args)
         self.assertEqual((image,), read_ocr.call_args_list[2].args)
+
+    def test_unknown_header_skips_full_page_ocr(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                return ("Ausschnitt", box)
+
+        image = ScanImage()
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=image),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Unbekannt", "Rechnung eines fremden Lieferanten"),
+            ) as read_ocr,
+            self.assertLogs("scanner_sorter.recognition", level="INFO") as captured,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNone(detected)
+        self.assertEqual(2, read_ocr.call_count)
+        self.assertIn("Ganzseiten-OCR uebersprungen", "\n".join(captured.output))
 
     def test_aufmassblatt(self) -> None:
         detected = detect_document_from_text("AUFMASSBLATT 3250672\nKunden-Nummer 11959", ["3250672"])
@@ -191,6 +223,11 @@ class RecognitionTests(unittest.TestCase):
         self.assertTrue(is_nowak_header("NOWAK GLAS"))
         self.assertTrue(is_nowak_header("LIEFERSCHEIN 4783804 TEL: 02365/60686-0"))
         self.assertFalse(is_nowak_header("LIEFERSCHEIN 4783804"))
+
+    def test_supported_document_signal_does_not_accept_generic_lieferschein(self) -> None:
+        self.assertTrue(has_supported_document_signal("Montageinfo ohne Auftragsnummer"))
+        self.assertTrue(has_supported_document_signal("Heitzer Lieferschein"))
+        self.assertFalse(has_supported_document_signal("Lieferschein eines unbekannten Lieferanten"))
 
     def test_numeric_barcode_without_nowak_signature_is_not_a_nowak_document(self) -> None:
         detected = detect_document_from_text("Unbekannter Lieferant", ["4783804"])

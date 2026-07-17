@@ -16,6 +16,18 @@ NUMBER = r"(\d{6,12})"
 NOWAK_NUMBER = r"(\d{7,12})"
 NOWAK_CONTACT_FRAGMENT = "60686"
 NOWAK_FAST_CROP = (0.39, 0.025, 0.75, 0.205)
+SUPPORTED_DOCUMENT_SIGNALS = (
+    "AUFMASSBLATT",
+    "AUFMASS SCHEIN",
+    "EMPFANGSSCHEIN",
+    "MONTAGEBERICHT",
+    "MONTAGEINFO",
+    "HEITZER",
+    "PAULI",
+    "GLAS-NOWAK",
+    "GLAS NOWAK",
+    "NOWAK",
+)
 LOGGER = logging.getLogger(__name__)
 
 # Schutzgrenzen fuer unbeaufsichtigte Serververarbeitung. Uebliche Scanner-PDFs
@@ -54,6 +66,12 @@ def is_nowak_header(text: str) -> bool:
     )
     has_contact = "LIEFERSCHEIN" in text and NOWAK_CONTACT_FRAGMENT in text
     return has_name or has_contact
+
+
+def has_supported_document_signal(text: str) -> bool:
+    """Return whether header OCR warrants the expensive full-page OCR fallback."""
+    normalised = normalise(text)
+    return any(signal in normalised for signal in SUPPORTED_DOCUMENT_SIGNALS)
 
 
 def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> DetectedDocument | None:
@@ -210,6 +228,12 @@ class PageRecognizer:
         detected = detect_document_from_text(header_text, barcodes)
         if detected:
             return detected
+
+        if not has_supported_document_signal(header_text):
+            LOGGER.info(
+                "Ganzseiten-OCR uebersprungen; keine bekannte Dokument-Signatur im Kopfbereich."
+            )
+            return None
 
         text = self._read_ocr(image)
         return detect_document_from_text(text, barcodes)

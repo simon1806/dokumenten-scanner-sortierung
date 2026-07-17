@@ -34,6 +34,8 @@ Mehrseitige Dokumente bleiben zusammen. Werden in einem Scan mehrere Dokumentanf
 
 Vorhandener PDF-Text und Barcodes werden vor der langsameren OCR ausgewertet. Bei Nowak wird gezielt der kleine Bereich oben rechts neben dem Barcode gelesen; dadurch entfällt normalerweise die Ganzseiten-OCR. Falls weitere OCR nötig ist, wird zuerst nur der allgemeine Kopfbereich geprüft. Bei mehrseitigen Scans arbeiten höchstens zwei OCR-Prozesse gleichzeitig.
 
+Enthält die Kopferkennung keinen Hinweis auf einen unterstützten Dokumenttyp, wird die zeitaufwendige Ganzseiten-OCR übersprungen. Das Original wird dann unverändert in Ziel- und Prüfordner weitergeleitet. Zeigt der Kopf dagegen einen bekannten Dokumenttyp, aber noch keine lesbare Nummer, bleibt die Ganzseiten-OCR aktiv. So werden unbekannte Dokumente zügig weitergeleitet, ohne schwer lesbare bekannte Dokumente vorschnell auszuschließen.
+
 ## Datensicherheit und Wiederanlauf
 
 Ab Version 0.1.24 wird jeder Scan als persistenter Vorgang verarbeitet:

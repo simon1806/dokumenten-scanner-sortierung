@@ -122,7 +122,8 @@ class ProcessorIntegrationTests(unittest.TestCase):
             processor = DocumentProcessor(Settings(str(incoming), str(output), str(archive)))
             processor.recognizer = StubRecognizer([None])
 
-            result = processor.process(source)
+            with self.assertLogs("scanner_sorter.processing", level="WARNING") as captured:
+                result = processor.process(source)
 
             self.assertFalse(result.success)
             self.assertFalse(source.exists())
@@ -130,6 +131,9 @@ class ProcessorIntegrationTests(unittest.TestCase):
             self.assertTrue((output / "Nicht_erkannt" / "unklar.pdf").exists())
             self.assertEqual(1, len(list(archive.rglob("unklar.pdf"))))
             self.assertEqual(2, len(result.created_files))
+            summary = next(message for message in captured.output if "status=nicht_erkannt" in message)
+            self.assertIn("erkennung_s=", summary)
+            self.assertIn("ausgabe_s=", summary)
 
     def test_archive_retention_starts_when_original_is_archived(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
