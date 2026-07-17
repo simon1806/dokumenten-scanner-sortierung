@@ -15,6 +15,13 @@ class GroupingTests(unittest.TestCase):
 
         self.assertEqual([[0, 1], [2]], [group.page_indexes for group in groups])
 
+    def test_each_montageinfo_starts_a_new_document_even_with_same_order(self) -> None:
+        montageinfo = DetectedDocument("MI", "3260558")
+
+        groups = group_page_detections([montageinfo, montageinfo])
+
+        self.assertEqual([[0], [1]], [group.page_indexes for group in groups])
+
     def test_first_page_must_be_recognised(self) -> None:
         with self.assertRaises(ProcessingError):
             group_page_detections([None, DetectedDocument("AM", "3250672")])

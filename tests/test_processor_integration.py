@@ -110,6 +110,33 @@ class ProcessorIntegrationTests(unittest.TestCase):
             self.assertIn("gesamt_s=", summary)
             self.assertIn("Dauer:", result.message)
 
+    def test_keeps_each_montageinfo_separate_for_the_same_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming = root / "eingang"
+            output = root / "ziel"
+            archive = root / "archiv"
+            incoming.mkdir()
+            source = incoming / "empfang-und-montagen.pdf"
+            self._create_pdf(source, 4)
+            processor = DocumentProcessor(Settings(str(incoming), str(output), str(archive)))
+            processor.recognizer = StubRecognizer(
+                [
+                    DetectedDocument("EM", "6260377"),
+                    None,
+                    DetectedDocument("MI", "3260558"),
+                    DetectedDocument("MI", "3260558"),
+                ]
+            )
+
+            result = processor.process(source)
+
+            self.assertTrue(result.success)
+            self.assertEqual(
+                ["EM_6260377.pdf", "MI_3260558.pdf", "MI_3260558_2.pdf"],
+                sorted(path.name for path in output.glob("*.pdf")),
+            )
+
     def test_forwards_original_without_renaming_on_unrecognised_first_page(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

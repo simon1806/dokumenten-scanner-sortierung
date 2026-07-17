@@ -49,7 +49,10 @@ def group_page_detections(detections: Iterable[DetectedDocument | None]) -> list
             current.page_indexes.append(page_index)
             continue
 
-        if current and current.detected.key == detection.key:
+        # Eine Montageinfo ist fachlich immer ein eigenstaendiger, einseitiger
+        # Bericht. Auch bei derselben Auftragsnummer darf die naechste erkannte
+        # MI daher nicht an die vorherige angehaengt werden.
+        if current and current.detected.key == detection.key and detection.document_type != "MI":
             current.page_indexes.append(page_index)
             continue
 
