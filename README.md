@@ -139,7 +139,7 @@ Version 0.2.0 bündelt die im Server-Pilot geprüften Dokumentregeln und den Aut
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.2.0 enthält:
+Release 0.2.1 enthält:
 
 - Tesseract OCR 5.5.2
 - Leptonica 1.87.0
@@ -199,11 +199,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.2.0 bauen:
+OCR-Paket vorbereiten und Release 0.2.1 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.2.0
+.\scripts\build-release.ps1 -Version 0.2.1
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.
