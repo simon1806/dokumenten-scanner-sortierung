@@ -135,7 +135,7 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Version 0.2.0 bündelt die im Server-Pilot geprüften Dokumentregeln und den Autostart für die produktive Inbetriebnahme. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner sowie ein Wiederanlauf geprüft.
+Version 0.2.1 bündelt die im Server-Pilot geprüften Dokumentregeln sowie die Härtungen für einen stabilen Betrieb nach einem Rückstau. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner sowie ein Wiederanlauf geprüft.
 
 ## Mitgelieferte OCR-Komponenten
 
