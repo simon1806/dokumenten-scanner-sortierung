@@ -45,6 +45,7 @@ class FolderWatcher:
         self._observed: dict[Path, tuple[int, float, float, bool]] = {}
         self._last_cleanup = 0.0
         self._last_recovery = 0.0
+        self._backlog_announced = False
 
     @property
     def running(self) -> bool:
@@ -96,7 +97,7 @@ class FolderWatcher:
         LOGGER.info(
             "Überwachung gestartet; eingang=%s; ziel=%s; archiv=%s; pruefordner=%s; "
             "archiv_tage=%s; dateistabilitaet_s=%s; defekt_timeout_s=%s; abfrage_s=%s; "
-            "ocr_sprachen=%s; tesseract=%s",
+            "stapel_grenze=%s; stapel_pause_s=%s; verarbeitungs_limit_s=%s; ocr_sprachen=%s; tesseract=%s",
             self.settings.input_folder,
             self.settings.output_folder,
             self.settings.archive_folder,
@@ -105,6 +106,9 @@ class FolderWatcher:
             self.settings.settle_seconds,
             self.settings.invalid_pdf_timeout_seconds,
             self.settings.poll_interval_seconds,
+            self.settings.backlog_threshold,
+            self.settings.backlog_pause_seconds,
+            self.settings.processing_timeout_seconds,
             self.settings.ocr_languages,
             self.settings.tesseract_path or "automatisch/mitgeliefert",
         )
@@ -206,6 +210,18 @@ class FolderWatcher:
             if path not in current_files:
                 self._observed.pop(path, None)
 
+        backlog_mode = len(current_files) > self.settings.backlog_threshold
+        if backlog_mode and not self._backlog_announced:
+            message = (
+                f"Stapelmodus aktiv: {len(current_files)} PDFs im Eingang; "
+                f"Pause von {self.settings.backlog_pause_seconds} Sekunden zwischen den Dokumenten."
+            )
+            LOGGER.warning(message)
+            self._notify_status(message)
+            self._backlog_announced = True
+        elif not backlog_mode:
+            self._backlog_announced = False
+
         for path in sorted(current_files):
             # A stop request made while another file was being processed must
             # prevent the next file in this polling batch from being started.
@@ -247,6 +263,9 @@ class FolderWatcher:
                 self._end_operation()
             self._notify_result(result)
             self._notify_status(result.message)
+            remaining_files = any(candidate != path and candidate.exists() for candidate in current_files)
+            if backlog_mode and remaining_files and not self._stop_event.is_set():
+                self._stop_event.wait(self.settings.backlog_pause_seconds)
 
     @staticmethod
     def _pdf_is_complete(path: Path) -> bool:

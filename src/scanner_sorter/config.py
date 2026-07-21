@@ -39,6 +39,9 @@ class Settings:
     settle_seconds: int = 2
     invalid_pdf_timeout_seconds: int = 60
     poll_interval_seconds: int = 1
+    backlog_threshold: int = 3
+    backlog_pause_seconds: int = 10
+    processing_timeout_seconds: int = 90
     tesseract_path: str = ""
     ocr_languages: str = "deu+eng"
 
@@ -89,6 +92,12 @@ class Settings:
             )
         if self.poll_interval_seconds < 1:
             errors.append("Das Prüfintervall muss mindestens eine Sekunde betragen.")
+        if self.backlog_threshold < 1:
+            errors.append("Die Stapelgrenze muss mindestens ein Dokument betragen.")
+        if self.backlog_pause_seconds < 1:
+            errors.append("Die Pause im Stapelmodus muss mindestens eine Sekunde betragen.")
+        if self.processing_timeout_seconds < 10:
+            errors.append("Das Verarbeitungszeitlimit muss mindestens zehn Sekunden betragen.")
         return errors
 
     def ensure_directories(self) -> None:
@@ -174,6 +183,9 @@ def load_settings(path: Path | None = None) -> Settings:
         "settle_seconds",
         "invalid_pdf_timeout_seconds",
         "poll_interval_seconds",
+        "backlog_threshold",
+        "backlog_pause_seconds",
+        "processing_timeout_seconds",
     }
     invalid_fields = [
         key

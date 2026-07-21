@@ -532,6 +532,9 @@ class SettingsWindow:
             "archive_retention_days": tk.StringVar(value=str(self.settings.archive_retention_days)),
             "settle_seconds": tk.StringVar(value=str(self.settings.settle_seconds)),
             "invalid_pdf_timeout_seconds": tk.StringVar(value=str(self.settings.invalid_pdf_timeout_seconds)),
+            "backlog_threshold": tk.StringVar(value=str(self.settings.backlog_threshold)),
+            "backlog_pause_seconds": tk.StringVar(value=str(self.settings.backlog_pause_seconds)),
+            "processing_timeout_seconds": tk.StringVar(value=str(self.settings.processing_timeout_seconds)),
             "tesseract_path": tk.StringVar(value=self.settings.tesseract_path),
         }
         self.status = tk.StringVar(value="Einstellungen speichern und Überwachung starten.")
@@ -824,32 +827,45 @@ class SettingsWindow:
         processing_card.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         processing_body.columnconfigure(0, weight=1)
         processing_body.columnconfigure(1, weight=1)
-        processing_fields = [
-            ("Archiv-Aufbewahrung", "Originale nach dieser Anzahl Tage löschen", "archive_retention_days"),
-            ("Dateistabilität", "Wartezeit nach der letzten Dateiänderung", "settle_seconds"),
-        ]
-        for column, (label, help_text, field) in enumerate(processing_fields):
-            panel = self.tk.Frame(processing_body, background="#FFFFFF")
-            panel.grid(row=0, column=column, sticky="ew", padx=((0, 10) if column == 0 else (10, 0)))
-            panel.columnconfigure(0, weight=1)
-            self.tk.Label(
-                panel, text=label, background="#FFFFFF", foreground="#233746", font=("Segoe UI Semibold", 9)
-            ).grid(row=0, column=0, sticky="w")
-            self.tk.Label(
-                panel,
-                text=help_text,
-                background="#FFFFFF",
-                foreground="#7A8A96",
-                font=("Segoe UI", 8),
-                wraplength=155,
-                justify="left",
-            ).grid(row=1, column=0, sticky="w", pady=(1, 5))
-            self.ttk.Entry(panel, textvariable=self.fields[field], style="Modern.TEntry").grid(
-                row=2, column=0, sticky="ew"
-            )
+        processing_field_rows = (
+            (
+                ("Archiv-Aufbewahrung", "Originale nach dieser Anzahl Tage löschen", "archive_retention_days"),
+                ("Dateistabilität", "Wartezeit nach der letzten Dateiänderung", "settle_seconds"),
+            ),
+            (
+                ("Stapelgrenze", "Ab dieser Anzahl wartender PDFs wird gedrosselt", "backlog_threshold"),
+                ("Stapelpause", "Pause zwischen Dokumenten im Stapelmodus (Sekunden)", "backlog_pause_seconds"),
+            ),
+        )
+        for row, fields in enumerate(processing_field_rows):
+            for column, (label, help_text, field) in enumerate(fields):
+                panel = self.tk.Frame(processing_body, background="#FFFFFF")
+                panel.grid(
+                    row=row,
+                    column=column,
+                    sticky="ew",
+                    padx=((0, 10) if column == 0 else (10, 0)),
+                    pady=((0, 0) if row == 0 else (12, 0)),
+                )
+                panel.columnconfigure(0, weight=1)
+                self.tk.Label(
+                    panel, text=label, background="#FFFFFF", foreground="#233746", font=("Segoe UI Semibold", 9)
+                ).grid(row=0, column=0, sticky="w")
+                self.tk.Label(
+                    panel,
+                    text=help_text,
+                    background="#FFFFFF",
+                    foreground="#7A8A96",
+                    font=("Segoe UI", 8),
+                    wraplength=155,
+                    justify="left",
+                ).grid(row=1, column=0, sticky="w", pady=(1, 5))
+                self.ttk.Entry(panel, textvariable=self.fields[field], style="Modern.TEntry").grid(
+                    row=2, column=0, sticky="ew"
+                )
 
         invalid_pdf_panel = self.tk.Frame(processing_body, background="#FFFFFF")
-        invalid_pdf_panel.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        invalid_pdf_panel.grid(row=2, column=0, sticky="ew", padx=(0, 10), pady=(12, 0))
         invalid_pdf_panel.columnconfigure(0, weight=1)
         self.tk.Label(
             invalid_pdf_panel,
@@ -864,7 +880,7 @@ class SettingsWindow:
             background="#FFFFFF",
             foreground="#7A8A96",
             font=("Segoe UI", 8),
-            wraplength=330,
+            wraplength=155,
             justify="left",
         ).grid(row=1, column=0, sticky="w", pady=(1, 5))
         self.ttk.Entry(
@@ -873,8 +889,33 @@ class SettingsWindow:
             style="Modern.TEntry",
         ).grid(row=2, column=0, sticky="ew")
 
+        processing_timeout_panel = self.tk.Frame(processing_body, background="#FFFFFF")
+        processing_timeout_panel.grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=(12, 0))
+        processing_timeout_panel.columnconfigure(0, weight=1)
+        self.tk.Label(
+            processing_timeout_panel,
+            text="OCR-Gesamtlimit (Sekunden)",
+            background="#FFFFFF",
+            foreground="#233746",
+            font=("Segoe UI Semibold", 9),
+        ).grid(row=0, column=0, sticky="w")
+        self.tk.Label(
+            processing_timeout_panel,
+            text="Maximale OCR-Zeit für einen Scan; verhindert lange Blockaden",
+            background="#FFFFFF",
+            foreground="#7A8A96",
+            font=("Segoe UI", 8),
+            wraplength=155,
+            justify="left",
+        ).grid(row=1, column=0, sticky="w", pady=(1, 5))
+        self.ttk.Entry(
+            processing_timeout_panel,
+            textvariable=self.fields["processing_timeout_seconds"],
+            style="Modern.TEntry",
+        ).grid(row=2, column=0, sticky="ew")
+
         tesseract_panel = self.tk.Frame(processing_body, background="#FFFFFF")
-        tesseract_panel.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        tesseract_panel.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         tesseract_panel.columnconfigure(0, weight=1)
         self.tk.Label(
             tesseract_panel,
@@ -896,7 +937,7 @@ class SettingsWindow:
             row=2, column=0, sticky="ew"
         )
         notice = self.tk.Frame(processing_body, background="#EAF4FA")
-        notice.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        notice.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         self.tk.Label(
             notice,
             text="i",
@@ -1291,9 +1332,12 @@ class SettingsWindow:
             retention = int(self.fields["archive_retention_days"].get())
             settle = int(self.fields["settle_seconds"].get())
             invalid_pdf_timeout = int(self.fields["invalid_pdf_timeout_seconds"].get())
+            backlog_threshold = int(self.fields["backlog_threshold"].get())
+            backlog_pause = int(self.fields["backlog_pause_seconds"].get())
+            processing_timeout = int(self.fields["processing_timeout_seconds"].get())
         except ValueError as error:
             raise ValueError(
-                "Archiv-Aufbewahrung, Stabilitätszeit und PDF-Fehlerwartezeit müssen ganze Zahlen sein."
+                "Aufbewahrung, Wartezeiten, Stapelgrenze und OCR-Gesamtlimit müssen ganze Zahlen sein."
             ) from error
 
         return Settings(
@@ -1305,6 +1349,9 @@ class SettingsWindow:
             settle_seconds=settle,
             invalid_pdf_timeout_seconds=invalid_pdf_timeout,
             poll_interval_seconds=1,
+            backlog_threshold=backlog_threshold,
+            backlog_pause_seconds=backlog_pause,
+            processing_timeout_seconds=processing_timeout,
             tesseract_path=self.fields["tesseract_path"].get().strip(),
             ocr_languages=self.settings.ocr_languages,
         )

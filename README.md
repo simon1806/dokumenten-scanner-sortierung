@@ -43,7 +43,7 @@ Enthält die Kopferkennung keinen Hinweis auf einen unterstützten Dokumenttyp, 
 Ab Version 0.1.24 wird jeder Scan als persistenter Vorgang verarbeitet:
 
 1. Das unveränderte Original wird in einen datierten, von der Anwendung markierten Archivordner kopiert und mit SHA-256 geprüft.
-2. Erst wenn Archivkopie und Vorgangsdatei dauerhaft geschrieben sind, wird die Eingangsdatei atomar übernommen.
+2. Erst wenn Archivkopie und Vorgangsdatei dauerhaft geschrieben sind, wird die Eingangsdatei nach erfolgreicher Ausgabe in den privaten Vorgangsordner übernommen und entfernt. Während der Erkennung bleibt sie im Eingangsordner unverändert; es gibt keine Zwischen-Umbenennung im Eingangsordner.
 3. Alle Teildokumente werden zunächst im eigenen Vorgangsordner erzeugt und geprüft.
 4. Zielseitige Dateien werden ohne Überschreiben vorhandener Dateien veröffentlicht. Bei Namenskonflikten wird eine laufende Nummer ergänzt.
 5. Unterbrochene Vorgänge unter `Archiv\.dokumentensortierer\pending` werden beim Start und anschließend regelmäßig automatisch fortgesetzt.
@@ -63,6 +63,8 @@ Die Oberfläche verwaltet:
 - Archiv-Aufbewahrung in Tagen, Standard 30
 - Dateistabilität nach der letzten Änderung, Standard 2 Sekunden
 - Wartezeit für unvollständige PDFs, Standard 60 Sekunden
+- Stapelgrenze und Stapelpause für einen kontrollierten Wiederanlauf nach Rückstau, Standard 3 PDFs und 10 Sekunden
+- OCR-Gesamtlimit pro Scan, Standard 90 Sekunden
 - optionaler eigener Pfad zu `tesseract.exe`
 
 Eingangs-, Ziel-, Archiv- und Prüfordner müssen getrennt sein und dürfen nicht gefährlich ineinander liegen. Bleibt der Prüfordner leer, wird `Nicht_erkannt` im Zielordner verwendet. Das Ausführungskonto benötigt Änderungsrechte in allen vier Ordnern.
@@ -75,6 +77,9 @@ Schutzgrenzen für den unbeaufsichtigten Betrieb:
 - maximal 250 Seiten pro PDF
 - maximal 50 Millionen gerenderte Pixel pro Seite
 - maximal 60 Sekunden pro Tesseract-Aufruf
+- maximal 90 Sekunden OCR-Gesamtzeit pro Scan
+
+Liegt mehr als eine kleine Anzahl von Scans im Eingang, arbeitet die Überwachung zusätzlich bewusst gedrosselt: Ab vier wartenden PDFs wird zwischen zwei Vorgängen standardmäßig zehn Sekunden pausiert. So bleibt der Betrieb kontrolliert, auch wenn nach einem Ausfall viele Scans gleichzeitig eintreffen. Stapelgrenze, Stapelpause und OCR-Gesamtlimit lassen sich in der Oberfläche unter **Verarbeitung** einstellen.
 
 Bei Überschreitung bleibt das Original erhalten und wird als nicht verarbeitet zur Prüfung weitergeleitet. Abgebrochene OCR-Aufträge einer langen PDF werden nicht unnötig weiter ausgeführt.
 
@@ -151,7 +156,18 @@ Zuerst wird das Setup mit genau dem Windows-Konto ausgeführt, unter dem die sp�
   --settings "C:\ProgramData\DokumentenScannerSortierung\settings.json"
 ```
 
-Nach dem Speichern wird in der Windows-Aufgabenplanung eine Aufgabe eingerichtet:
+Für den produktiven Serverbetrieb muss die Startaufgabe nicht erst auf eine Benutzeranmeldung warten. Sie wird einmalig in der Windows-Aufgabenplanung durch einen Serveradministrator angelegt. Die Einstellungsdatei muss dazu an einem zentralen Ort liegen, beispielsweise:
+
+```powershell
+New-Item -ItemType Directory -Force "C:\ProgramData\DokumentenScannerSortierung"
+Copy-Item "$env:APPDATA\DokumentenScannerSortierung\settings.json" `
+  "C:\ProgramData\DokumentenScannerSortierung\settings.json"
+notepad "C:\ProgramData\DokumentenScannerSortierung\settings.json"
+```
+
+Vor der Einrichtung müssen alle Netzlaufwerke in dieser Datei durch UNC-Pfade ersetzt sein, zum Beispiel `\\srv-gh-app\pool\Dateiarchiv` statt `G:\Dateiarchiv`. Benutzerabhängige Laufwerksbuchstaben stehen einem Systemkonto nach einem Serverneustart nicht zur Verfügung.
+
+Bei einer manuellen Einrichtung in der Windows-Aufgabenplanung gelten dieselben Werte:
 
 - Auslöser: **Beim Starten des Computers**
 - Ausführen unabhängig von der Benutzeranmeldung

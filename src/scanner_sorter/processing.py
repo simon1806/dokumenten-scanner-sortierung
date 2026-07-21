@@ -26,7 +26,7 @@ _ARCHIVE_MARKER = ".dokumentensortierer-archiv-v1"
 _ARCHIVE_MARKER_CONTENT = "DokumentenScannerSortierung archive v1\n"
 _ARCHIVE_METADATA_SUFFIX = ".dokumentensortierer-archiv.json"
 _DATE_FOLDER_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
-_JOB_SCHEMA_VERSION = 1
+_JOB_SCHEMA_VERSION = 2
 
 
 class ProcessingError(RuntimeError):
@@ -113,7 +113,8 @@ class DocumentProcessor:
         if existing_job is not None:
             try:
                 existing = self._load_job(existing_job)
-                self._claim_source_for_job(existing_job, existing)
+                if int(existing["schema_version"]) == 1:
+                    self._claim_source_for_job(existing_job, existing)
             except (OSError, PendingJobError) as error:
                 return self._deferred_result(
                     source_name,
@@ -178,27 +179,6 @@ class DocumentProcessor:
             )
         archive_seconds = time.perf_counter() - archive_started
 
-        try:
-            job = self._load_job(job_file)
-            self._claim_source_for_job(job_file, job)
-        except Exception as error:
-            LOGGER.exception(
-                "Vorgang zurückgestellt; id=%s; status=offen; phase=eingang_claim; "
-                "datei=%s; groesse_bytes=%s; archiv_s=%.3f; gesamt_s=%.3f",
-                operation_id,
-                source_name,
-                source_size,
-                archive_seconds,
-                time.perf_counter() - started,
-            )
-            duration = time.perf_counter() - started
-            return ProcessResult(
-                source_name,
-                False,
-                f"Verarbeitung zurückgestellt; Original ist sicher archiviert und die Eingangsdatei "
-                f"wird erneut atomar übernommen ({error}); Dauer: {duration:.2f} s.",
-            )
-
         return self._run_pending_job(
             job_file,
             started,
@@ -246,7 +226,8 @@ class DocumentProcessor:
                 job = self._load_job(job_file)
                 source_size = int(job.get("source_size", -1))
                 operation_id = str(job["job_id"])
-                self._claim_source_for_job(job_file, job)
+                if int(job.get("schema_version", 1)) == 1:
+                    self._claim_source_for_job(job_file, job)
                 result = self._run_pending_job(
                     job_file,
                     started,
@@ -277,6 +258,8 @@ class DocumentProcessor:
             if job["status"] == "archived":
                 job = self._prepare_job(job_file, job)
             created = self._publish_job(job_file, job)
+            if int(job["schema_version"]) >= 2:
+                self._consume_source_after_publish(job_file, job)
         except PendingJobError as error:
             source_name = self._safe_job_source_name(job_file)
             return self._deferred_result(source_name, operation_id, started, str(error))
@@ -351,6 +334,7 @@ class DocumentProcessor:
         staging.mkdir(parents=True)
         archive_path = Path(str(job["archive_path"]))
 
+        recognition_started = time.perf_counter()
         try:
             groups, page_count, recognition_seconds = self._recognise_groups(archive_path)
         except Exception as recognition_error:
@@ -360,6 +344,7 @@ class DocumentProcessor:
                 staging,
                 archive_path,
                 reason=str(recognition_error),
+                recognition_seconds=time.perf_counter() - recognition_started,
             )
 
         output_started = time.perf_counter()
@@ -586,9 +571,7 @@ class DocumentProcessor:
             "job_id": job_id,
             "source_name": source_name,
             "source_path": str(source.resolve(strict=False)),
-            "source_claim": str(
-                (Path(self.settings.input_folder).expanduser().resolve(strict=False) / f".{job_id}.claim")
-            ),
+            "source_claim": str((job_folder / "source.pdf").resolve(strict=False)),
             "source_size": source_size,
             "source_identity": source_identity,
             "archive_path": str(archive_path.resolve(strict=False)),
@@ -633,7 +616,7 @@ class DocumentProcessor:
         }
         if not required.issubset(job):
             raise PendingJobError("Jobdatei ist unvollständig.")
-        if job["schema_version"] != _JOB_SCHEMA_VERSION:
+        if job["schema_version"] not in {1, _JOB_SCHEMA_VERSION}:
             raise PendingJobError("Jobdatei verwendet eine nicht unterstützte Version.")
         if str(job["job_id"]) != job_file.parent.name:
             raise PendingJobError("Jobkennung und Jobordner stimmen nicht überein.")
@@ -665,11 +648,11 @@ class DocumentProcessor:
         if source_path.parent != input_root or source_path.name != str(job["source_name"]):
             raise PendingJobError("Unsicherer Quellpfad in der Jobdatei.")
         source_claim = Path(str(job["source_claim"])).expanduser().resolve(strict=False)
-        if (
-            source_claim.parent != input_root
-            or source_claim.name != f".{job['job_id']}.claim"
-        ):
-            raise PendingJobError("Unsicherer Claim-Pfad in der Jobdatei.")
+        if int(job["schema_version"]) == 1:
+            if source_claim.parent != input_root or source_claim.name != f".{job['job_id']}.claim":
+                raise PendingJobError("Unsicherer Claim-Pfad in der Jobdatei.")
+        elif source_claim != (job_file.parent / "source.pdf").resolve(strict=False):
+            raise PendingJobError("Unsicherer Übergabepfad in der Jobdatei.")
         identity = job["source_identity"]
         if (
             not isinstance(identity, dict)
@@ -1058,6 +1041,55 @@ class DocumentProcessor:
             ) from error
         LOGGER.info(
             "Neu eingetroffene Datei nach Claim-Identitätsprüfung erhalten; alter_job=%s; datei=%s",
+            job["job_id"],
+            restored,
+        )
+
+    def _consume_source_after_publish(self, job_file: Path, job: dict[str, Any]) -> None:
+        """Remove the original only after all outputs were published.
+
+        New jobs never rename a scanner PDF inside the input folder.  The source is
+        atomically transferred once into its private pending folder only after the
+        archive and all output files have been verified.  A replacement scan with the
+        same name is preserved just as in the legacy claim flow.
+        """
+        self._validate_job(job_file, job, require_plan=True)
+        source = Path(str(job["source_path"]))
+        consumed = Path(str(job["source_claim"]))
+
+        if not consumed.exists() and source.exists():
+            try:
+                self._move_no_clobber(source, consumed)
+            except FileNotFoundError:
+                return
+            except OSError as error:
+                raise PendingJobError(
+                    f"Verarbeitetes Original konnte nicht aus dem Eingang entfernt werden ({error})"
+                ) from error
+
+        if not consumed.exists():
+            return
+
+        if self._source_matches_job(consumed, job):
+            try:
+                consumed.unlink()
+            except OSError as error:
+                raise PendingJobError(
+                    f"Verarbeitetes Original konnte nicht sicher entfernt werden ({error})"
+                ) from error
+            return
+
+        # A newer scanner file appeared under the same public name after this job
+        # was prepared. Put it back without overwriting any new arrival.
+        try:
+            restored = source if not source.exists() else self._available_destination(source.parent, source.name)
+            self._move_no_clobber(consumed, restored)
+        except OSError as error:
+            raise PendingJobError(
+                f"Neu eingetroffene Datei konnte nicht sicher erhalten werden ({error})"
+            ) from error
+        LOGGER.warning(
+            "Neu eingetroffene Datei nach erfolgreicher Ausgabe erhalten; job=%s; datei=%s",
             job["job_id"],
             restored,
         )
