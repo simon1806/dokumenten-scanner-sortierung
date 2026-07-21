@@ -4,6 +4,7 @@ import io
 import logging
 import math
 import re
+import time
 import unicodedata
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -78,8 +79,10 @@ def is_nowak_header(text: str) -> bool:
 def has_supported_document_signal(text: str) -> bool:
     """Return whether header OCR warrants the expensive full-page OCR fallback."""
     normalised = normalise(text)
-    return is_assignment_declaration(normalised) or any(
-        signal in normalised for signal in SUPPORTED_DOCUMENT_SIGNALS
+    return (
+        is_assignment_declaration(normalised)
+        or is_montage_report(normalised)
+        or any(signal in normalised for signal in SUPPORTED_DOCUMENT_SIGNALS)
     )
 
 
@@ -94,6 +97,21 @@ def is_assignment_declaration(text: str) -> bool:
 def has_montage_order_hint(text: str) -> bool:
     """Return whether the small top-right OCR crop warrants an MI lookup."""
     return bool(re.search(r"\bAUFTRAG\s*:", normalise(text)))
+
+
+def is_montage_report(text: str) -> bool:
+    """Recognise a Montagebericht despite the known one-character OCR slip.
+
+    On the scanner form, Tesseract can turn the ``i`` in ``Montagebericht``
+    into a typographic apostrophe (``Montageber’cht``).  This is accepted only
+    as the document header; ``detect_document_from_text`` still requires the
+    explicit ``Auftrag:`` label and a valid document number before naming a
+    scan as a Montageinfo.
+    """
+    normalised = normalise(text)
+    return "MONTAGEINFO" in normalised or bool(
+        re.search(r"\bMONTAGEBER(?:I|['’`])?CHT\b", normalised)
+    )
 
 
 def is_neuma_order(text: str) -> bool:
@@ -159,7 +177,7 @@ def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> Detect
         if number:
             return DetectedDocument("EM", number)
 
-    if "MONTAGEBERICHT" in normalised or "MONTAGEINFO" in normalised:
+    if is_montage_report(normalised):
         number = extract_number(normalised, rf"AUFTRAG\s*(?:NR\.?)?\s*:\s*{NUMBER}", barcode_values)
         if number:
             return DetectedDocument("MI", number)
@@ -188,9 +206,18 @@ class PageRecognizer:
 
     def __init__(self, settings: Settings):
         self.settings = settings
+        self._processing_deadline: float | None = None
 
     def recognise_document(self, source: Path) -> list[DetectedDocument | None]:
         """Recognise pages in order while allowing two OCR processes to work concurrently."""
+        previous_deadline = self._processing_deadline
+        self._processing_deadline = time.monotonic() + self.settings.processing_timeout_seconds
+        try:
+            return self._recognise_document_with_deadline(source)
+        finally:
+            self._processing_deadline = previous_deadline
+
+    def _recognise_document_with_deadline(self, source: Path) -> list[DetectedDocument | None]:
         import fitz
 
         source_size = source.stat().st_size
@@ -229,6 +256,16 @@ class PageRecognizer:
             raise
         finally:
             executor.shutdown(wait=True, cancel_futures=True)
+
+    def _remaining_ocr_seconds(self) -> int:
+        if self._processing_deadline is None:
+            return OCR_TIMEOUT_SECONDS
+        remaining = self._processing_deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError(
+                f"OCR-Gesamtzeitlimit von {self.settings.processing_timeout_seconds} Sekunden überschritten."
+            )
+        return max(1, min(OCR_TIMEOUT_SECONDS, math.ceil(remaining)))
 
     def _recognise_file_page(self, source: Path, page_index: int) -> DetectedDocument | None:
         import fitz
@@ -394,7 +431,7 @@ class PageRecognizer:
                     image,
                     lang=language,
                     config="--psm 6",
-                    timeout=OCR_TIMEOUT_SECONDS,
+                    timeout=self._remaining_ocr_seconds(),
                 )
             except pytesseract.TesseractNotFoundError as error:
                 raise RuntimeError(

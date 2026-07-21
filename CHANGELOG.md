@@ -1,5 +1,14 @@
 # Änderungsprotokoll
 
+## 0.2.1 – 2026-07-21
+
+- Die Eingangsdatei wird während der OCR nicht mehr im Eingangsordner umbenannt. Erst nach vollständig geprüfter Ausgabe wird sie in den privaten Vorgangsordner übernommen und entfernt.
+- Bei einem Rückstau werden Scanvorgänge kontrolliert nacheinander abgearbeitet; standardmäßig pausiert die Anwendung ab vier wartenden PDFs zehn Sekunden zwischen zwei Vorgängen.
+- Eine OCR-Gesamtzeitgrenze von 90 Sekunden pro Scan verhindert, dass mehrere Einzel-Timeouts einen Vorgang unverhältnismäßig lange blockieren.
+- Montageinfos akzeptieren die bekannte OCR-Abweichung `Montageber’cht`, wenn gleichzeitig `Auftrag:` und eine gültige Auftragsnummer vorliegen; dadurch entfällt bei diesen Scans ein zusätzlicher OCR-Kopfbereich.
+- Die Betriebsdokumentation beschreibt die einmalige Einrichtung einer beim Serverboot startenden SYSTEM-Aufgabe mit zentraler Einstellungsdatei und UNC-Pfaden.
+- Die lokalen manuellen Testläufe sind mit repräsentativen Dokumentklassen und getrennten Testordnern dokumentiert; die Test-PDFs bleiben wegen enthaltener personenbezogener Daten außerhalb von Git.
+
 ## 0.2.0 – 2026-07-17
 
 - Unbekannte Dokumente werden nach einer erfolglosen Kopferkennung ohne langsame Ganzseiten-OCR unverändert in Ziel- und Prüfordner weitergeleitet.

@@ -50,7 +50,7 @@ class ProcessorIntegrationTests(unittest.TestCase):
             loaded_jobs: list[str] = []
 
             def load_job(job_file: Path) -> dict[str, object]:
-                return {"job_id": job_file.parent.name, "source_size": 1}
+                return {"job_id": job_file.parent.name, "source_size": 1, "schema_version": 1}
 
             def begin_job(job_file: Path, _job: dict[str, object]) -> None:
                 loaded_jobs.append(job_file.parent.name)
@@ -185,7 +185,7 @@ class ProcessorIntegrationTests(unittest.TestCase):
             self.assertEqual(0, processor.cleanup_archive())
             self.assertTrue(archived.exists())
 
-    def test_pending_job_recovers_when_source_cannot_be_atomically_claimed(self) -> None:
+    def test_pending_job_recovers_when_processed_source_cannot_be_removed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             incoming = root / "eingang"
@@ -199,8 +199,8 @@ class ProcessorIntegrationTests(unittest.TestCase):
             original_move = DocumentProcessor._move_no_clobber
 
             def guarded_move(source_path: Path, destination: Path) -> None:
-                if destination.suffix == ".claim":
-                    raise PermissionError("Test: Eingangsdatei darf nicht beansprucht werden")
+                if destination.name == "source.pdf" and "pending" in destination.parts:
+                    raise PermissionError("Test: verarbeitetes Original darf nicht entfernt werden")
                 original_move(source_path, destination)
 
             with patch.object(DocumentProcessor, "_move_no_clobber", side_effect=guarded_move):
@@ -208,7 +208,7 @@ class ProcessorIntegrationTests(unittest.TestCase):
 
             self.assertFalse(result.success)
             self.assertTrue(source.exists())
-            self.assertEqual([], list(output.glob("*.pdf")))
+            self.assertTrue((output / "LS-Nowak-4783596.pdf").is_file())
             self.assertEqual(1, len(list(archive.glob("????-??-??/*.pdf"))))
             self.assertEqual(
                 1,
@@ -251,7 +251,7 @@ class ProcessorIntegrationTests(unittest.TestCase):
                 first_result = processor.process(source)
 
             self.assertFalse(first_result.success)
-            self.assertFalse(source.exists())
+            self.assertTrue(source.exists())
             self.assertEqual([], list(output.glob("*.pdf")))
             self.assertEqual([], list(output.glob("*.tmp")))
             self.assertEqual(1, len(list((archive / ".dokumentensortierer" / "pending").glob("*/job.json"))))
@@ -414,7 +414,7 @@ class ProcessorIntegrationTests(unittest.TestCase):
                 old_result = processor.process(source)
 
             self.assertFalse(old_result.success)
-            self.assertFalse(source.exists())
+            self.assertTrue(source.exists())
             self.assertEqual(
                 1,
                 len(list((archive / ".dokumentensortierer" / "pending").glob("*/job.json"))),
@@ -422,6 +422,7 @@ class ProcessorIntegrationTests(unittest.TestCase):
 
             # A second scan arrives under exactly the same scanner filename. Calling
             # process directly must not reuse the older pending manifest by path only.
+            source.unlink()
             self._create_pdf(source, 2)
             processor.recognizer = StubRecognizer([DetectedDocument("EM", "6251002"), None])
             new_result = processor.process(source)
@@ -899,6 +900,7 @@ class ProcessorIntegrationTests(unittest.TestCase):
             job = json.loads(job_file.read_text(encoding="utf-8"))
             job["source_name"] = unrelated_source.name
             job["source_path"] = str(unrelated_source.resolve())
+            job["schema_version"] = 1
             job["source_claim"] = str(incoming.resolve() / f".{job['job_id']}.claim")
             job["source_size"] = unrelated_source.stat().st_size
             job["source_identity"] = processor._capture_source_identity(unrelated_source)
@@ -975,7 +977,7 @@ class ProcessorIntegrationTests(unittest.TestCase):
 
             def interrupt_claim_cleanup(path: Path, missing_ok: bool = False) -> None:
                 nonlocal interrupted
-                if path.suffix == ".claim" and not interrupted:
+                if path.name == "source.pdf" and not interrupted:
                     interrupted = True
                     raise PermissionError("Test: Abbruch direkt nach atomarem Claim")
                 original_unlink(path, missing_ok=missing_ok)
@@ -983,17 +985,19 @@ class ProcessorIntegrationTests(unittest.TestCase):
             with patch.object(Path, "unlink", new=interrupt_claim_cleanup):
                 first_result = processor.process(source)
 
-            claims = list(incoming.glob(".*.claim"))
             self.assertFalse(first_result.success)
             self.assertFalse(source.exists())
-            self.assertEqual(1, len(claims))
-            self.assertEqual([], list(output.glob("*.pdf")))
+            self.assertEqual(
+                1,
+                len(list((archive / ".dokumentensortierer" / "pending").glob("*/source.pdf"))),
+            )
+            self.assertTrue((output / "AM_3253003.pdf").is_file())
 
             recovered = processor.recover_incomplete_jobs()
 
             self.assertEqual(1, len(recovered))
             self.assertTrue(recovered[0].success)
-            self.assertEqual([], list(incoming.glob(".*.claim")))
+            self.assertEqual([], list((archive / ".dokumentensortierer" / "pending").glob("*/source.pdf")))
             self.assertTrue((output / "AM_3253003.pdf").is_file())
 
     def test_cleanup_fails_closed_when_any_pending_manifest_is_unreadable(self) -> None:

@@ -26,6 +26,19 @@ class RecognitionTests(unittest.TestCase):
 
         self.assertEqual(OCR_TIMEOUT_SECONDS, image_to_string.call_args.kwargs["timeout"])
 
+    def test_ocr_timeout_is_limited_by_document_deadline(self) -> None:
+        recognizer = PageRecognizer(Settings(processing_timeout_seconds=90))
+        with patch("scanner_sorter.recognition.time.monotonic", return_value=100.2):
+            recognizer._processing_deadline = 108.0
+            self.assertEqual(8, recognizer._remaining_ocr_seconds())
+
+    def test_ocr_deadline_rejects_late_work(self) -> None:
+        recognizer = PageRecognizer(Settings(processing_timeout_seconds=90))
+        with patch("scanner_sorter.recognition.time.monotonic", return_value=101.0):
+            recognizer._processing_deadline = 101.0
+            with self.assertRaisesRegex(RuntimeError, "OCR-Gesamtzeitlimit"):
+                recognizer._remaining_ocr_seconds()
+
     def test_render_rejects_unusually_large_page(self) -> None:
         class Rect:
             width = MAX_RENDER_PIXELS
@@ -138,6 +151,39 @@ class RecognitionTests(unittest.TestCase):
 
         self.assertIsNotNone(detected)
         self.assertEqual("MI_3260455.pdf", detected.filename)
+        self.assertEqual([(390, 35, 750, 287), (0, 28, 1000, 336)], crop_boxes)
+        self.assertEqual(2, read_ocr.call_count)
+
+    def test_montage_fast_area_accepts_known_misread_header_without_large_ocr(self) -> None:
+        crop_boxes: list[tuple[int, int, int, int]] = []
+
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                crop_boxes.append(box)
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Auftrag: 3260576", "Montageber’cht Auftrag: 3260576"),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("MI_3260576.pdf", detected.filename)
         self.assertEqual([(390, 35, 750, 287), (0, 28, 1000, 336)], crop_boxes)
         self.assertEqual(2, read_ocr.call_count)
 
@@ -263,6 +309,11 @@ class RecognitionTests(unittest.TestCase):
         detected = detect_document_from_text("Montagebericht Auftrag: 3260551 [MI-Nr. 1]")
         self.assertIsNotNone(detected)
         self.assertEqual("MI_3260551.pdf", detected.filename)
+
+    def test_montagebericht_accepts_known_ocr_apostrophe_for_valid_order(self) -> None:
+        detected = detect_document_from_text("Montageber’cht Auftrag: 3260576 [MI-Nr. 1]")
+        self.assertIsNotNone(detected)
+        self.assertEqual("MI_3260576.pdf", detected.filename)
 
     def test_assignment_declaration(self) -> None:
         detected = detect_document_from_text(

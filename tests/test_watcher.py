@@ -100,6 +100,46 @@ class WatcherTests(unittest.TestCase):
             self.assertTrue(watcher._observed[path][3])
             self.assertTrue(any("PDF noch unvollständig" in status for status in statuses))
 
+    def test_backlog_mode_throttles_only_a_batch(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = Settings(
+                input_folder=str(root / "eingang"),
+                output_folder=str(root / "ziel"),
+                archive_folder=str(root / "archiv"),
+                review_folder=str(root / "pruefung"),
+                settle_seconds=1,
+                backlog_threshold=1,
+                backlog_pause_seconds=7,
+            )
+            settings.ensure_directories()
+            first = Path(settings.input_folder) / "01.pdf"
+            second = Path(settings.input_folder) / "02.pdf"
+            for path in (first, second):
+                path.write_bytes(b"complete")
+            statuses: list[str] = []
+            watcher = FolderWatcher(settings, on_status=statuses.append)
+            for path in (first, second):
+                stat = path.stat()
+                watcher._observed[path] = (stat.st_size, stat.st_mtime, time.monotonic() - 2, False)
+
+            processed: list[Path] = []
+
+            def process(path: Path) -> ProcessResult:
+                processed.append(path)
+                path.unlink()
+                return ProcessResult(path.name, True, "Fertig")
+
+            waits: list[float] = []
+            watcher.processor.process = process
+            watcher._pdf_is_complete = Mock(return_value=True)
+            with patch.object(watcher._stop_event, "wait", side_effect=lambda delay: waits.append(delay) or False):
+                watcher._check_input_folder()
+
+            self.assertEqual([first, second], processed)
+            self.assertEqual([7], waits)
+            self.assertTrue(any("Stapelmodus aktiv" in status for status in statuses))
+
     def test_stop_waits_for_active_document_and_reports_finished_only_afterwards(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

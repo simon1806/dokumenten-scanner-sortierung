@@ -163,6 +163,36 @@ class AppTests(unittest.TestCase):
         self.assertIsNone(result)
         window._messagebox.showwarning.assert_called_once()
 
+    def test_current_settings_reads_editable_protection_limits(self) -> None:
+        class Value:
+            def __init__(self, value: str):
+                self.value = value
+
+            def get(self) -> str:
+                return self.value
+
+        window = object.__new__(SettingsWindow)
+        window.settings = SimpleNamespace(ocr_languages="deu+eng")
+        window.fields = {
+            "input_folder": Value("eingang"),
+            "output_folder": Value("ziel"),
+            "archive_folder": Value("archiv"),
+            "review_folder": Value("pruefung"),
+            "archive_retention_days": Value("30"),
+            "settle_seconds": Value("2"),
+            "invalid_pdf_timeout_seconds": Value("60"),
+            "backlog_threshold": Value("4"),
+            "backlog_pause_seconds": Value("12"),
+            "processing_timeout_seconds": Value("95"),
+            "tesseract_path": Value(""),
+        }
+
+        settings = window._current_settings()
+
+        self.assertEqual(4, settings.backlog_threshold)
+        self.assertEqual(12, settings.backlog_pause_seconds)
+        self.assertEqual(95, settings.processing_timeout_seconds)
+
     def test_worker_callback_only_enqueues_and_never_calls_tk(self) -> None:
         window = object.__new__(SettingsWindow)
         window._worker_messages = queue.Queue()
