@@ -1603,7 +1603,7 @@ def setup_self_test() -> int:
             raise RuntimeError(f"Ungültige Setup-Version: {version!r}")
         dummy_target = Path("self-test") / APPLICATION_FILENAME
         validated = validate_payload_bundle(version, payload_files(dummy_target))
-        if len(validated) != 5:
+        if len(validated) != len(PAYLOAD_LAYOUT):
             raise RuntimeError(f"Unerwartete Payload-Anzahl: {len(validated)}")
     except Exception as error:
         if sys.stderr is not None:

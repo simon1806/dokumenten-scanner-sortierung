@@ -936,7 +936,7 @@ class InstallerTests(unittest.TestCase):
     def test_setup_self_test_validates_payload_without_installation_or_mutex(self) -> None:
         payloads = tuple(
             installer.PayloadFile(f"file-{index}", Path(f"source-{index}"), Path(f"target-{index}"))
-            for index in range(5)
+            for index in range(len(installer.PAYLOAD_LAYOUT))
         )
         with (
             patch.object(installer.sys, "argv", ["setup.exe", "--self-test"]),
