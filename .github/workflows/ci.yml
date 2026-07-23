@@ -89,12 +89,12 @@ jobs:
 
       - name: Release nach erfolgreichen Tests bauen
         shell: powershell
-        run: .\scripts\build-release.ps1 -Version 0.2.1
+        run: .\scripts\build-release.ps1 -Version 0.2.2
 
       - name: Release-Artefakte veröffentlichen
         uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
-          name: DokumentenScannerSortierung-0.2.1
-          path: release/0.2.1/*
+          name: DokumentenScannerSortierung-0.2.2
+          path: release/0.2.2/*
           if-no-files-found: error
           retention-days: 14

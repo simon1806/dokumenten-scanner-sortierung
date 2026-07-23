@@ -95,6 +95,8 @@ Die Datei wird atomar gespeichert. Eine beschädigte oder falsch typisierte Eins
 
 Das Setup legt eine Verknüpfung im Windows-Startordner des installierenden Benutzerkontos an. Nach dessen Windows-Anmeldung startet die Anwendung die Überwachung mit den gespeicherten Einstellungen und wird in den Windows-Infobereich ausgeblendet. Sind die Einstellungen unvollständig oder ungültig, bleibt das Fenster zur Korrektur geöffnet. Die Deinstallation entfernt auch diese Autostart-Verknüpfung.
 
+Für Windows Server bietet das Setup zusätzlich die auswählbare Option **Serverautostart beim Systemstart einrichten**. Sie muss mit Administratorrechten ausgeführt werden und richtet eine geplante SYSTEM-Aufgabe mit 30 Sekunden Startverzögerung, drei Wiederanlaufversuchen und Schutz vor parallelen Instanzen ein. Die Aufgabe startet die Anwendung ohne Benutzeroberfläche; sie bleibt deshalb auch nach einem Serverneustart ohne Anmeldung aktiv. Bei erfolgreicher Einrichtung entfernt das Setup die benutzerbezogene Autostart-Verknüpfung des installierenden Kontos.
+
 ## Protokolle
 
 Für jeden Kalendertag entsteht unter `%APPDATA%\DokumentenScannerSortierung\logs` eine eigene UTF-8-Datei, zum Beispiel:
@@ -125,7 +127,7 @@ Für die Installation auf dem Server wird nur `DokumentenScannerSortierung-Setup
 %LOCALAPPDATA%\Programs\DokumentenScannerSortierung
 ```
 
-Es erstellt eine Desktop- und Autostart-Verknüpfung und registriert die Anwendung unter **Windows-Einstellungen > Apps > Installierte Apps** mit dem Herausgeber `Simon Hagen – Glas Hagen` und dem Kontakt `simon.hagen@glashagen.de`.
+Es erstellt eine Desktop- und Autostart-Verknüpfung und registriert die Anwendung unter **Windows-Einstellungen > Apps > Installierte Apps** mit dem Herausgeber `Simon Hagen – Glas Hagen` und dem Kontakt `simon.hagen@glashagen.de`. Auf einem Server kann im Bestätigungsfenster stattdessen der SYSTEM-Autostart ausgewählt werden.
 
 Vorhandene Versionen werden als Update oder Reparatur erkannt. Ein unbeabsichtigtes Downgrade und eine Installation über eine unbekannte/defekte Versionslage werden standardmäßig blockiert. Programmdateien, Registry-Eintrag und Desktop-Verknüpfung werden transaktional ausgetauscht; bei Fehlern wird die alte Installation wiederhergestellt. Einstellungen, Protokolle und Dokumentordner werden weder bei Updates noch bei der Deinstallation gelöscht.
 
@@ -135,11 +137,11 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Version 0.2.1 bündelt die im Server-Pilot geprüften Dokumentregeln sowie die Härtungen für einen stabilen Betrieb nach einem Rückstau. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner sowie ein Wiederanlauf geprüft.
+Version 0.2.2 bündelt die im Server-Pilot geprüften Dokumentregeln sowie die Härtungen für einen stabilen Betrieb nach einem Rückstau. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner sowie ein Wiederanlauf geprüft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.2.1 enthält:
+Release 0.2.2 enthält:
 
 - Tesseract OCR 5.5.2
 - Leptonica 1.87.0
@@ -149,14 +151,13 @@ Die Versionen werden beim Build geprüft und im Infofenster sowie im Release-Man
 
 ## Automatischer Betrieb auf Windows Server 2025
 
-Zuerst wird das Setup mit genau dem Windows-Konto ausgeführt, unter dem die spätere Aufgabe laufen soll. Anschließend kann die Oberfläche mit einer zentralen Einstellungsdatei geöffnet werden:
+Das Setup kann die Serveraufgabe direkt einrichten: Als Administrator starten, im Bestätigungsfenster **Serverautostart beim Systemstart einrichten** aktivieren und die Installation abschließen. Bereits gespeicherte Einstellungen werden einmalig in die zentrale Datei übernommen:
 
 ```powershell
-& "$env:LOCALAPPDATA\Programs\DokumentenScannerSortierung\DokumentenScannerSortierung.exe" `
-  --settings "C:\ProgramData\DokumentenScannerSortierung\settings.json"
+C:\ProgramData\DokumentenScannerSortierung\settings.json
 ```
 
-Für den produktiven Serverbetrieb muss die Startaufgabe nicht erst auf eine Benutzeranmeldung warten. Sie wird einmalig in der Windows-Aufgabenplanung durch einen Serveradministrator angelegt. Die Einstellungsdatei muss dazu an einem zentralen Ort liegen, beispielsweise:
+Eine bereits vorhandene zentrale Einstellungsdatei bleibt bei Updates unverändert. Muss sie manuell neu angelegt werden, kann sie wie folgt erstellt werden:
 
 ```powershell
 New-Item -ItemType Directory -Force "C:\ProgramData\DokumentenScannerSortierung"
@@ -167,7 +168,7 @@ notepad "C:\ProgramData\DokumentenScannerSortierung\settings.json"
 
 Vor der Einrichtung müssen alle Netzlaufwerke in dieser Datei durch UNC-Pfade ersetzt sein, zum Beispiel `\\srv-gh-app\pool\Dateiarchiv` statt `G:\Dateiarchiv`. Benutzerabhängige Laufwerksbuchstaben stehen einem Systemkonto nach einem Serverneustart nicht zur Verfügung.
 
-Bei einer manuellen Einrichtung in der Windows-Aufgabenplanung gelten dieselben Werte:
+Falls die Aufgabe ausnahmsweise manuell in der Windows-Aufgabenplanung eingerichtet werden soll, gelten dieselben Werte:
 
 - Auslöser: **Beim Starten des Computers**
 - Ausführen unabhängig von der Benutzeranmeldung
@@ -175,6 +176,8 @@ Bei einer manuellen Einrichtung in der Windows-Aufgabenplanung gelten dieselben 
 - Argumente: `--run --settings "C:\ProgramData\DokumentenScannerSortierung\settings.json"`
 - Bei bereits laufender Aufgabe: **Keine neue Instanz starten**
 - Bei Fehlern: Neustart nach einer kurzen Wartezeit aktivieren
+
+Die automatisch erstellte Aufgabe heißt `GlasHagen Dokumenten-Scanner-Sortierung`, läuft als `SYSTEM`, startet nach 30 Sekunden und verwendet die zentrale Einstellungsdatei. Bei der Deinstallation wird sie entfernt, sofern die Deinstallation mit Administratorrechten ausgeführt wird.
 
 Für Netzwerkfreigaben sind UNC-Pfade wie `\\server\freigabe\scanner\eingang` robuster als benutzerabhängige Laufwerksbuchstaben. Das Dienstkonto benötigt Lesen/Ändern/Löschen im Eingang sowie Lesen/Schreiben/Ändern in Ziel, Archiv, Prüfordner und am Ordner der zentralen `settings.json`.
 
@@ -199,11 +202,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.2.1 bauen:
+OCR-Paket vorbereiten und Release 0.2.2 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.2.1
+.\scripts\build-release.ps1 -Version 0.2.2
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.

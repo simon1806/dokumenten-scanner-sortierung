@@ -1,5 +1,11 @@
 # Änderungsprotokoll
 
+## 0.2.2 – 2026-07-23
+
+- Das Setup bietet optional die Einrichtung eines Serverautostarts beim Systemstart an. Es erstellt eine SYSTEM-Aufgabe mit Startverzögerung, Wiederanlauf bei Fehlern und Schutz vor parallelen Instanzen.
+- Bei Auswahl des Serverautostarts werden die bestehenden Einstellungen einmalig nach `C:\ProgramData\DokumentenScannerSortierung\settings.json` übernommen. Eine bereits vorhandene zentrale Konfiguration wird bei Updates nicht überschrieben.
+- Die benutzerbezogene Autostart-Verknüpfung wird bei erfolgreicher Servereinrichtung entfernt. Die Deinstallation entfernt die optionale SYSTEM-Aufgabe, sofern sie mit ausreichenden Rechten ausgeführt wird.
+
 ## 0.2.1 – 2026-07-21
 
 - Die Eingangsdatei wird während der OCR nicht mehr im Eingangsordner umbenannt. Erst nach vollständig geprüfter Ausgabe wird sie in den privaten Vorgangsordner übernommen und entfernt.

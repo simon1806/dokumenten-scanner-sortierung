@@ -11,6 +11,7 @@ $IconFilename = "DokumentenScannerSortierung.ico"
 $VersionFilename = "version.txt"
 $LegacyUninstallerFilename = "DokumentenScannerSortierung-Deinstallieren.exe"
 $ShortcutFilename = "Dokumenten-Scanner-Sortierung.lnk"
+$ServerAutostartTaskName = "GlasHagen Dokumenten-Scanner-Sortierung"
 $RegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DokumentenScannerSortierung"
 $ExpectedFolder = Join-Path $env:LOCALAPPDATA "Programs\$ApplicationFolder"
 $InstallFolder = $PSScriptRoot
@@ -124,6 +125,16 @@ try {
     Remove-Item -LiteralPath (Join-Path $desktop $ShortcutFilename) -Force -ErrorAction SilentlyContinue
     $startup = [Environment]::GetFolderPath("Startup")
     Remove-Item -LiteralPath (Join-Path $startup $ShortcutFilename) -Force -ErrorAction SilentlyContinue
+    try {
+        $serverTask = Get-ScheduledTask -TaskName $ServerAutostartTaskName -ErrorAction SilentlyContinue
+        if ($serverTask) {
+            Unregister-ScheduledTask -TaskName $ServerAutostartTaskName -Confirm:$false -ErrorAction Stop
+        }
+    } catch {
+        # Die Aufgabe ist optional. Ohne Administratorrechte darf die reguläre
+        # Benutzer-Deinstallation trotzdem die eigenen Programmdateien entfernen.
+        $serverAutostartWarning = "Die optionale Serverstartaufgabe konnte nicht entfernt werden. Starten Sie die Deinstallation bei Bedarf als Administrator."
+    }
     Remove-Item -LiteralPath $RegistryPath -Force -ErrorAction SilentlyContinue
 } catch [System.UnauthorizedAccessException] {
     Show-Message "Deinstallation nicht möglich" (
@@ -137,7 +148,8 @@ try {
 }
 
 Show-Message "Deinstallation abgeschlossen" (
-    "Die Anwendung wurde entfernt. Einstellungen, Protokolle und Dokumentordner wurden beibehalten."
+    "Die Anwendung wurde entfernt. Einstellungen, Protokolle und Dokumentordner wurden beibehalten." +
+    $(if ($serverAutostartWarning) { "`n`n$serverAutostartWarning" } else { "" })
 )
 
 $scriptPath = $PSCommandPath

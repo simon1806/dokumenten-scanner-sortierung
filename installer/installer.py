@@ -40,6 +40,9 @@ if __package__:
         PAYLOAD_MANIFEST_FILENAME,
         PAYLOAD_UNINSTALLER_FILENAME,
         PUBLISHER,
+        SERVER_AUTOSTART_TASK_NAME,
+        SERVER_SETTINGS_FILENAME,
+        SERVER_SETTINGS_FOLDER,
         SETUP_MUTEX_NAME,
         SHORTCUT_FILENAME,
         STARTUP_SHORTCUT_FILENAME,
@@ -48,7 +51,12 @@ if __package__:
         UNINSTALLER_FILENAME,
         VERSION_FILENAME,
     )
-    from .windows_dialog import powershell_quote, show_completion, show_confirmation
+    from .windows_dialog import (
+        powershell_quote,
+        show_completion,
+        show_confirmation,
+        show_confirmation_with_server_autostart,
+    )
 else:
     from product import (  # type: ignore[no-redef]
         APPLICATION_FILENAME,
@@ -68,6 +76,9 @@ else:
         PAYLOAD_MANIFEST_FILENAME,
         PAYLOAD_UNINSTALLER_FILENAME,
         PUBLISHER,
+        SERVER_AUTOSTART_TASK_NAME,
+        SERVER_SETTINGS_FILENAME,
+        SERVER_SETTINGS_FOLDER,
         SETUP_MUTEX_NAME,
         SHORTCUT_FILENAME,
         STARTUP_SHORTCUT_FILENAME,
@@ -76,7 +87,12 @@ else:
         UNINSTALLER_FILENAME,
         VERSION_FILENAME,
     )
-    from windows_dialog import powershell_quote, show_completion, show_confirmation  # type: ignore[no-redef]
+    from windows_dialog import (  # type: ignore[no-redef]
+        powershell_quote,
+        show_completion,
+        show_confirmation,
+        show_confirmation_with_server_autostart,
+    )
 
 
 def payload_path() -> Path:
@@ -116,6 +132,12 @@ class PayloadFile:
     destination: Path
     expected_size: int | None = None
     expected_sha256: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class InstallationSelection:
+    confirmed: bool
+    configure_server_autostart: bool = False
 
 
 @dataclass(slots=True)
@@ -973,6 +995,118 @@ def installation_path() -> Path:
     return local_app_data / "Programs" / APPLICATION_FOLDER / APPLICATION_FILENAME
 
 
+def user_settings_path() -> Path:
+    app_data = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    return app_data / APPLICATION_FOLDER / SERVER_SETTINGS_FILENAME
+
+
+def server_settings_path() -> Path:
+    program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+    return program_data / SERVER_SETTINGS_FOLDER / SERVER_SETTINGS_FILENAME
+
+
+def _read_settings_payload(path: Path) -> str:
+    try:
+        payload = path.read_text(encoding="utf-8-sig")
+        decoded = json.loads(payload)
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Einstellungen können nicht gelesen werden: {path}; {error}") from error
+    if not isinstance(decoded, dict):
+        raise RuntimeError(f"Einstellungen müssen ein JSON-Objekt sein: {path}")
+    return payload
+
+
+def prepare_server_settings() -> Path:
+    """Provide one stable settings file for the SYSTEM start task.
+
+    An existing central configuration is deliberately never overwritten during an
+    update. It might already contain UNC paths which are required by SYSTEM.
+    """
+
+    destination = server_settings_path()
+    if destination.exists():
+        _read_settings_payload(destination)
+        return destination
+
+    source = user_settings_path()
+    if not source.exists():
+        raise RuntimeError(
+            "Keine gespeicherten Einstellungen gefunden. Öffnen Sie zuerst die Anwendung, "
+            "tragen Sie die Ordner ein und speichern Sie die Einstellungen."
+        )
+    payload = _read_settings_payload(source)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp")
+    try:
+        temporary.write_text(payload, encoding="utf-8", newline="\n")
+        os.replace(temporary, destination)
+    except OSError as error:
+        raise RuntimeError(
+            f"Zentrale Einstellungen konnten nicht erstellt werden: {destination}; {error}"
+        ) from error
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+    return destination
+
+
+def create_or_update_server_autostart(target: Path, settings_path: Path) -> None:
+    """Create the boot-triggered SYSTEM task without using user drive mappings."""
+
+    if os.name != "nt":
+        raise RuntimeError("Der Serverautostart kann nur unter Windows eingerichtet werden.")
+    arguments = f'--run --settings "{settings_path}"'
+    script = (
+        "$ErrorActionPreference = 'Stop'; "
+        f"$action = New-ScheduledTaskAction -Execute {powershell_quote(str(target))} "
+        f"-Argument {powershell_quote(arguments)} -WorkingDirectory {powershell_quote(str(target.parent))}; "
+        "$trigger = New-ScheduledTaskTrigger -AtStartup; $trigger.Delay = 'PT30S'; "
+        "$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable "
+        "-RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) "
+        "-ExecutionTimeLimit (New-TimeSpan -Seconds 0); "
+        f"Register-ScheduledTask -TaskName {powershell_quote(SERVER_AUTOSTART_TASK_NAME)} "
+        "-Action $action -Trigger $trigger -Settings $settings -User 'SYSTEM' -RunLevel Highest -Force | Out-Null"
+    )
+    result = subprocess.run(
+        [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    if result.returncode != 0:
+        details = (result.stderr or result.stdout or "unbekannter Fehler").strip()
+        raise RuntimeError(
+            "Die SYSTEM-Startaufgabe konnte nicht eingerichtet werden. "
+            "Starten Sie das Setup als Administrator erneut. "
+            f"Technische Details: {details}"
+        )
+
+
+def remove_startup_shortcut() -> None:
+    app_data = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    shortcut = (
+        app_data
+        / "Microsoft"
+        / "Windows"
+        / "Start Menu"
+        / "Programs"
+        / "Startup"
+        / STARTUP_SHORTCUT_FILENAME
+    )
+    shortcut.unlink(missing_ok=True)
+
+
 def _create_windows_shortcut(
     target: Path,
     icon_path: Path | None = None,
@@ -1279,6 +1413,24 @@ def confirm_installation(action: str | bool, version: str, installed_version: st
     return show_confirmation(title, instruction, content, action_text, icon_payload_path())
 
 
+def confirm_installation_selection(
+    action: str | bool,
+    version: str,
+    installed_version: str | None = None,
+) -> InstallationSelection:
+    if "--silent" in sys.argv:
+        return InstallationSelection(True, "--server-autostart" in sys.argv)
+    title, instruction, content, action_text = prompt_text(action, version, installed_version)
+    confirmed, configure_server_autostart = show_confirmation_with_server_autostart(
+        title,
+        instruction,
+        content,
+        action_text,
+        icon_payload_path(),
+    )
+    return InstallationSelection(confirmed, configure_server_autostart)
+
+
 def completion_text(
     action: str | bool,
     version: str,
@@ -1495,7 +1647,8 @@ def run_installation() -> int:
             "Beenden Sie sie über das Symbol im Windows-Infobereich und starten Sie das Setup anschließend erneut.",
         )
         return 1
-    if not confirm_installation(action, version, installed_version):
+    selection = confirm_installation_selection(action, version, installed_version)
+    if not selection.confirmed:
         return 0
 
     transaction: InstallationTransaction | None = None
@@ -1517,9 +1670,10 @@ def run_installation() -> int:
         desktop_shortcut_backup = transaction.backup_directory / f"desktop-{SHORTCUT_FILENAME}"
         desktop_shortcut = create_desktop_shortcut(target, installed_icon, desktop_shortcut_backup)
         shortcuts_to_restore.append((desktop_shortcut, desktop_shortcut_backup))
-        startup_shortcut_backup = transaction.backup_directory / f"startup-{STARTUP_SHORTCUT_FILENAME}"
-        startup_shortcut = create_startup_shortcut(target, installed_icon, startup_shortcut_backup)
-        shortcuts_to_restore.append((startup_shortcut, startup_shortcut_backup))
+        if not selection.configure_server_autostart:
+            startup_shortcut_backup = transaction.backup_directory / f"startup-{STARTUP_SHORTCUT_FILENAME}"
+            startup_shortcut = create_startup_shortcut(target, installed_icon, startup_shortcut_backup)
+            shortcuts_to_restore.append((startup_shortcut, startup_shortcut_backup))
         registry_touched = True
         register_installed_application(
             target,
@@ -1574,6 +1728,15 @@ def run_installation() -> int:
         # Installation nicht nachträglich als fehlgeschlagen markieren.
         pass
 
+    server_autostart_warning: str | None = None
+    if selection.configure_server_autostart:
+        try:
+            settings_path = prepare_server_settings()
+            create_or_update_server_autostart(target, settings_path)
+            remove_startup_shortcut()
+        except RuntimeError as error:
+            server_autostart_warning = str(error)
+
     try:
         notify_shell_icon_change(installed_icon)
         notify_shell_icon_change(Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop" / SHORTCUT_FILENAME)
@@ -1589,6 +1752,18 @@ def run_installation() -> int:
         )
     else:
         title, instruction, content = completion_text(action, version, installed_version, target)
+        if selection.configure_server_autostart:
+            if server_autostart_warning:
+                content += (
+                    "\n\nServerautostart wurde nicht eingerichtet. Die Anwendung selbst wurde installiert.\n"
+                    + server_autostart_warning
+                )
+            else:
+                content += (
+                    "\n\nServerautostart eingerichtet:\n"
+                    f"SYSTEM-Aufgabe: {SERVER_AUTOSTART_TASK_NAME}\n"
+                    f"Zentrale Einstellungen: {server_settings_path()}"
+                )
         should_launch = show_completion(
             title,
             instruction,
