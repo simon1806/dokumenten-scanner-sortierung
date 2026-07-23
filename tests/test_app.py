@@ -24,6 +24,7 @@ from scanner_sorter.app import (
     single_instance_mutex_name,
     ui_icon_path,
 )
+from scanner_sorter.window_launcher import main as open_launcher_main
 
 
 class AppTests(unittest.TestCase):
@@ -45,6 +46,32 @@ class AppTests(unittest.TestCase):
     def test_program_icons_are_available(self) -> None:
         self.assertTrue(app_asset_path("dokumenten-scanner-sortierung.ico").is_file())
         self.assertTrue(app_asset_path("dokumenten-scanner-sortierung.png").is_file())
+
+    def test_fast_open_launcher_self_test_does_not_start_application(self) -> None:
+        self.assertEqual(0, open_launcher_main(["--self-test"]))
+
+    def test_fast_open_launcher_activates_existing_window_without_starting_main_application(self) -> None:
+        with (
+            patch("scanner_sorter.window_launcher.activate_existing_window", return_value=True) as activate,
+            patch("scanner_sorter.window_launcher.start_main_application") as start,
+        ):
+            result = open_launcher_main([])
+
+        self.assertEqual(0, result)
+        activate.assert_called_once_with()
+        start.assert_not_called()
+
+    def test_fast_open_launcher_starts_main_application_when_no_window_exists(self) -> None:
+        command = ("C:/Programme/DokumentenScannerSortierung.exe",)
+        with (
+            patch("scanner_sorter.window_launcher.activate_existing_window", return_value=False),
+            patch("scanner_sorter.window_launcher.main_application_command", return_value=command),
+            patch("scanner_sorter.window_launcher.start_main_application", return_value=True) as start,
+        ):
+            result = open_launcher_main([])
+
+        self.assertEqual(0, result)
+        start.assert_called_once_with(command)
 
     def test_tray_image_has_windows_notification_size(self) -> None:
         image = SettingsWindow._tray_image()

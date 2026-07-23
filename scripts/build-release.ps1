@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.2.2",
+    [string]$Version = "0.2.3",
     [string]$TesseractDir = "",
     [switch]$WithoutBundledTesseract,
     [string]$SignToolPath = "",
@@ -15,14 +15,18 @@ $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $ArtifactsRoot = Join-Path $ProjectRoot ".artifacts"
 $BuildRoot = Join-Path $ArtifactsRoot "release-build\$Version"
 $MainDist = Join-Path $BuildRoot "main"
+$OpenLauncherDist = Join-Path $BuildRoot "open-launcher"
 $SetupDist = Join-Path $BuildRoot "setup"
 $WorkMain = Join-Path $BuildRoot "work-main"
+$WorkOpenLauncher = Join-Path $BuildRoot "work-open-launcher"
 $WorkSetup = Join-Path $BuildRoot "work-setup"
 $SpecRoot = Join-Path $BuildRoot "spec"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
 $VersionRelease = Join-Path $ReleaseRoot $Version
 $MainName = "DokumentenScannerSortierung"
+$OpenLauncherName = "DokumentenScannerSortierung-Oeffnen"
 $MainExecutable = Join-Path $MainDist "$MainName.exe"
+$OpenLauncherExecutable = Join-Path $OpenLauncherDist "$OpenLauncherName.exe"
 $SetupExecutable = Join-Path $SetupDist "$MainName-Setup.exe"
 $UninstallerSource = Join-Path $ProjectRoot "installer\uninstall.ps1"
 $ProductSource = Join-Path $ProjectRoot "installer\product.py"
@@ -35,6 +39,7 @@ $Changelog = Join-Path $ProjectRoot "CHANGELOG.md"
 $VersionPayload = Join-Path $BuildRoot "version.txt"
 $PayloadManifest = Join-Path $BuildRoot "payload-manifest.json"
 $MainVersionResource = Join-Path $BuildRoot "version-main.txt"
+$OpenLauncherVersionResource = Join-Path $BuildRoot "version-open-launcher.txt"
 $SetupVersionResource = Join-Path $BuildRoot "version-setup.txt"
 $ConstraintsFile = Join-Path $ProjectRoot "constraints-build.txt"
 $LockFile = Join-Path $ProjectRoot "requirements-build.lock"
@@ -525,7 +530,7 @@ if ($WithoutBundledTesseract) {
 }
 
 Reset-BuildDirectory $BuildRoot
-New-Item -ItemType Directory -Force -Path $MainDist, $SetupDist, $SpecRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $MainDist, $OpenLauncherDist, $SetupDist, $SpecRoot | Out-Null
 [System.IO.File]::WriteAllText($VersionPayload, "$Version`n", [System.Text.UTF8Encoding]::new($false))
 
 $displayName = Get-PythonStringConstant $ProductSource "DISPLAY_NAME"
@@ -535,6 +540,7 @@ while ($versionParts.Count -lt 4) {
     $versionParts += 0
 }
 New-PyInstallerVersionFile $MainVersionResource "$MainName.exe" $displayName $publisher $displayName $versionParts
+New-PyInstallerVersionFile $OpenLauncherVersionResource "$OpenLauncherName.exe" $displayName $publisher $displayName $versionParts
 New-PyInstallerVersionFile $SetupVersionResource "$MainName-Setup.exe" "$displayName Setup" $publisher $displayName $versionParts
 
 $mainArguments = @(
@@ -582,8 +588,26 @@ Assert-Artifact $MainExecutable $Version
 Sign-Artifact $MainExecutable
 Invoke-ArtifactSelfTest $MainExecutable
 
+$openLauncherArguments = @(
+    "-m", "PyInstaller",
+    "--noconfirm", "--clean", "--onefile", "--windowed",
+    "--name", $OpenLauncherName,
+    "--icon", $AppIcon,
+    "--version-file", $OpenLauncherVersionResource,
+    "--paths", (Join-Path $ProjectRoot "src"),
+    "--distpath", $OpenLauncherDist,
+    "--workpath", $WorkOpenLauncher,
+    "--specpath", $SpecRoot,
+    (Join-Path $ProjectRoot "src\open_main_window.py")
+)
+Invoke-PythonCommand $openLauncherArguments "Schnellstarter-Build"
+Assert-Artifact $OpenLauncherExecutable $Version
+Sign-Artifact $OpenLauncherExecutable
+Invoke-ArtifactSelfTest $OpenLauncherExecutable
+
 $payloadSources = [ordered]@{
     "$MainName.exe" = $MainExecutable
+    "$OpenLauncherName.exe" = $OpenLauncherExecutable
     "THIRD_PARTY_NOTICES.md" = $ThirdPartyNotices
     "dokumenten-scanner-sortierung.ico" = $AppIcon
     "version.txt" = $VersionPayload
@@ -616,6 +640,7 @@ $setupArguments = @(
     "--version-file", $SetupVersionResource,
     "--paths", $ProjectRoot,
     "--add-data", "$MainExecutable;payload",
+    "--add-data", "$OpenLauncherExecutable;payload",
     "--add-data", "$UninstallerSource;payload",
     "--add-data", "$ThirdPartyNotices;payload",
     "--add-data", "$AppIcon;payload",

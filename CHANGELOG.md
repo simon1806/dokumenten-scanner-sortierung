@@ -1,5 +1,10 @@
 # Änderungsprotokoll
 
+## 0.2.3 – 2026-07-23
+
+- Die Desktop-Verknüpfung startet einen schlanken Öffnen-Starter statt unmittelbar die große OCR-Anwendung. Läuft diese bereits ausgeblendet im Windows-Infobereich, wird ihr Fenster ohne erneutes Entpacken der Tesseract-Laufzeit aktiviert.
+- Der Starter startet die Hauptanwendung nur, wenn noch kein Anwendungsfenster vorhanden ist. Der Benutzer- und SYSTEM-Autostart bleiben unverändert auf der Hauptanwendung.
+
 ## 0.2.2 – 2026-07-23
 
 - Das Setup bietet optional die Einrichtung eines Serverautostarts beim Systemstart an. Es erstellt eine SYSTEM-Aufgabe mit Startverzögerung, Wiederanlauf bei Fehlern und Schutz vor parallelen Instanzen.

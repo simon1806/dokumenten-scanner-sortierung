@@ -6,6 +6,7 @@ $ErrorActionPreference = "Stop"
 $ProductName = "Dokumenten-Scanner-Sortierung"
 $ApplicationFolder = "DokumentenScannerSortierung"
 $ApplicationFilename = "DokumentenScannerSortierung.exe"
+$OpenLauncherFilename = "DokumentenScannerSortierung-Oeffnen.exe"
 $NoticeFilename = "THIRD_PARTY_NOTICES.md"
 $IconFilename = "DokumentenScannerSortierung.ico"
 $VersionFilename = "version.txt"
@@ -111,6 +112,7 @@ try {
 
     foreach ($filename in @(
         $ApplicationFilename,
+        $OpenLauncherFilename,
         $NoticeFilename,
         $IconFilename,
         $VersionFilename,

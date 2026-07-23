@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 APPLICATION_FILENAME = "DokumentenScannerSortierung.exe"
+OPEN_LAUNCHER_FILENAME = "DokumentenScannerSortierung-Oeffnen.exe"
 APPLICATION_FOLDER = "DokumentenScannerSortierung"
 SHORTCUT_FILENAME = "Dokumenten-Scanner-Sortierung.lnk"
 STARTUP_SHORTCUT_FILENAME = "Dokumenten-Scanner-Sortierung.lnk"

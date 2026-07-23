@@ -29,6 +29,7 @@ from .config import (
 from .models import ProcessResult
 from .version_info import VersionEntry, collect_version_information
 from .watcher import FolderWatcher
+from .window_launcher import activate_existing_window
 
 
 ERROR_ALREADY_EXISTS = 183
@@ -235,26 +236,9 @@ def notify_already_running() -> None:
     if os.name == "nt":
         import ctypes
 
-        user32 = ctypes.windll.user32
-        windows: list[int] = []
-        callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-
-        def find_window(window: int, _parameter: int) -> bool:
-            length = user32.GetWindowTextLengthW(window)
-            if length:
-                title = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(window, title, length + 1)
-                if title.value.startswith("Dokumenten-Scanner-Sortierung"):
-                    windows.append(window)
-                    return False
-            return True
-
-        user32.EnumWindows(callback_type(find_window), 0)
-        if windows:
-            user32.ShowWindow(windows[0], 9)
-            user32.SetForegroundWindow(windows[0])
+        if activate_existing_window():
             return
-        user32.MessageBoxW(None, message, "Anwendung läuft bereits", 0x40)
+        ctypes.windll.user32.MessageBoxW(None, message, "Anwendung läuft bereits", 0x40)
     else:
         print(message, file=sys.stderr)
 

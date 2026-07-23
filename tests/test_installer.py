@@ -111,8 +111,12 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual("Update ausführen", action)
 
     @patch("installer.installer.subprocess.run")
-    def test_desktop_shortcut_points_to_installed_application(self, run: object) -> None:
-        target = Path(r"C:\Users\Test\AppData\Local\Programs\DokumentenScannerSortierung\app.exe")
+    def test_desktop_shortcut_points_to_fast_open_launcher(self, run: object) -> None:
+        target = Path(
+            r"C:\Users\Test\AppData\Local\Programs\DokumentenScannerSortierung"
+            + "\\"
+            + installer.OPEN_LAUNCHER_FILENAME
+        )
         icon = target.parent / installer.ICON_FILENAME
 
         installer.create_desktop_shortcut(target, icon)
@@ -379,6 +383,7 @@ class InstallerTests(unittest.TestCase):
             root = Path(directory)
             sources = {
                 installer.APPLICATION_FILENAME: b"MZapplication",
+                installer.OPEN_LAUNCHER_FILENAME: b"MZlauncher",
                 installer.NOTICE_FILENAME: b"notices",
                 installer.PAYLOAD_ICON_FILENAME: b"icon",
                 installer.VERSION_FILENAME: b"0.1.24\n",

@@ -127,7 +127,7 @@ Für die Installation auf dem Server wird nur `DokumentenScannerSortierung-Setup
 %LOCALAPPDATA%\Programs\DokumentenScannerSortierung
 ```
 
-Es erstellt eine Desktop- und Autostart-Verknüpfung und registriert die Anwendung unter **Windows-Einstellungen > Apps > Installierte Apps** mit dem Herausgeber `Simon Hagen – Glas Hagen` und dem Kontakt `simon.hagen@glashagen.de`. Auf einem Server kann im Bestätigungsfenster stattdessen der SYSTEM-Autostart ausgewählt werden.
+Es erstellt eine Desktop- und Autostart-Verknüpfung und registriert die Anwendung unter **Windows-Einstellungen > Apps > Installierte Apps** mit dem Herausgeber `Simon Hagen – Glas Hagen` und dem Kontakt `simon.hagen@glashagen.de`. Die Desktop-Verknüpfung verwendet einen schlanken Öffnen-Starter: Ist die Anwendung bereits im Infobereich aktiv, erscheint ihr Fenster ohne erneutes Laden der OCR-Laufzeit. Auf einem Server kann im Bestätigungsfenster stattdessen der SYSTEM-Autostart ausgewählt werden.
 
 Vorhandene Versionen werden als Update oder Reparatur erkannt. Ein unbeabsichtigtes Downgrade und eine Installation über eine unbekannte/defekte Versionslage werden standardmäßig blockiert. Programmdateien, Registry-Eintrag und Desktop-Verknüpfung werden transaktional ausgetauscht; bei Fehlern wird die alte Installation wiederhergestellt. Einstellungen, Protokolle und Dokumentordner werden weder bei Updates noch bei der Deinstallation gelöscht.
 
@@ -137,11 +137,11 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Version 0.2.2 bündelt die im Server-Pilot geprüften Dokumentregeln sowie die Härtungen für einen stabilen Betrieb nach einem Rückstau. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner sowie ein Wiederanlauf geprüft.
+Version 0.2.3 ergänzt den schnellen Öffnen-Starter neben den im Server-Pilot geprüften Dokumentregeln und Härtungen für einen stabilen Betrieb nach einem Rückstau. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner sowie ein Wiederanlauf geprüft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.2.2 enthält:
+Release 0.2.3 enthält:
 
 - Tesseract OCR 5.5.2
 - Leptonica 1.87.0
@@ -204,11 +204,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.2.2 bauen:
+OCR-Paket vorbereiten und Release 0.2.3 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.2.2
+.\scripts\build-release.ps1 -Version 0.2.3
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.

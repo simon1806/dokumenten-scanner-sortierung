@@ -36,6 +36,7 @@ if __package__:
         INSTALL_ACTION_UPDATE,
         LEGACY_UNINSTALLER_FILENAME,
         NOTICE_FILENAME,
+        OPEN_LAUNCHER_FILENAME,
         PAYLOAD_ICON_FILENAME,
         PAYLOAD_MANIFEST_FILENAME,
         PAYLOAD_UNINSTALLER_FILENAME,
@@ -72,6 +73,7 @@ else:
         INSTALL_ACTION_UPDATE,
         LEGACY_UNINSTALLER_FILENAME,
         NOTICE_FILENAME,
+        OPEN_LAUNCHER_FILENAME,
         PAYLOAD_ICON_FILENAME,
         PAYLOAD_MANIFEST_FILENAME,
         PAYLOAD_UNINSTALLER_FILENAME,
@@ -98,6 +100,11 @@ else:
 def payload_path() -> Path:
     base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
     return base / "payload" / APPLICATION_FILENAME
+
+
+def open_launcher_payload_path() -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
+    return base / "payload" / OPEN_LAUNCHER_FILENAME
 
 
 def notice_payload_path() -> Path:
@@ -268,6 +275,7 @@ TRANSACTION_STATE_COMMITTED = "committed"
 TRANSACTION_STATE_ROLLED_BACK = "rolled_back"
 PAYLOAD_DESTINATION_NAMES = (
     APPLICATION_FILENAME,
+    OPEN_LAUNCHER_FILENAME,
     NOTICE_FILENAME,
     ICON_FILENAME,
     VERSION_FILENAME,
@@ -276,6 +284,7 @@ PAYLOAD_DESTINATION_NAMES = (
 PAYLOAD_DESTINATION_NAMES_CASEFOLD = {name.casefold() for name in PAYLOAD_DESTINATION_NAMES}
 PAYLOAD_LAYOUT = {
     APPLICATION_FILENAME: APPLICATION_FILENAME,
+    OPEN_LAUNCHER_FILENAME: OPEN_LAUNCHER_FILENAME,
     NOTICE_FILENAME: NOTICE_FILENAME,
     PAYLOAD_ICON_FILENAME: ICON_FILENAME,
     VERSION_FILENAME: VERSION_FILENAME,
@@ -498,7 +507,9 @@ def assert_recovery_records_rolled_back(
     journal_path: Path,
 ) -> None:
     if len(records) != len(PAYLOAD_DESTINATION_NAMES):
-        raise RuntimeError(f"Rollback-Prüfung erwartet exakt fünf Recovery-Einträge: {journal_path}")
+        raise RuntimeError(
+            f"Rollback-Prüfung erwartet exakt {len(PAYLOAD_DESTINATION_NAMES)} Recovery-Einträge: {journal_path}"
+        )
     for record in records:
         destination = record.get("destination")
         had_original = record.get("had_original")
@@ -517,7 +528,9 @@ def assert_recovery_records_committed(
     journal_path: Path,
 ) -> None:
     if len(records) != len(PAYLOAD_DESTINATION_NAMES):
-        raise RuntimeError(f"Commit-Prüfung erwartet exakt fünf Recovery-Einträge: {journal_path}")
+        raise RuntimeError(
+            f"Commit-Prüfung erwartet exakt {len(PAYLOAD_DESTINATION_NAMES)} Recovery-Einträge: {journal_path}"
+        )
     for record in records:
         destination = record.get("destination")
         if not isinstance(destination, Path):
@@ -645,7 +658,10 @@ def recover_transaction(
         )
 
     if destination_names != PAYLOAD_DESTINATION_NAMES_CASEFOLD:
-        raise RuntimeError(f"Recovery-Journal enthält nicht exakt die fünf erlaubten Installationsziele: {journal_path}")
+        raise RuntimeError(
+            f"Recovery-Journal enthält nicht exakt die {len(PAYLOAD_DESTINATION_NAMES)} erlaubten "
+            f"Installationsziele: {journal_path}"
+        )
 
     if journal["state"] == TRANSACTION_STATE_COMMITTED:
         try:
@@ -815,6 +831,11 @@ def recover_orphaned_transactions(installation_directory: Path) -> tuple[str, ..
 def payload_files(target: Path) -> tuple[PayloadFile, ...]:
     return (
         PayloadFile(APPLICATION_FILENAME, payload_path(), target),
+        PayloadFile(
+            OPEN_LAUNCHER_FILENAME,
+            open_launcher_payload_path(),
+            target.parent / OPEN_LAUNCHER_FILENAME,
+        ),
         PayloadFile(NOTICE_FILENAME, notice_payload_path(), target.parent / NOTICE_FILENAME),
         PayloadFile(PAYLOAD_ICON_FILENAME, icon_payload_path(), target.parent / ICON_FILENAME),
         PayloadFile(VERSION_FILENAME, version_payload_path(), target.parent / VERSION_FILENAME),
@@ -1664,11 +1685,12 @@ def run_installation() -> int:
         registry_snapshot = installed_application_registration()
         transaction = install_files_transactionally(files)
         installed_notice = target.parent / NOTICE_FILENAME
+        installed_launcher = target.parent / OPEN_LAUNCHER_FILENAME
         installed_icon = target.parent / ICON_FILENAME
         installed_version_file = target.parent / VERSION_FILENAME
         installed_uninstaller = target.parent / UNINSTALLER_FILENAME
         desktop_shortcut_backup = transaction.backup_directory / f"desktop-{SHORTCUT_FILENAME}"
-        desktop_shortcut = create_desktop_shortcut(target, installed_icon, desktop_shortcut_backup)
+        desktop_shortcut = create_desktop_shortcut(installed_launcher, installed_icon, desktop_shortcut_backup)
         shortcuts_to_restore.append((desktop_shortcut, desktop_shortcut_backup))
         if not selection.configure_server_autostart:
             startup_shortcut_backup = transaction.backup_directory / f"startup-{STARTUP_SHORTCUT_FILENAME}"
@@ -1679,7 +1701,7 @@ def run_installation() -> int:
             target,
             installed_uninstaller,
             version,
-            (target, installed_notice, installed_icon, installed_version_file, installed_uninstaller),
+            (target, installed_launcher, installed_notice, installed_icon, installed_version_file, installed_uninstaller),
         )
         cleanup_warning = transaction.commit()
         transaction = None
