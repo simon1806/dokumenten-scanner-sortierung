@@ -5,6 +5,8 @@
 - Das Setup bietet optional die Einrichtung eines Serverautostarts beim Systemstart an. Es erstellt eine SYSTEM-Aufgabe mit Startverzögerung, Wiederanlauf bei Fehlern und Schutz vor parallelen Instanzen.
 - Bei Auswahl des Serverautostarts werden die bestehenden Einstellungen einmalig nach `C:\ProgramData\DokumentenScannerSortierung\settings.json` übernommen. Eine bereits vorhandene zentrale Konfiguration wird bei Updates nicht überschrieben.
 - Die benutzerbezogene Autostart-Verknüpfung wird bei erfolgreicher Servereinrichtung entfernt. Die Deinstallation entfernt die optionale SYSTEM-Aufgabe, sofern sie mit ausreichenden Rechten ausgeführt wird.
+- Das Hauptfenster nutzt die verfügbare Bildschirmhöhe besser; das Aktivitätsprotokoll erhält einen dauerhaft sichtbaren Mindestbereich.
+- Der optionale Tesseract-Pfad wird nicht mehr in der normalen Oberfläche angezeigt. Die mitgelieferte OCR wird verwendet; vorhandene technische Überschreibungen bleiben für Kompatibilität erhalten.
 
 ## 0.2.1 – 2026-07-21
 

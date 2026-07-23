@@ -30,12 +30,12 @@ class AppTests(unittest.TestCase):
     def test_default_window_is_large_and_centered_on_full_hd_screen(self) -> None:
         width, height, x, y = initial_window_geometry(1920, 1080)
 
-        self.assertEqual((1460, 1000, 230, 40), (width, height, x, y))
+        self.assertEqual((1580, 1040, 170, 20), (width, height, x, y))
 
     def test_default_window_stays_inside_smaller_screen(self) -> None:
         width, height, x, y = initial_window_geometry(1366, 768)
 
-        self.assertEqual((1286, 688, 40, 40), (width, height, x, y))
+        self.assertEqual((1326, 728, 20, 20), (width, height, x, y))
 
     def test_required_button_icons_are_available(self) -> None:
         for name in ("folder-open", "device-floppy", "player-play", "player-stop", "window-minimize", "power"):
@@ -172,7 +172,7 @@ class AppTests(unittest.TestCase):
                 return self.value
 
         window = object.__new__(SettingsWindow)
-        window.settings = SimpleNamespace(ocr_languages="deu+eng")
+        window.settings = SimpleNamespace(ocr_languages="deu+eng", tesseract_path="")
         window.fields = {
             "input_folder": Value("eingang"),
             "output_folder": Value("ziel"),
@@ -184,7 +184,6 @@ class AppTests(unittest.TestCase):
             "backlog_threshold": Value("4"),
             "backlog_pause_seconds": Value("12"),
             "processing_timeout_seconds": Value("95"),
-            "tesseract_path": Value(""),
         }
 
         settings = window._current_settings()

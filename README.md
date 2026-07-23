@@ -149,6 +149,8 @@ Release 0.2.2 enthält:
 
 Die Versionen werden beim Build geprüft und im Infofenster sowie im Release-Manifest ausgewiesen. Weitere verwendete Bibliotheken und ihre Lizenzhinweise stehen in `THIRD_PARTY_NOTICES.md`. Insbesondere PyMuPDF ist dual unter AGPL und kommerzieller Lizenz verfügbar; der Betreiber muss vor einer Weitergabe oder Bereitstellung die passende Lizenzgrundlage festlegen.
 
+Ein Tesseract-Pfad muss im normalen Betrieb nicht eingestellt werden: Die geprüfte OCR-Laufzeit ist im Paket enthalten. Bereits vorhandene technische Pfadüberschreibungen in der Einstellungsdatei werden weiterhin berücksichtigt, sind aber bewusst nicht Teil der normalen Bedienoberfläche.
+
 ## Automatischer Betrieb auf Windows Server 2025
 
 Das Setup kann die Serveraufgabe direkt einrichten: Als Administrator starten, im Bestätigungsfenster **Serverautostart beim Systemstart einrichten** aktivieren und die Installation abschließen. Bereits gespeicherte Einstellungen werden einmalig in die zentrale Datei übernommen:

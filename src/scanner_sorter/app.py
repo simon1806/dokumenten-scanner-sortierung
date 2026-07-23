@@ -44,8 +44,8 @@ ERROR_MORE_DATA = 234
 
 def initial_window_geometry(screen_width: int, screen_height: int) -> tuple[int, int, int, int]:
     """Return a large centered default size that still fits on smaller displays."""
-    width = min(1460, max(900, screen_width - 80))
-    height = min(1000, max(680, screen_height - 80))
+    width = min(1580, max(1000, screen_width - 40))
+    height = min(1120, max(720, screen_height - 40))
     x = max(0, (screen_width - width) // 2)
     y = max(0, (screen_height - height) // 2)
     return width, height, x, y
@@ -518,7 +518,7 @@ class SettingsWindow:
         screen_height = self.root.winfo_screenheight()
         width, height, x, y = initial_window_geometry(screen_width, screen_height)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-        self.root.minsize(min(1000, screen_width - 80), min(740, screen_height - 80))
+        self.root.minsize(min(1100, screen_width - 40), min(800, screen_height - 40))
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
         default_review_folder = self.settings.review_folder
@@ -535,7 +535,6 @@ class SettingsWindow:
             "backlog_threshold": tk.StringVar(value=str(self.settings.backlog_threshold)),
             "backlog_pause_seconds": tk.StringVar(value=str(self.settings.backlog_pause_seconds)),
             "processing_timeout_seconds": tk.StringVar(value=str(self.settings.processing_timeout_seconds)),
-            "tesseract_path": tk.StringVar(value=self.settings.tesseract_path),
         }
         self.status = tk.StringVar(value="Einstellungen speichern und Überwachung starten.")
         self._build()
@@ -769,10 +768,10 @@ class SettingsWindow:
         ).pack(side="left")
 
         content = self.tk.Frame(shell, background="#F2F5F8")
-        content.grid(row=1, column=0, sticky="nsew", padx=20, pady=16)
+        content.grid(row=1, column=0, sticky="nsew", padx=20, pady=12)
         content.columnconfigure(0, weight=3)
         content.columnconfigure(1, weight=2)
-        content.rowconfigure(2, weight=1)
+        content.rowconfigure(2, weight=1, minsize=190)
 
         folder_card, folder_body, _folder_header = self._card(
             content,
@@ -914,30 +913,8 @@ class SettingsWindow:
             style="Modern.TEntry",
         ).grid(row=2, column=0, sticky="ew")
 
-        tesseract_panel = self.tk.Frame(processing_body, background="#FFFFFF")
-        tesseract_panel.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        tesseract_panel.columnconfigure(0, weight=1)
-        self.tk.Label(
-            tesseract_panel,
-            text="Tesseract-Pfad",
-            background="#FFFFFF",
-            foreground="#233746",
-            font=("Segoe UI Semibold", 9),
-        ).grid(row=0, column=0, sticky="w")
-        self.tk.Label(
-            tesseract_panel,
-            text="Optional – leer bedeutet: mitgelieferte OCR verwenden",
-            background="#FFFFFF",
-            foreground="#7A8A96",
-            font=("Segoe UI", 8),
-            wraplength=330,
-            justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(1, 5))
-        self.ttk.Entry(tesseract_panel, textvariable=self.fields["tesseract_path"], style="Modern.TEntry").grid(
-            row=2, column=0, sticky="ew"
-        )
         notice = self.tk.Frame(processing_body, background="#EAF4FA")
-        notice.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        notice.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         self.tk.Label(
             notice,
             text="i",
@@ -1106,7 +1083,7 @@ class SettingsWindow:
             return
 
         report = collect_version_information(
-            self.fields["tesseract_path"].get(),
+            self.settings.tesseract_path,
             str(self.tk.TclVersion),
             str(self.tk.TkVersion),
         )
@@ -1352,7 +1329,9 @@ class SettingsWindow:
             backlog_threshold=backlog_threshold,
             backlog_pause_seconds=backlog_pause,
             processing_timeout_seconds=processing_timeout,
-            tesseract_path=self.fields["tesseract_path"].get().strip(),
+            # Tesseract is bundled with the application. Preserve a legacy
+            # override without exposing it in the normal operating interface.
+            tesseract_path=self.settings.tesseract_path,
             ocr_languages=self.settings.ocr_languages,
         )
 
