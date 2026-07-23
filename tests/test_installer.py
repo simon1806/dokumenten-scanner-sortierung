@@ -268,7 +268,10 @@ class InstallerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.dict("os.environ", {"APPDATA": str(root / "Roaming")}):
+            isolated_winreg = SimpleNamespace(HKEY_CURRENT_USER=object(), OpenKey=Mock(side_effect=OSError))
+            with patch.dict("os.environ", {"APPDATA": str(root / "Roaming")}), patch.dict(
+                "sys.modules", {"winreg": isolated_winreg}
+            ):
                 version = installer.installed_application_version(target)
 
         self.assertEqual("0.1.14", version)

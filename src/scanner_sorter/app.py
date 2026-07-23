@@ -174,13 +174,16 @@ def single_instance_identity(settings_path: Path, input_folder: str = "") -> str
     configured_input = input_folder.strip()
     raw_path = configured_input or str(settings_path)
     expanded = os.path.expandvars(os.path.expanduser(raw_path))
+    if os.name == "nt" and configured_input:
+        # Resolve mapped drives before Path.resolve() can replace the mapped
+        # path with a server-specific alias. This keeps a mapped and a UNC
+        # configuration on the same server-wide lock identity.
+        expanded = canonicalize_windows_network_path(expanded)
     try:
         absolute = Path(expanded).resolve(strict=False)
     except OSError:
         absolute = Path(os.path.abspath(expanded))
     absolute_text = str(absolute)
-    if os.name == "nt" and configured_input:
-        absolute_text = canonicalize_windows_network_path(absolute_text)
     normalized = os.path.normcase(os.path.normpath(absolute_text)).casefold()
     identity_type = "input" if configured_input else "settings"
     return f"{identity_type}:{normalized}"
