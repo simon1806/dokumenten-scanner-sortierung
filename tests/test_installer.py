@@ -110,9 +110,21 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Einstellungen", content)
         self.assertEqual("Update ausführen", action)
 
+    def test_update_progress_uses_visible_installation_message(self) -> None:
+        title, instruction, content = installer.installation_progress_text(True, "0.2.4")
+
+        self.assertEqual("Update wird installiert", title)
+        self.assertEqual("Update wird installiert …", instruction)
+        self.assertIn("0.2.4", content)
+        self.assertIn("einige Sekunden", content)
+
     @patch("installer.installer.subprocess.run")
-    def test_desktop_shortcut_points_to_installed_application(self, run: object) -> None:
-        target = Path(r"C:\Users\Test\AppData\Local\Programs\DokumentenScannerSortierung\app.exe")
+    def test_desktop_shortcut_points_to_fast_open_launcher(self, run: object) -> None:
+        target = Path(
+            r"C:\Users\Test\AppData\Local\Programs\DokumentenScannerSortierung"
+            + "\\"
+            + installer.OPEN_LAUNCHER_FILENAME
+        )
         icon = target.parent / installer.ICON_FILENAME
 
         installer.create_desktop_shortcut(target, icon)
@@ -172,6 +184,74 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("$shortcut.Arguments", script)
         self.assertIn(str(target), script)
 
+    @patch("installer.installer.subprocess.run")
+    def test_server_autostart_task_runs_as_system_at_boot(self, run: Mock) -> None:
+        run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        target = Path(r"C:\Program Files\Scanner\DokumentenScannerSortierung.exe")
+        settings = Path(r"C:\ProgramData\DokumentenScannerSortierung\settings.json")
+
+        installer.create_or_update_server_autostart(target, settings)
+
+        script = run.call_args.args[0][-1]
+        self.assertIn("New-ScheduledTaskTrigger -AtStartup", script)
+        self.assertIn("PT30S", script)
+        self.assertIn("-MultipleInstances IgnoreNew", script)
+        self.assertIn("-RestartCount 3", script)
+        self.assertIn("-User 'SYSTEM' -RunLevel Highest", script)
+        self.assertIn(installer.SERVER_AUTOSTART_TASK_NAME, script)
+        self.assertIn('--run --settings "C:\\ProgramData\\DokumentenScannerSortierung\\settings.json"', script)
+
+    def test_server_settings_are_copied_once_and_then_preserved(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "Roaming" / installer.APPLICATION_FOLDER / installer.SERVER_SETTINGS_FILENAME
+            source.parent.mkdir(parents=True)
+            source.write_text('{"input_folder": "C:/Eingang"}', encoding="utf-8")
+            environment = {
+                "APPDATA": str(root / "Roaming"),
+                "PROGRAMDATA": str(root / "ProgramData"),
+            }
+            with patch.dict("installer.installer.os.environ", environment, clear=False):
+                destination = installer.prepare_server_settings()
+                self.assertEqual('{"input_folder": "C:/Eingang"}', destination.read_text(encoding="utf-8"))
+                destination.write_text('{"input_folder": "C:/Zentral"}', encoding="utf-8")
+                source.write_text('{"input_folder": "C:/Neu"}', encoding="utf-8")
+
+                self.assertEqual(destination, installer.prepare_server_settings())
+
+            self.assertEqual('{"input_folder": "C:/Zentral"}', destination.read_text(encoding="utf-8"))
+
+    def test_server_settings_require_saved_user_configuration(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment = {
+                "APPDATA": str(root / "Roaming"),
+                "PROGRAMDATA": str(root / "ProgramData"),
+            }
+            with patch.dict("installer.installer.os.environ", environment, clear=False):
+                with self.assertRaisesRegex(RuntimeError, "Keine gespeicherten Einstellungen"):
+                    installer.prepare_server_settings()
+
+    def test_server_autostart_removes_user_startup_shortcut(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            shortcut = (
+                root
+                / "Roaming"
+                / "Microsoft"
+                / "Windows"
+                / "Start Menu"
+                / "Programs"
+                / "Startup"
+                / installer.STARTUP_SHORTCUT_FILENAME
+            )
+            shortcut.parent.mkdir(parents=True)
+            shortcut.write_bytes(b"shortcut")
+            with patch.dict("installer.installer.os.environ", {"APPDATA": str(root / "Roaming")}, clear=False):
+                installer.remove_startup_shortcut()
+
+            self.assertFalse(shortcut.exists())
+
     def test_uninstaller_payload_uses_embedded_source_filename(self) -> None:
         self.assertEqual("uninstall.ps1", installer.uninstaller_payload_path().name)
 
@@ -196,7 +276,10 @@ class InstallerTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            with patch.dict("os.environ", {"APPDATA": str(root / "Roaming")}):
+            isolated_winreg = SimpleNamespace(HKEY_CURRENT_USER=object(), OpenKey=Mock(side_effect=OSError))
+            with patch.dict("os.environ", {"APPDATA": str(root / "Roaming")}), patch.dict(
+                "sys.modules", {"winreg": isolated_winreg}
+            ):
                 version = installer.installed_application_version(target)
 
         self.assertEqual("0.1.14", version)
@@ -228,6 +311,45 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Installation beenden", script)
         self.assertIn("Size(720,340)", script)
         self.assertIn("Size(670,120)", script)
+
+    @patch("installer.windows_dialog.subprocess.Popen")
+    def test_installation_progress_dialog_is_modeless_and_cannot_be_closed(self, popen: Mock) -> None:
+        process = Mock()
+        process.poll.return_value = None
+        popen.return_value = process
+
+        dialog = windows_dialog.show_installation_progress(
+            "Update wird installiert",
+            "Update wird installiert …",
+            "Dateien werden geprüft.",
+            Path("app.ico"),
+        )
+        dialog.close()
+
+        script = popen.call_args.args[0][-1]
+        self.assertIn("$form.ControlBox = $false", script)
+        self.assertIn("$progress.Style = 'Marquee'", script)
+        self.assertIn("Application]::Run($form)", script)
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=3)
+
+    @patch("installer.windows_dialog.subprocess.run")
+    def test_server_autostart_choice_is_offered_by_confirmation_dialog(self, run: Mock) -> None:
+        run.return_value = SimpleNamespace(returncode=10)
+
+        confirmed, server_autostart = windows_dialog.show_confirmation_with_server_autostart(
+            "Installation bestätigen",
+            "Version installieren?",
+            "Inhalt",
+            "Installation ausführen",
+            Path("app.ico"),
+        )
+
+        script = run.call_args.args[0][-1]
+        self.assertTrue(confirmed)
+        self.assertTrue(server_autostart)
+        self.assertIn("Serverautostart beim Systemstart einrichten", script)
+        self.assertIn("SYSTEM-Aufgabe", script)
 
     @patch("installer.windows_dialog.subprocess.run")
     def test_confirmation_dialog_has_enough_space_for_update_information(self, run: object) -> None:
@@ -293,6 +415,7 @@ class InstallerTests(unittest.TestCase):
             root = Path(directory)
             sources = {
                 installer.APPLICATION_FILENAME: b"MZapplication",
+                installer.OPEN_LAUNCHER_FILENAME: b"MZlauncher",
                 installer.NOTICE_FILENAME: b"notices",
                 installer.PAYLOAD_ICON_FILENAME: b"icon",
                 installer.VERSION_FILENAME: b"0.1.24\n",
@@ -842,7 +965,7 @@ class InstallerTests(unittest.TestCase):
     def test_setup_self_test_validates_payload_without_installation_or_mutex(self) -> None:
         payloads = tuple(
             installer.PayloadFile(f"file-{index}", Path(f"source-{index}"), Path(f"target-{index}"))
-            for index in range(5)
+            for index in range(len(installer.PAYLOAD_LAYOUT))
         )
         with (
             patch.object(installer.sys, "argv", ["setup.exe", "--self-test"]),

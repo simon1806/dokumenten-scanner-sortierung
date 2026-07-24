@@ -24,18 +24,19 @@ from scanner_sorter.app import (
     single_instance_mutex_name,
     ui_icon_path,
 )
+from scanner_sorter.window_launcher import main as open_launcher_main
 
 
 class AppTests(unittest.TestCase):
     def test_default_window_is_large_and_centered_on_full_hd_screen(self) -> None:
         width, height, x, y = initial_window_geometry(1920, 1080)
 
-        self.assertEqual((1460, 1000, 230, 40), (width, height, x, y))
+        self.assertEqual((1580, 1040, 170, 20), (width, height, x, y))
 
     def test_default_window_stays_inside_smaller_screen(self) -> None:
         width, height, x, y = initial_window_geometry(1366, 768)
 
-        self.assertEqual((1286, 688, 40, 40), (width, height, x, y))
+        self.assertEqual((1326, 728, 20, 20), (width, height, x, y))
 
     def test_required_button_icons_are_available(self) -> None:
         for name in ("folder-open", "device-floppy", "player-play", "player-stop", "window-minimize", "power"):
@@ -45,6 +46,32 @@ class AppTests(unittest.TestCase):
     def test_program_icons_are_available(self) -> None:
         self.assertTrue(app_asset_path("dokumenten-scanner-sortierung.ico").is_file())
         self.assertTrue(app_asset_path("dokumenten-scanner-sortierung.png").is_file())
+
+    def test_fast_open_launcher_self_test_does_not_start_application(self) -> None:
+        self.assertEqual(0, open_launcher_main(["--self-test"]))
+
+    def test_fast_open_launcher_activates_existing_window_without_starting_main_application(self) -> None:
+        with (
+            patch("scanner_sorter.window_launcher.activate_existing_window", return_value=True) as activate,
+            patch("scanner_sorter.window_launcher.start_main_application") as start,
+        ):
+            result = open_launcher_main([])
+
+        self.assertEqual(0, result)
+        activate.assert_called_once_with()
+        start.assert_not_called()
+
+    def test_fast_open_launcher_starts_main_application_when_no_window_exists(self) -> None:
+        command = ("C:/Programme/DokumentenScannerSortierung.exe",)
+        with (
+            patch("scanner_sorter.window_launcher.activate_existing_window", return_value=False),
+            patch("scanner_sorter.window_launcher.main_application_command", return_value=command),
+            patch("scanner_sorter.window_launcher.start_main_application", return_value=True) as start,
+        ):
+            result = open_launcher_main([])
+
+        self.assertEqual(0, result)
+        start.assert_called_once_with(command)
 
     def test_tray_image_has_windows_notification_size(self) -> None:
         image = SettingsWindow._tray_image()
@@ -163,6 +190,36 @@ class AppTests(unittest.TestCase):
         self.assertIsNone(result)
         window._messagebox.showwarning.assert_called_once()
 
+    def test_manual_archive_reset_is_rejected_while_watcher_is_running(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = SimpleNamespace(running=True)
+        window._messagebox = Mock()
+
+        window.clear_archive_manually()
+
+        window._messagebox.showwarning.assert_called_once()
+
+    def test_manual_archive_reset_requires_exact_confirmation_and_reports_result(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window.settings = SimpleNamespace(archive_folder="archiv")
+        window.root = object()
+        window._messagebox = Mock()
+        window._messagebox.askyesno.return_value = True
+        window._simpledialog = Mock()
+        window._simpledialog.askstring.return_value = "ARCHIV LEEREN"
+        window.status = Mock()
+        window._append_activity = Mock()
+        clear = Mock(return_value=SimpleNamespace(removed_files=4, removed_folders=2, skipped_entries=("manuell.txt",)))
+
+        with patch("scanner_sorter.app.DocumentProcessor") as processor:
+            processor.return_value.clear_archive_manually = clear
+            window.clear_archive_manually()
+
+        clear.assert_called_once_with()
+        self.assertIn("4 Datei(en)", window.status.set.call_args.args[0])
+        window._messagebox.showinfo.assert_called_once()
+
     def test_current_settings_reads_editable_protection_limits(self) -> None:
         class Value:
             def __init__(self, value: str):
@@ -172,7 +229,7 @@ class AppTests(unittest.TestCase):
                 return self.value
 
         window = object.__new__(SettingsWindow)
-        window.settings = SimpleNamespace(ocr_languages="deu+eng")
+        window.settings = SimpleNamespace(ocr_languages="deu+eng", tesseract_path="")
         window.fields = {
             "input_folder": Value("eingang"),
             "output_folder": Value("ziel"),
@@ -184,7 +241,6 @@ class AppTests(unittest.TestCase):
             "backlog_threshold": Value("4"),
             "backlog_pause_seconds": Value("12"),
             "processing_timeout_seconds": Value("95"),
-            "tesseract_path": Value(""),
         }
 
         settings = window._current_settings()
