@@ -13,7 +13,7 @@ class BuildReleaseTests(unittest.TestCase):
         cls.script = (PROJECT_ROOT / "scripts" / "build-release.ps1").read_text(encoding="utf-8-sig")
 
     def test_build_is_versioned_fail_closed_and_checks_native_commands(self) -> None:
-        self.assertIn('[string]$Version = "0.2.3"', self.script)
+        self.assertIn('[string]$Version = "0.2.4"', self.script)
         self.assertIn("function Invoke-PythonCommand", self.script)
         self.assertEqual(3, self.script.count('Invoke-PythonCommand $'))
         self.assertIn('Join-Path $ReleaseRoot $Version', self.script)
@@ -135,7 +135,7 @@ class BuildReleaseTests(unittest.TestCase):
         self.assertEqual(workflow.count('python-version: "3.12"'), 2)
         self.assertIn(r".\.venv\Scripts\python.exe -m unittest", workflow)
         self.assertIn(r".\.venv\Scripts\ruff.exe check", workflow)
-        self.assertIn(r".\scripts\build-release.ps1 -Version 0.2.3", workflow)
+        self.assertIn(r".\scripts\build-release.ps1 -Version 0.2.4", workflow)
         self.assertEqual(workflow.count("--require-hashes"), 2)
         self.assertEqual(
             workflow.count("actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"),

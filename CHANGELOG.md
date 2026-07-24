@@ -1,5 +1,11 @@
 # Änderungsprotokoll
 
+## 0.2.4 – 2026-07-24
+
+- Das Setup zeigt nach der Bestätigung direkt eine nicht schließbare Fortschrittsmaske mit animiertem Balken. Sie bleibt während Dateiprüfung und Austausch sichtbar und schließt vor dem Erfolgs- oder Fehlerdialog.
+- Das Archiv kann nach gestoppter Überwachung manuell zurückgesetzt werden. Zwei Bestätigungen schützen die Aktion; entfernt werden nur markierte Tagesarchive und interne Wiederherstellungsvorgänge.
+- Montageinfos ohne Auftragsnummer oder MI-Barcode werden als `MI_<JJJJ-MM-TT>.pdf` gespeichert. Das Datum wird aus dem Scanner-Dateinamen abgeleitet, ansonsten aus dem Dateidatum.
+
 ## 0.2.3 – 2026-07-23
 
 - Die Desktop-Verknüpfung startet einen schlanken Öffnen-Starter statt unmittelbar die große OCR-Anwendung. Läuft diese bereits ausgeblendet im Windows-Infobereich, wird ihr Fenster ohne erneutes Entpacken der Tesseract-Laufzeit aktiviert.
