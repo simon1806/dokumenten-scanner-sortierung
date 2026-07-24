@@ -57,6 +57,7 @@ if __package__:
         show_completion,
         show_confirmation,
         show_confirmation_with_server_autostart,
+        show_installation_progress,
     )
 else:
     from product import (  # type: ignore[no-redef]
@@ -94,6 +95,7 @@ else:
         show_completion,
         show_confirmation,
         show_confirmation_with_server_autostart,
+        show_installation_progress,
     )
 
 
@@ -1452,6 +1454,25 @@ def confirm_installation_selection(
     return InstallationSelection(confirmed, configure_server_autostart)
 
 
+def installation_progress_text(action: str | bool, version: str) -> tuple[str, str, str]:
+    """Return the visible status used while setup validates and replaces files."""
+    action = _normalise_action(action)
+    labels = {
+        INSTALL_ACTION_UPDATE: ("Update wird installiert", "Update wird installiert …", "Update"),
+        INSTALL_ACTION_REPAIR: ("Reparatur wird ausgeführt", "Reparatur wird ausgeführt …", "Reparatur"),
+        INSTALL_ACTION_DOWNGRADE: ("Downgrade wird installiert", "Downgrade wird installiert …", "Downgrade"),
+    }
+    title, instruction, label = labels.get(
+        action,
+        ("Installation wird ausgeführt", "Installation wird ausgeführt …", "Installation"),
+    )
+    return (
+        title,
+        instruction,
+        f"{label} auf Version {version}: Programmdateien werden geprüft und ersetzt. Dies kann einige Sekunden dauern.",
+    )
+
+
 def completion_text(
     action: str | bool,
     version: str,
@@ -1672,6 +1693,18 @@ def run_installation() -> int:
     if not selection.confirmed:
         return 0
 
+    progress_dialog = None
+    if "--silent" not in sys.argv:
+        try:
+            progress_dialog = show_installation_progress(
+                *installation_progress_text(action, version),
+                icon_payload_path(),
+            )
+        except OSError:
+            # The progress UI is an operator aid. A policy blocking PowerShell must
+            # not turn an otherwise safe setup into a failed installation.
+            progress_dialog = None
+
     transaction: InstallationTransaction | None = None
     registry_snapshot: dict[str, tuple[object, int]] | None = None
     registry_touched = False
@@ -1708,6 +1741,9 @@ def run_installation() -> int:
         registry_touched = False
         shortcuts_to_restore.clear()
     except Exception as error:
+        if progress_dialog is not None:
+            progress_dialog.close()
+            progress_dialog = None
         rollback_errors: list[str] = []
         if registry_touched:
             try:
@@ -1733,6 +1769,10 @@ def run_installation() -> int:
         title = "Update nicht möglich" if target_exists else "Installation fehlgeschlagen"
         show_message("showerror", title, f"Es wurden keine unvollständigen Programmdateien übernommen.\n\n{error}{rollback_text}")
         return 1
+
+    finally:
+        if progress_dialog is not None:
+            progress_dialog.close()
 
     if cleanup_warning:
         show_message(

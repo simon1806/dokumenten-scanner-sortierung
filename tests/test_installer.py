@@ -110,6 +110,14 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Einstellungen", content)
         self.assertEqual("Update ausführen", action)
 
+    def test_update_progress_uses_visible_installation_message(self) -> None:
+        title, instruction, content = installer.installation_progress_text(True, "0.2.4")
+
+        self.assertEqual("Update wird installiert", title)
+        self.assertEqual("Update wird installiert …", instruction)
+        self.assertIn("0.2.4", content)
+        self.assertIn("einige Sekunden", content)
+
     @patch("installer.installer.subprocess.run")
     def test_desktop_shortcut_points_to_fast_open_launcher(self, run: object) -> None:
         target = Path(
@@ -303,6 +311,27 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Installation beenden", script)
         self.assertIn("Size(720,340)", script)
         self.assertIn("Size(670,120)", script)
+
+    @patch("installer.windows_dialog.subprocess.Popen")
+    def test_installation_progress_dialog_is_modeless_and_cannot_be_closed(self, popen: Mock) -> None:
+        process = Mock()
+        process.poll.return_value = None
+        popen.return_value = process
+
+        dialog = windows_dialog.show_installation_progress(
+            "Update wird installiert",
+            "Update wird installiert …",
+            "Dateien werden geprüft.",
+            Path("app.ico"),
+        )
+        dialog.close()
+
+        script = popen.call_args.args[0][-1]
+        self.assertIn("$form.ControlBox = $false", script)
+        self.assertIn("$progress.Style = 'Marquee'", script)
+        self.assertIn("Application]::Run($form)", script)
+        process.terminate.assert_called_once_with()
+        process.wait.assert_called_once_with(timeout=3)
 
     @patch("installer.windows_dialog.subprocess.run")
     def test_server_autostart_choice_is_offered_by_confirmation_dialog(self, run: Mock) -> None:
