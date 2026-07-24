@@ -27,6 +27,7 @@ from .config import (
     save_settings,
 )
 from .models import ProcessResult
+from .processing import DocumentProcessor, ProcessingError
 from .version_info import VersionEntry, collect_version_information
 from .watcher import FolderWatcher
 from .window_launcher import activate_existing_window
@@ -693,7 +694,7 @@ class SettingsWindow:
         return photo
 
     def _build(self) -> None:
-        from tkinter import filedialog, messagebox
+        from tkinter import filedialog, messagebox, simpledialog
 
         self._configure_styles()
         root = self.root
@@ -961,6 +962,14 @@ class SettingsWindow:
             icon="player-stop",
         )
         self.stop_button.pack(side="left", padx=(8, 0))
+        self.clear_archive_button = self._button(
+            actions,
+            "Archiv manuell leeren",
+            self.clear_archive_manually,
+            "Löscht nach einer zweifachen Bestätigung alle vom Tool verwalteten Archivdaten. Die Überwachung muss beendet sein.",
+            "Secondary.TButton",
+        )
+        self.clear_archive_button.pack(side="left", padx=(8, 0))
         quit_button = self._button(
             actions,
             "Anwendung beenden",
@@ -1042,6 +1051,7 @@ class SettingsWindow:
         self._append_activity(f"Protokolldatei: {self.log_path}")
 
         self._messagebox = messagebox
+        self._simpledialog = simpledialog
 
     def _choose_folder(self, field: str, filedialog: object) -> None:
         directory = filedialog.askdirectory(initialdir=self.fields[field].get() or None)
@@ -1061,6 +1071,55 @@ class SettingsWindow:
             os.startfile(str(self.log_path.parent))
         except Exception as error:
             self._messagebox.showerror("Protokollordner", f"Ordner konnte nicht geöffnet werden:\n{error}")
+
+    def clear_archive_manually(self) -> None:
+        """Reset only application-owned archive data after explicit operator consent."""
+        if self.watcher and self.watcher.running:
+            self._messagebox.showwarning(
+                "Überwachung aktiv",
+                "Beenden Sie zuerst die Überwachung. Erst dann kann das Archiv sicher manuell geleert werden.",
+            )
+            return
+
+        archive_folder = self.settings.archive_folder.strip()
+        if not archive_folder:
+            self._messagebox.showerror("Archiv leeren", "Es ist kein Archivordner eingerichtet.")
+            return
+        if not self._messagebox.askyesno(
+            "Archiv manuell leeren?",
+            "Alle vom Tool verwalteten Tagesarchive und offenen Wiederherstellungsvorgänge werden gelöscht.\n\n"
+            f"Archivordner:\n{archive_folder}\n\n"
+            "Eingang, Ziel, Prüfungen und Protokolle bleiben erhalten. Nicht zuordenbare Dateien im Archivordner werden aus Sicherheitsgründen nicht gelöscht.\n\n"
+            "Möchten Sie fortfahren?",
+            icon="warning",
+        ):
+            return
+        confirmation = self._simpledialog.askstring(
+            "Archiv leeren bestätigen",
+            "Zum endgültigen Leeren bitte genau ARCHIV LEEREN eingeben:",
+            parent=self.root,
+        )
+        if confirmation != "ARCHIV LEEREN":
+            self.status.set("Archivbereinigung abgebrochen.")
+            self._append_activity("Archivbereinigung abgebrochen: Bestätigung nicht eingegeben.")
+            return
+
+        try:
+            result = DocumentProcessor(self.settings).clear_archive_manually()
+        except ProcessingError as error:
+            self._messagebox.showerror("Archiv leeren", str(error))
+            self._append_activity(f"Archivbereinigung fehlgeschlagen: {error}")
+            return
+
+        message = (
+            f"Archiv geleert: {result.removed_files} Datei(en) in "
+            f"{result.removed_folders} Ordner(n) entfernt."
+        )
+        if result.skipped_entries:
+            message += f" Unveränderte Einträge: {', '.join(result.skipped_entries)}."
+        self.status.set(message)
+        self._append_activity(message)
+        self._messagebox.showinfo("Archiv geleert", message)
 
     def show_version_info(self) -> None:
         if self._info_dialog is not None and self._info_dialog.winfo_exists():
@@ -1387,6 +1446,7 @@ class SettingsWindow:
         self.save_button.configure(state="disabled")
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
+        self.clear_archive_button.configure(state="disabled")
         self._update_monitoring_badge()
         self._update_tray_status()
 
@@ -1411,6 +1471,7 @@ class SettingsWindow:
         self.save_button.configure(state="normal")
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
+        self.clear_archive_button.configure(state="normal")
         self._update_monitoring_badge()
         self._update_tray_status()
 

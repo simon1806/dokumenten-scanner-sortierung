@@ -190,6 +190,36 @@ class AppTests(unittest.TestCase):
         self.assertIsNone(result)
         window._messagebox.showwarning.assert_called_once()
 
+    def test_manual_archive_reset_is_rejected_while_watcher_is_running(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = SimpleNamespace(running=True)
+        window._messagebox = Mock()
+
+        window.clear_archive_manually()
+
+        window._messagebox.showwarning.assert_called_once()
+
+    def test_manual_archive_reset_requires_exact_confirmation_and_reports_result(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window.settings = SimpleNamespace(archive_folder="archiv")
+        window.root = object()
+        window._messagebox = Mock()
+        window._messagebox.askyesno.return_value = True
+        window._simpledialog = Mock()
+        window._simpledialog.askstring.return_value = "ARCHIV LEEREN"
+        window.status = Mock()
+        window._append_activity = Mock()
+        clear = Mock(return_value=SimpleNamespace(removed_files=4, removed_folders=2, skipped_entries=("manuell.txt",)))
+
+        with patch("scanner_sorter.app.DocumentProcessor") as processor:
+            processor.return_value.clear_archive_manually = clear
+            window.clear_archive_manually()
+
+        clear.assert_called_once_with()
+        self.assertIn("4 Datei(en)", window.status.set.call_args.args[0])
+        window._messagebox.showinfo.assert_called_once()
+
     def test_current_settings_reads_editable_protection_limits(self) -> None:
         class Value:
             def __init__(self, value: str):

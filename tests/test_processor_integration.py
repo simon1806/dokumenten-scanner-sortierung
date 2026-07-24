@@ -395,6 +395,48 @@ class ProcessorIntegrationTests(unittest.TestCase):
             self.assertEqual(0, processor.cleanup_archive())
             self.assertTrue(old_pdf.exists())
 
+    def test_manual_archive_reset_removes_owned_days_and_pending_state_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming = root / "eingang"
+            output = root / "ziel"
+            archive = root / "archiv"
+            incoming.mkdir()
+            source = incoming / "eigen.pdf"
+            self._create_pdf(source, 1)
+            processor = DocumentProcessor(Settings(str(incoming), str(output), str(archive)))
+            processor.recognizer = StubRecognizer([DetectedDocument("AM", "3250003")])
+            self.assertTrue(processor.process(source).success)
+
+            pending = archive / ".dokumentensortierer" / "pending" / "defekter-vorgang"
+            pending.mkdir(parents=True)
+            (pending / "job.json").write_text("{defekt", encoding="utf-8")
+            foreign = archive / "manuell-hinzugefuegt.txt"
+            foreign.write_text("behalten", encoding="utf-8")
+            unmarked_day = archive / "2000-01-01"
+            unmarked_day.mkdir()
+            (unmarked_day / "fremd.pdf").write_bytes(b"fremd")
+
+            result = processor.clear_archive_manually()
+
+            self.assertGreaterEqual(result.removed_files, 3)
+            self.assertEqual(2, result.removed_folders)
+            self.assertFalse((archive / ".dokumentensortierer").exists())
+            self.assertEqual([], list(archive.glob("????-??-??/eigen.pdf")))
+            self.assertTrue(foreign.exists())
+            self.assertTrue(unmarked_day.exists())
+            self.assertEqual(("2000-01-01", "manuell-hinzugefuegt.txt"), result.skipped_entries)
+
+    def test_manual_archive_reset_refuses_overlapping_archive_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming = root / "eingang"
+            incoming.mkdir()
+            processor = DocumentProcessor(Settings(str(incoming), str(incoming / "ziel"), str(incoming)))
+
+            with self.assertRaisesRegex(ProcessingError, "Archivordner darf nicht"):
+                processor.clear_archive_manually()
+
     def test_old_pending_job_never_claims_new_files_at_the_same_input_path(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -52,6 +52,10 @@ Ein Ziel- oder Netzwerkfehler führt deshalb nicht zu einem unvollständigen Dok
 
 Die Archivbereinigung löscht ausschließlich direkt abgelegte PDFs mit gültigem Eigentums- und Prüfsummennachweis. Dateien offener Vorgänge sowie unbekannte, verschachtelte oder manuell hinzugefügte Dateien bleiben unangetastet. Archive aus Versionen vor 0.1.24 besitzen diesen Nachweis noch nicht und werden absichtlich **nicht automatisch gelöscht**. Diese Altbestände müssen nach einer manuellen Prüfung separat bereinigt werden.
 
+### Archiv manuell leeren
+
+Über **Archiv manuell leeren** in der Steuerung kann ein berechtigter Benutzer das vom Tool verwaltete Archiv zurücksetzen. Die Überwachung muss dazu beendet sein; anschließend sind eine Warnung und die Eingabe von `ARCHIV LEEREN` erforderlich. Entfernt werden alle markierten Tagesarchive sowie der interne Ordner für offene Wiederherstellungsvorgänge. Eingang, Ziel, Prüfordner, Einstellungen und Protokolle bleiben erhalten. Unbekannte Dateien oder nicht von der Anwendung markierte Ordner im Archiv werden aus Sicherheitsgründen nicht gelöscht und im Ergebnis angezeigt.
+
 ## Einstellungen
 
 Die Oberfläche verwaltet:
