@@ -28,7 +28,7 @@ Mehrseitige Dokumente bleiben zusammen. Werden in einem Scan mehrere Dokumentanf
 | Aufmaßschein/-blatt | Barcode oder Dokumentüberschrift | `AM_<Dokumentnummer>.pdf` |
 | Empfangsschein | Barcode oder `Empfangsschein-Nr.` | `EM_<Empfangsschein-Nr.>.pdf` |
 | Neuma-Empfangsschein | `NEUMA` und Neuma-Auftragsnummer | `EM-NEUMA-I-<Jahr>-<Nummer>.pdf` |
-| Montageinfo/-bericht | Überschrift und Auftragsnummer | `MI_<Auftragsnummer>.pdf` |
+| Montageinfo/-bericht | Überschrift und Auftragsnummer; ohne Nummer mit Scannerdatum | `MI_<Auftragsnummer>.pdf` bzw. `MI_<JJJJ-MM-TT>.pdf` |
 | Abtretungserklärung | `Abtretungserklärung bei Versicherungsschäden`, Nummer im Feld `Auftrag/Angebot` (Präfix `32` oder `52`) | `ABTRET_<Auftrag>.pdf` |
 | Nowak-Lieferschein | Nowak-Kopf und vollständige Lieferscheinnummer ohne festen Nummernpräfix | `LS-Nowak-<Lieferscheinnummer>.pdf` |
 | Heitzer-Lieferschein | `Heitzer AG` und Lieferscheinnummer | `LS-Heitzer-<Lieferscheinnummer>.pdf` |

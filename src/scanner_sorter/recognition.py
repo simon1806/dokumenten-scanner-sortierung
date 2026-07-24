@@ -7,6 +7,7 @@ import re
 import time
 import unicodedata
 from concurrent.futures import Future, ThreadPoolExecutor
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -21,6 +22,7 @@ MONTAGE_FAST_CROP = (0.0, 0.02, 1.0, 0.24)
 ASSIGNMENT_DECLARATION_SIGNAL = "ABTRETUNGSERKLARUNG"
 ASSIGNMENT_NUMBER_CROP = (0.08, 0.43, 0.78, 0.67)
 ASSIGNMENT_NUMBER = r"((?:32|52)\d{5})"
+SCANNER_TIMESTAMP = re.compile(r"(?<!\d)(\d{2})(\d{2})(\d{2})\d{4,6}(?!\d)")
 NEUMA_ORDER = r"(?:I|1|\|)\s*[-–—]\s*(20\d{2})\s*[-–—]\s*(\d{6})"
 SUPPORTED_DOCUMENT_SIGNALS = (
     "AUFMASSBLATT",
@@ -114,13 +116,32 @@ def is_montage_report(text: str) -> bool:
     )
 
 
+def scan_date_from_source(source: Path) -> str:
+    """Return an ISO scan date from the scanner filename, with mtime as fallback."""
+    match = SCANNER_TIMESTAMP.search(source.stem)
+    if match:
+        year, month, day = (int(part) for part in match.groups())
+        try:
+            return date(2000 + year, month, day).isoformat()
+        except ValueError:
+            pass
+    try:
+        return datetime.fromtimestamp(source.stat().st_mtime).date().isoformat()
+    except OSError:
+        return date.today().isoformat()
+
+
 def is_neuma_order(text: str) -> bool:
     """Return whether OCR text contains a Neue Marler Baugesellschaft order."""
     normalised = normalise(text)
     return "NEUMA" in normalised and bool(re.search(rf"\bAUFTRAG\s+{NEUMA_ORDER}\b", normalised))
 
 
-def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> DetectedDocument | None:
+def detect_document_from_text(
+    text: str,
+    barcodes: Iterable[str] = (),
+    mi_scan_date: str | None = None,
+) -> DetectedDocument | None:
     """Recognise the supported document headers from OCR text and barcode values."""
     normalised = normalise(text)
     barcode_values = tuple(barcodes)
@@ -198,6 +219,11 @@ def detect_document_from_text(text: str, barcodes: Iterable[str] = ()) -> Detect
             if len(number) == 8 and number.startswith("0"):
                 number = number[1:]
             return DetectedDocument(match.group(1).upper(), number)
+    if mi_scan_date and is_montage_report(normalised):
+        # Rarely a Montageinfo is issued without an order number and without a
+        # usable MI barcode. It remains a valid one-page report, so preserve it
+        # under the scanner date rather than forwarding it as unrecognised.
+        return DetectedDocument("MI", mi_scan_date)
     return None
 
 
@@ -271,9 +297,9 @@ class PageRecognizer:
         import fitz
 
         with fitz.open(source) as document:
-            return self.recognise(document.load_page(page_index))
+            return self.recognise(document.load_page(page_index), scan_date_from_source(source))
 
-    def recognise(self, page: object) -> DetectedDocument | None:
+    def recognise(self, page: object, mi_scan_date: str | None = None) -> DetectedDocument | None:
         embedded_text = ""
         try:
             embedded_text = page.get_text("text")
@@ -282,13 +308,13 @@ class PageRecognizer:
             pass
 
         if embedded_text:
-            detected = detect_document_from_text(embedded_text)
+            detected = detect_document_from_text(embedded_text, mi_scan_date=mi_scan_date)
             if detected:
                 return detected
 
         image = self._render(page)
         barcodes = self._read_barcodes(image)
-        detected = detect_document_from_text(embedded_text, barcodes)
+        detected = detect_document_from_text(embedded_text, barcodes, mi_scan_date)
         if detected:
             return detected
 
@@ -298,7 +324,7 @@ class PageRecognizer:
         # Kopfbereichs. Andere Dokumenttypen werden hier absichtlich nicht
         # akzeptiert und durchlaufen weiterhin die allgemeine Erkennung.
         nowak_text = self._read_ocr(self._nowak_header_crop(image))
-        detected = detect_document_from_text(nowak_text, barcodes)
+        detected = detect_document_from_text(nowak_text, barcodes, mi_scan_date)
         if detected and detected.supplier == "Nowak":
             LOGGER.info("Nowak-Schnellerkennung verwendet; lieferschein=%s", detected.number)
             return detected
@@ -308,19 +334,19 @@ class PageRecognizer:
         # schmalen Formularstreifen statt des deutlich größeren Kopfbereichs.
         if has_montage_order_hint(nowak_text):
             montage_text = self._read_ocr(self._montage_header_crop(image))
-            detected = detect_document_from_text(montage_text, barcodes)
+            detected = detect_document_from_text(montage_text, barcodes, mi_scan_date)
             if detected and detected.document_type == "MI":
                 LOGGER.info("Montageinfo-Schnellerkennung verwendet; auftrag=%s", detected.number)
                 return detected
 
         header_text = self._read_ocr(self._header_crop(image))
-        detected = detect_document_from_text(header_text, barcodes)
+        detected = detect_document_from_text(header_text, barcodes, mi_scan_date)
         if detected:
             return detected
 
         if is_assignment_declaration(header_text):
             assignment_text = self._read_ocr(self._assignment_number_crop(image))
-            detected = detect_document_from_text(f"{header_text}\n{assignment_text}", barcodes)
+            detected = detect_document_from_text(f"{header_text}\n{assignment_text}", barcodes, mi_scan_date)
             if detected:
                 LOGGER.info("Abtretungserklaerung-Schnellerkennung verwendet; auftrag=%s", detected.number)
                 return detected
@@ -332,7 +358,7 @@ class PageRecognizer:
             return None
 
         text = self._read_ocr(image)
-        return detect_document_from_text(text, barcodes)
+        return detect_document_from_text(text, barcodes, mi_scan_date)
 
     @staticmethod
     def _render(page: object):
