@@ -36,6 +36,9 @@ from .window_launcher import activate_existing_window
 ERROR_ACCESS_DENIED = 5
 ERROR_ALREADY_EXISTS = 183
 WINDOWS_APP_ID = "GlasHagen.DokumentenScannerSortierung"
+SERVER_AUTOSTART_TASK_NAME = "GlasHagen Dokumenten-Scanner-Sortierung"
+SERVER_SETTINGS_FOLDER = "DokumentenScannerSortierung"
+SERVER_SETTINGS_FILENAME = "settings.json"
 LOG_RETENTION_DAYS = 90
 LOG_FILENAME_PATTERN = re.compile(r"^dokumentensortierer-(\d{4}-\d{2}-\d{2})\.log$")
 DRIVE_UNKNOWN = 0
@@ -232,6 +235,79 @@ def is_single_instance_access_denied(error: OSError) -> bool:
         getattr(error, "errno", None),
         getattr(error, "winerror", None),
     }
+
+
+def server_autostart_task_exists(
+    *,
+    platform_name: str | None = None,
+    runner: Callable[..., object] | None = None,
+) -> bool:
+    """Return whether the installer-managed SYSTEM task exists."""
+    effective_platform = os.name if platform_name is None else platform_name
+    if effective_platform != "nt":
+        return False
+    effective_runner = subprocess.run if runner is None else runner
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    schtasks = ntpath.join(system_root, "System32", "schtasks.exe")
+    try:
+        completed = effective_runner(
+            [schtasks, "/Query", "/TN", SERVER_AUTOSTART_TASK_NAME],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            creationflags=0x08000000,
+        )
+    except OSError:
+        return False
+    return getattr(completed, "returncode", 1) == 0
+
+
+def server_settings_path() -> Path:
+    program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+    return program_data / SERVER_SETTINGS_FOLDER / SERVER_SETTINGS_FILENAME
+
+
+def request_server_task_action(
+    action: str,
+    *,
+    platform_name: str | None = None,
+    shell_execute: Callable[..., object] | None = None,
+) -> None:
+    """Request an elevated start or stop of the installer-managed SYSTEM task."""
+    if action not in {"start", "stop"}:
+        raise ValueError(f"Unbekannte Serveraufgaben-Aktion: {action}")
+    effective_platform = os.name if platform_name is None else platform_name
+    if effective_platform != "nt":
+        raise OSError("Die Serverüberwachung kann nur unter Windows verwaltet werden.")
+
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    executable = ntpath.join(system_root, "System32", "schtasks.exe")
+    switch = "/Run" if action == "start" else "/End"
+    arguments = f'{switch} /TN "{SERVER_AUTOSTART_TASK_NAME}"'
+
+    if shell_execute is None:
+        import ctypes
+
+        native_shell_execute = ctypes.windll.shell32.ShellExecuteW
+        native_shell_execute.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_int,
+        ]
+        native_shell_execute.restype = ctypes.c_void_p
+        shell_execute = native_shell_execute
+
+    result = shell_execute(None, "runas", executable, arguments, None, 0)
+    numeric_result = int(result) if result else 0
+    if numeric_result <= 32:
+        raise OSError(
+            numeric_result,
+            "Die administrative Bestätigung wurde abgebrochen oder Windows konnte die "
+            "Serveraufgabe nicht steuern.",
+        )
 
 
 def release_single_instance(instance: tuple[object, int] | None) -> None:
@@ -498,6 +574,7 @@ class SettingsWindow:
         self.watcher: FolderWatcher | None = None
         self._monitor_instance: tuple[object, int] | None = None
         self._external_monitoring_active = False
+        self._server_task_available = False
         self._worker_messages: queue.Queue[str] = queue.Queue()
         self._worker_poll_after_id: str | None = None
         self.tray_icon: object | None = None
@@ -959,7 +1036,7 @@ class SettingsWindow:
             actions,
             "Überwachung starten",
             self.start,
-            "Speichert die Einstellungen und beginnt anschließend mit der automatischen Verarbeitung neuer PDFs.",
+            "Startet die lokale Überwachung oder – falls eingerichtet – die SYSTEM-Serverüberwachung.",
             "Primary.TButton",
             icon="player-play",
         )
@@ -968,7 +1045,7 @@ class SettingsWindow:
             actions,
             "Überwachung beenden",
             self.stop,
-            "Stoppt die Ordnerüberwachung. Die Anwendung und bereits erzeugte Dateien bleiben erhalten.",
+            "Stoppt die lokale Überwachung oder – falls eingerichtet – die SYSTEM-Serverüberwachung.",
             "Secondary.TButton",
             "disabled",
             icon="player-stop",
@@ -1365,13 +1442,14 @@ class SettingsWindow:
     def _set_external_monitoring_active(self, *, notify: bool = False) -> None:
         first_detection = not self._external_monitoring_active
         self._external_monitoring_active = True
+        server_task_available = getattr(self, "_server_task_available", False)
         self.start_button.configure(state="disabled")
-        self.stop_button.configure(state="disabled")
+        self.stop_button.configure(state="normal" if server_task_available else "disabled")
         self.clear_archive_button.configure(state="disabled")
-        message = (
-            "Der Eingangsordner wird bereits durch die Serverüberwachung unter SYSTEM "
-            "oder in einer anderen Windows-Sitzung überwacht."
-        )
+        if server_task_available:
+            message = "Die Serverüberwachung läuft unter SYSTEM."
+        else:
+            message = "Der Eingangsordner wird bereits in einer anderen Windows-Sitzung überwacht."
         self.status.set(message)
         if first_detection:
             self._append_activity(message)
@@ -1383,15 +1461,16 @@ class SettingsWindow:
                 "Serverüberwachung bereits aktiv",
                 f"{message}\n\n"
                 "Diese Programmoberfläche startet deshalb keine zweite Verarbeitung. "
-                "Die Serverüberwachung wird über die Windows-Aufgabenplanung verwaltet.",
+                "Mit „Überwachung beenden“ kann die eingerichtete Serverüberwachung gestoppt werden.",
             )
 
     def _detect_external_monitoring(self) -> None:
         """Detect a monitor held by SYSTEM without treating its protected mutex as an error."""
         if self.watcher and self.watcher.running:
             return
+        self._server_task_available = server_autostart_task_exists()
         try:
-            settings = self._current_settings()
+            settings = self._monitoring_settings()
             acquired, monitor_instance = acquire_single_instance(
                 self.settings_path,
                 settings.input_folder,
@@ -1404,8 +1483,96 @@ class SettingsWindow:
             return
         if acquired:
             release_single_instance(monitor_instance)
+            if self._server_task_available:
+                self.status.set("Serverüberwachung ist eingerichtet und kann gestartet werden.")
+                self.start_button.configure(state="normal")
+                self.stop_button.configure(state="disabled")
+                self.clear_archive_button.configure(state="normal")
             return
         self._set_external_monitoring_active()
+
+    def _monitoring_settings(self) -> Settings:
+        """Use the SYSTEM task's central settings when server mode is installed."""
+        if self._server_task_available:
+            central_path = server_settings_path()
+            try:
+                return load_settings(central_path)
+            except ConfigurationError as error:
+                logging.warning("Zentrale Servereinstellungen konnten nicht gelesen werden: %s", error)
+        return self._current_settings()
+
+    def _control_server_monitoring(self, action: str) -> None:
+        verb = "gestartet" if action == "start" else "beendet"
+        try:
+            request_server_task_action(action)
+        except (OSError, ValueError) as error:
+            self._messagebox.showerror(
+                f"Serverüberwachung konnte nicht {verb} werden",
+                str(error),
+            )
+            return
+
+        self.start_button.configure(state="disabled")
+        self.stop_button.configure(state="disabled")
+        self.clear_archive_button.configure(state="disabled")
+        progress = "Serverüberwachung wird gestartet …" if action == "start" else "Serverüberwachung wird beendet …"
+        self.status.set(progress)
+        self._append_activity(progress)
+        self.root.after(500, lambda: self._poll_server_monitoring_transition(action, 90))
+
+    def _probe_external_monitoring(self) -> bool | None:
+        try:
+            settings = self._monitoring_settings()
+            acquired, monitor_instance = acquire_single_instance(
+                self.settings_path,
+                settings.input_folder,
+            )
+        except OSError as error:
+            if is_single_instance_access_denied(error):
+                return True
+            logging.warning("Status der Serverüberwachung konnte nicht geprüft werden: %s", error)
+            return None
+        except ValueError:
+            return None
+        if acquired:
+            release_single_instance(monitor_instance)
+            return False
+        return True
+
+    def _poll_server_monitoring_transition(self, action: str, attempts_remaining: int) -> None:
+        active = self._probe_external_monitoring()
+        expected_active = action == "start"
+        if active is expected_active:
+            if expected_active:
+                self._set_external_monitoring_active()
+                message = "Serverüberwachung wurde gestartet."
+                self.status.set(message)
+                self._append_activity(message)
+            else:
+                self._external_monitoring_active = False
+                self.start_button.configure(state="normal")
+                self.stop_button.configure(state="disabled")
+                self.clear_archive_button.configure(state="normal")
+                self._update_monitoring_badge()
+                self._update_tray_status()
+                message = "Serverüberwachung wurde beendet."
+                self.status.set(message)
+                self._append_activity(message)
+            return
+        if attempts_remaining > 0:
+            self.root.after(
+                500,
+                lambda: self._poll_server_monitoring_transition(action, attempts_remaining - 1),
+            )
+            return
+
+        action_text = "Starten" if action == "start" else "Beenden"
+        self._messagebox.showerror(
+            f"{action_text} nicht bestätigt",
+            "Der Status der Serverüberwachung hat sich nicht innerhalb von 45 Sekunden geändert. "
+            "Bitte prüfen Sie die Aufgabe in der Windows-Aufgabenplanung und das zentrale Protokoll.",
+        )
+        self._detect_external_monitoring()
 
     def show_window(self) -> None:
         self.root.deiconify()
@@ -1486,6 +1653,9 @@ class SettingsWindow:
         if self._external_monitoring_active:
             self._set_external_monitoring_active(notify=True)
             return
+        if getattr(self, "_server_task_available", False):
+            self._control_server_monitoring("start")
+            return
         if self._monitor_instance is not None:
             release_single_instance(self._monitor_instance)
             self._monitor_instance = None
@@ -1530,6 +1700,8 @@ class SettingsWindow:
 
     def stop(self) -> None:
         if self._external_monitoring_active and not (self.watcher and self.watcher.running):
+            if getattr(self, "_server_task_available", False):
+                self._control_server_monitoring("stop")
             return
         if self.watcher and self.watcher.running:
             if self.watcher.processing:
@@ -1599,7 +1771,10 @@ class SettingsWindow:
             return
         self._quitting = True
         self._cancel_worker_message_poll()
-        self.stop()
+        # Closing the interactive UI must never stop an independently running
+        # SYSTEM task. Only a watcher owned by this process is stopped here.
+        if (self.watcher and self.watcher.running) or self._monitor_instance is not None:
+            self.stop()
         if self.tray_icon is not None:
             self.tray_icon.stop()
             self.tray_icon = None

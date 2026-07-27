@@ -21,6 +21,8 @@ from scanner_sorter.app import (
     is_single_instance_access_denied,
     main,
     release_single_instance,
+    request_server_task_action,
+    server_autostart_task_exists,
     single_instance_identity,
     single_instance_mutex_name,
     ui_icon_path,
@@ -32,6 +34,27 @@ class AppTests(unittest.TestCase):
     def test_access_denied_mutex_is_recognized_as_cross_session_monitor(self) -> None:
         self.assertTrue(is_single_instance_access_denied(OSError(5, "Zugriff verweigert")))
         self.assertFalse(is_single_instance_access_denied(OSError(3, "Pfad nicht gefunden")))
+
+    def test_installer_managed_server_task_is_detected_with_schtasks(self) -> None:
+        runner = Mock(return_value=SimpleNamespace(returncode=0))
+
+        exists = server_autostart_task_exists(platform_name="nt", runner=runner)
+
+        self.assertTrue(exists)
+        command = runner.call_args.args[0]
+        self.assertIn("/Query", command)
+        self.assertIn("GlasHagen Dokumenten-Scanner-Sortierung", command)
+
+    def test_server_task_control_requests_elevation_for_stop(self) -> None:
+        shell_execute = Mock(return_value=33)
+
+        request_server_task_action("stop", platform_name="nt", shell_execute=shell_execute)
+
+        _window, verb, executable, arguments, _directory, _visibility = shell_execute.call_args.args
+        self.assertEqual("runas", verb)
+        self.assertTrue(executable.lower().endswith(r"\system32\schtasks.exe"))
+        self.assertIn("/End", arguments)
+        self.assertIn("GlasHagen Dokumenten-Scanner-Sortierung", arguments)
 
     def test_default_window_is_large_and_centered_on_full_hd_screen(self) -> None:
         width, height, x, y = initial_window_geometry(1920, 1080)
@@ -250,6 +273,7 @@ class AppTests(unittest.TestCase):
     def test_external_monitor_disables_conflicting_controls_and_updates_status(self) -> None:
         window = object.__new__(SettingsWindow)
         window._external_monitoring_active = False
+        window._server_task_available = False
         window.start_button = Mock()
         window.stop_button = Mock()
         window.clear_archive_button = Mock()
@@ -264,8 +288,64 @@ class AppTests(unittest.TestCase):
         window.start_button.configure.assert_called_once_with(state="disabled")
         window.stop_button.configure.assert_called_once_with(state="disabled")
         window.clear_archive_button.configure.assert_called_once_with(state="disabled")
-        self.assertIn("SYSTEM", window.status.set.call_args.args[0])
+        self.assertIn("anderen Windows-Sitzung", window.status.set.call_args.args[0])
         window._messagebox.showinfo.assert_not_called()
+
+    def test_system_monitor_keeps_stop_control_available(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window._external_monitoring_active = False
+        window._server_task_available = True
+        window.start_button = Mock()
+        window.stop_button = Mock()
+        window.clear_archive_button = Mock()
+        window.status = Mock()
+        window._append_activity = Mock()
+        window._update_monitoring_badge = Mock()
+        window._update_tray_status = Mock()
+        window._messagebox = Mock()
+
+        window._set_external_monitoring_active()
+
+        window.start_button.configure.assert_called_once_with(state="disabled")
+        window.stop_button.configure.assert_called_once_with(state="normal")
+        window.clear_archive_button.configure.assert_called_once_with(state="disabled")
+
+    def test_start_control_uses_server_task_when_it_is_installed(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window._external_monitoring_active = False
+        window._server_task_available = True
+        window._control_server_monitoring = Mock()
+
+        window.start()
+
+        window._control_server_monitoring.assert_called_once_with("start")
+
+    def test_stop_control_uses_server_task_for_external_monitor(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window._external_monitoring_active = True
+        window._server_task_available = True
+        window._control_server_monitoring = Mock()
+
+        window.stop()
+
+        window._control_server_monitoring.assert_called_once_with("stop")
+
+    def test_quitting_ui_does_not_stop_external_system_monitor(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window._quitting = False
+        window.watcher = None
+        window._monitor_instance = None
+        window._cancel_worker_message_poll = Mock()
+        window.stop = Mock()
+        window.tray_icon = None
+        window.root = Mock()
+
+        window.quit_application()
+
+        window.stop.assert_not_called()
+        window.root.destroy.assert_called_once_with()
 
     def test_manual_archive_reset_requires_exact_confirmation_and_reports_result(self) -> None:
         window = object.__new__(SettingsWindow)
