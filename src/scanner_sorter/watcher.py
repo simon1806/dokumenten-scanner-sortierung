@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -26,17 +27,21 @@ class FolderWatcher:
 
     MAX_RETRY_BACKOFF_SECONDS = 60.0
     RECOVERY_INTERVAL_SECONDS = 60.0
+    HEARTBEAT_INTERVAL_SECONDS = 600.0
 
     def __init__(
         self,
         settings: Settings,
         on_status: StatusCallback | None = None,
         on_result: ResultCallback | None = None,
+        *,
+        runtime_mode: str = "Benutzeroberfläche",
     ):
         self.settings = settings
         self.processor = DocumentProcessor(settings)
         self.on_status = on_status or (lambda _message: None)
         self.on_result = on_result or (lambda _result: None)
+        self.runtime_mode = runtime_mode
         self._stop_event = threading.Event()
         self._processing_event = threading.Event()
         self._operation_lock = threading.Lock()
@@ -46,6 +51,11 @@ class FolderWatcher:
         self._last_cleanup = 0.0
         self._last_recovery = 0.0
         self._backlog_announced = False
+        self._started_monotonic = 0.0
+        self._last_heartbeat = 0.0
+        self._last_result_at: datetime | None = None
+        self._last_result_source = ""
+        self._last_result_success: bool | None = None
 
     @property
     def running(self) -> bool:
@@ -89,6 +99,8 @@ class FolderWatcher:
                 return
             self._stop_event.clear()
             self._processing_event.clear()
+            self._started_monotonic = time.monotonic()
+            self._last_heartbeat = self._started_monotonic
             # A daemon thread could be terminated in the middle of publishing a
             # document when the GUI exits.  Keep the process alive until the
             # worker reaches its controlled shutdown point instead.
@@ -158,8 +170,12 @@ class FolderWatcher:
 
     def _run(self) -> None:
         failure_count = 0
+        if not self._started_monotonic:
+            self._started_monotonic = time.monotonic()
+            self._last_heartbeat = self._started_monotonic
         try:
             while not self._stop_event.is_set():
+                self._heartbeat_if_due(failure_count)
                 try:
                     # Do this inside the retry loop so a temporarily unavailable
                     # network share does not prevent the watcher from starting.
@@ -262,6 +278,7 @@ class FolderWatcher:
             finally:
                 self._end_operation()
             self._notify_result(result)
+            self._record_result(result)
             self._notify_status(result.message)
             remaining_files = any(candidate != path and candidate.exists() for candidate in current_files)
             if backlog_mode and remaining_files and not self._stop_event.is_set():
@@ -294,7 +311,60 @@ class FolderWatcher:
         self._last_recovery = now
         for result in results:
             self._notify_result(result)
+            self._record_result(result)
             self._notify_status(result.message)
+
+    def _record_result(self, result: ProcessResult) -> None:
+        self._last_result_at = datetime.now().astimezone()
+        self._last_result_source = result.source_name
+        self._last_result_success = result.success
+
+    @staticmethod
+    def _directory_state(path: Path) -> str:
+        try:
+            return "erreichbar" if path.is_dir() else "nicht_erreichbar"
+        except OSError:
+            return "nicht_erreichbar"
+
+    def _waiting_pdf_count(self) -> str:
+        try:
+            return str(sum(1 for path in Path(self.settings.input_folder).glob("*.pdf") if path.is_file()))
+        except OSError:
+            return "unbekannt"
+
+    def _heartbeat_if_due(self, failure_count: int, *, now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        if current - self._last_heartbeat < self.HEARTBEAT_INTERVAL_SECONDS:
+            return False
+        self._last_heartbeat = current
+        uptime_seconds = max(0, round(current - self._started_monotonic))
+        if self._last_result_at is None:
+            last_result = "keiner"
+            last_status = "keiner"
+            last_source = "keine"
+        else:
+            last_result = self._last_result_at.isoformat(timespec="seconds")
+            last_status = "erfolgreich" if self._last_result_success else "nicht_erkannt_oder_fehler"
+            last_source = self._last_result_source
+        LOGGER.info(
+            "Betriebsstatus; anwendung=aktiv; ueberwachung=aktiv; modus=%s; laufzeit_s=%s; "
+            "verarbeitung=%s; wartende_pdfs=%s; eingang=%s; ziel=%s; archiv=%s; "
+            "pruefordner=%s; fortlaufende_ordnerfehler=%s; letzter_vorgang=%s; "
+            "letzter_status=%s; letzte_datei=%s",
+            self.runtime_mode,
+            uptime_seconds,
+            "ja" if self.processing else "nein",
+            self._waiting_pdf_count(),
+            self._directory_state(Path(self.settings.input_folder)),
+            self._directory_state(Path(self.settings.output_folder)),
+            self._directory_state(Path(self.settings.archive_folder)),
+            self._directory_state(self.settings.review_folder_path),
+            failure_count,
+            last_result,
+            last_status,
+            last_source,
+        )
+        return True
 
     def _cleanup_if_due(self) -> None:
         now = time.monotonic()

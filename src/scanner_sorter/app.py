@@ -1824,6 +1824,7 @@ def run_headless(settings_path: Path) -> int:
         settings,
         on_status=lambda message: logging.info(message),
         on_result=lambda _result: None,
+        runtime_mode="SYSTEM/Headless",
     )
 
     def stop(_signal: int, _frame: object) -> None:

@@ -1,8 +1,9 @@
 # Änderungsprotokoll
 
-## Unveröffentlicht
+## 0.2.5 – 2026-07-27
 
 - Eine unter `SYSTEM` laufende Serverüberwachung wird in der Benutzeroberfläche als aktiv erkannt. Die geschützte globale Sperre führt nicht mehr zu einer irreführenden Fehlermeldung. Die vorhandenen Schaltflächen starten und stoppen die SYSTEM-Aufgabe nach administrativer Bestätigung; das manuelle Archivleeren wird erst nach dem bestätigten Stopp freigegeben.
+- Die laufende Überwachung schreibt alle zehn Minuten einen kompakten Betriebsstatus mit Laufzeit, Betriebsart, Verarbeitung, Warteschlange, Erreichbarkeit aller Arbeitsordner, fortlaufenden Ordnerfehlern und dem letzten Verarbeitungsergebnis in das Tagesprotokoll.
 
 ## 0.2.4 – 2026-07-24
 

@@ -141,11 +141,11 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Version 0.2.4 ergänzt den schnellen Öffnen-Starter, eine sichere manuelle Archivbereinigung und die im Server-Pilot geprüften Dokumentregeln. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner sowie ein Wiederanlauf geprüft.
+Version 0.2.5 ergänzt die Steuerung der SYSTEM-Überwachung aus der normalen Oberfläche und einen zehnminütigen Betriebsstatus im Tagesprotokoll. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.2.4 enthält:
+Release 0.2.5 enthält:
 
 - Tesseract OCR 5.5.2
 - Leptonica 1.87.0
@@ -172,7 +172,7 @@ Copy-Item "$env:APPDATA\DokumentenScannerSortierung\settings.json" `
 notepad "C:\ProgramData\DokumentenScannerSortierung\settings.json"
 ```
 
-Vor der Einrichtung müssen alle Netzlaufwerke in dieser Datei durch UNC-Pfade ersetzt sein, zum Beispiel `\\srv-gh-app\pool\Dateiarchiv` statt `G:\Dateiarchiv`. Benutzerabhängige Laufwerksbuchstaben stehen einem Systemkonto nach einem Serverneustart nicht zur Verfügung.
+Pfade auf demselben Server sollten als lokale Pfade wie `D:\Freigaben\pool\Dateiarchiv` eingetragen werden. Externe Netzwerkfreigaben müssen als UNC-Pfade wie `\\server\freigabe\ordner` hinterlegt sein. Benutzerabhängige Laufwerksbuchstaben wie `G:` stehen einem Systemkonto nach einem Serverneustart nicht zur Verfügung.
 
 Falls die Aufgabe ausnahmsweise manuell in der Windows-Aufgabenplanung eingerichtet werden soll, gelten dieselben Werte:
 
@@ -190,6 +190,8 @@ Wird die normale Benutzeroberfläche geöffnet, während diese SYSTEM-Aufgabe de
 Für Netzwerkfreigaben sind UNC-Pfade wie `\\server\freigabe\scanner\eingang` robuster als benutzerabhängige Laufwerksbuchstaben. Das Dienstkonto benötigt Lesen/Ändern/Löschen im Eingang sowie Lesen/Schreiben/Ändern in Ziel, Archiv, Prüfordner und am Ordner der zentralen `settings.json`.
 
 Bei einem vorübergehenden Ausfall eines Serverpfads wartet die Anwendung mit exponentiellem Backoff zwischen 1 und 60 Sekunden und setzt die Überwachung nach der Wiederkehr automatisch fort.
+
+Alle zehn Minuten schreibt die aktive Überwachung ein Lebenszeichen mit Laufzeit, Betriebsart, laufender Verarbeitung, Anzahl wartender PDFs, Erreichbarkeit der Arbeitsordner, fortlaufenden Ordnerfehlern und dem letzten Verarbeitungsergebnis in das jeweilige Tagesprotokoll. Fehlt dieses Lebenszeichen länger als erwartet, sollte der Status der geplanten Aufgabe geprüft werden.
 
 ## Sicherheitsgrenzen
 
@@ -210,11 +212,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.2.4 bauen:
+OCR-Paket vorbereiten und Release 0.2.5 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.2.4
+.\scripts\build-release.ps1 -Version 0.2.5
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.
