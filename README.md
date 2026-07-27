@@ -185,6 +185,8 @@ Falls die Aufgabe ausnahmsweise manuell in der Windows-Aufgabenplanung eingerich
 
 Die automatisch erstellte Aufgabe heißt `GlasHagen Dokumenten-Scanner-Sortierung`, läuft als `SYSTEM`, startet nach 30 Sekunden und verwendet die zentrale Einstellungsdatei. Bei der Deinstallation wird sie entfernt, sofern die Deinstallation mit Administratorrechten ausgeführt wird.
 
+Wird die normale Benutzeroberfläche geöffnet, während diese SYSTEM-Aufgabe den Eingangsordner bereits überwacht, zeigt sie **Serverüberwachung aktiv** an und startet keine zweite Verarbeitung. Die Serverüberwachung wird weiterhin über die Windows-Aufgabenplanung gestartet oder beendet.
+
 Für Netzwerkfreigaben sind UNC-Pfade wie `\\server\freigabe\scanner\eingang` robuster als benutzerabhängige Laufwerksbuchstaben. Das Dienstkonto benötigt Lesen/Ändern/Löschen im Eingang sowie Lesen/Schreiben/Ändern in Ziel, Archiv, Prüfordner und am Ordner der zentralen `settings.json`.
 
 Bei einem vorübergehenden Ausfall eines Serverpfads wartet die Anwendung mit exponentiellem Backoff zwischen 1 und 60 Sekunden und setzt die Überwachung nach der Wiederkehr automatisch fort.

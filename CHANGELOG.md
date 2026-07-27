@@ -1,5 +1,9 @@
 # Änderungsprotokoll
 
+## Unveröffentlicht
+
+- Eine unter `SYSTEM` oder in einer anderen Windows-Sitzung laufende Serverüberwachung wird in der Benutzeroberfläche als aktiv erkannt. Die geschützte globale Sperre führt nicht mehr zu einer irreführenden Fehlermeldung; kollidierende Start- und Archivaktionen werden deaktiviert.
+
 ## 0.2.4 – 2026-07-24
 
 - Das Setup zeigt nach der Bestätigung direkt eine nicht schließbare Fortschrittsmaske mit animiertem Balken. Sie bleibt während Dateiprüfung und Austausch sichtbar und schließt vor dem Erfolgs- oder Fehlerdialog.

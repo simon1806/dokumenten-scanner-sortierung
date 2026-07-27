@@ -33,6 +33,7 @@ from .watcher import FolderWatcher
 from .window_launcher import activate_existing_window
 
 
+ERROR_ACCESS_DENIED = 5
 ERROR_ALREADY_EXISTS = 183
 WINDOWS_APP_ID = "GlasHagen.DokumentenScannerSortierung"
 LOG_RETENTION_DAYS = 90
@@ -223,6 +224,14 @@ def acquire_single_instance(
         kernel32.CloseHandle(handle)
         return False, None
     return True, (kernel32, int(handle))
+
+
+def is_single_instance_access_denied(error: OSError) -> bool:
+    """Return whether another Windows account owns an inaccessible global mutex."""
+    return ERROR_ACCESS_DENIED in {
+        getattr(error, "errno", None),
+        getattr(error, "winerror", None),
+    }
 
 
 def release_single_instance(instance: tuple[object, int] | None) -> None:
@@ -488,6 +497,7 @@ class SettingsWindow:
         self.settings = load_settings(settings_path)
         self.watcher: FolderWatcher | None = None
         self._monitor_instance: tuple[object, int] | None = None
+        self._external_monitoring_active = False
         self._worker_messages: queue.Queue[str] = queue.Queue()
         self._worker_poll_after_id: str | None = None
         self.tray_icon: object | None = None
@@ -531,6 +541,8 @@ class SettingsWindow:
         self._start_tray_icon()
         if start_monitoring:
             self.root.after(250, self._start_from_autostart)
+        else:
+            self.root.after(250, self._detect_external_monitoring)
 
     @staticmethod
     def _app_image(size: int) -> object:
@@ -1074,6 +1086,13 @@ class SettingsWindow:
 
     def clear_archive_manually(self) -> None:
         """Reset only application-owned archive data after explicit operator consent."""
+        if getattr(self, "_external_monitoring_active", False):
+            self._messagebox.showwarning(
+                "Serverüberwachung aktiv",
+                "Das Archiv kann nicht geleert werden, während die Serverüberwachung unter SYSTEM "
+                "oder in einer anderen Windows-Sitzung aktiv ist.",
+            )
+            return
         if self.watcher and self.watcher.running:
             self._messagebox.showwarning(
                 "Überwachung aktiv",
@@ -1313,13 +1332,24 @@ class SettingsWindow:
     def _update_tray_status(self) -> None:
         if self.tray_icon is None:
             return
-        active = bool(self.watcher and self.watcher.running)
-        status = "Überwachung aktiv" if active else "Überwachung nicht gestartet"
+        local_active = bool(self.watcher and self.watcher.running)
+        if self._external_monitoring_active:
+            status = "Serverüberwachung aktiv"
+        elif local_active:
+            status = "Überwachung aktiv"
+        else:
+            status = "Überwachung nicht gestartet"
         self.tray_icon.title = f"Dokumenten-Scanner-Sortierung {__version__} – {status}"
 
     def _update_monitoring_badge(self) -> None:
-        active = bool(self.watcher and self.watcher.running)
-        if active:
+        local_active = bool(self.watcher and self.watcher.running)
+        if self._external_monitoring_active:
+            self.header_status_badge.configure(
+                text="●  SERVERÜBERWACHUNG AKTIV",
+                background="#DDF2E4",
+                foreground="#26713D",
+            )
+        elif local_active:
             self.header_status_badge.configure(
                 text="●  ÜBERWACHUNG AKTIV",
                 background="#DDF2E4",
@@ -1331,6 +1361,51 @@ class SettingsWindow:
                 background="#E8EEF2",
                 foreground="#48606F",
             )
+
+    def _set_external_monitoring_active(self, *, notify: bool = False) -> None:
+        first_detection = not self._external_monitoring_active
+        self._external_monitoring_active = True
+        self.start_button.configure(state="disabled")
+        self.stop_button.configure(state="disabled")
+        self.clear_archive_button.configure(state="disabled")
+        message = (
+            "Der Eingangsordner wird bereits durch die Serverüberwachung unter SYSTEM "
+            "oder in einer anderen Windows-Sitzung überwacht."
+        )
+        self.status.set(message)
+        if first_detection:
+            self._append_activity(message)
+            logging.info("Externe Serverüberwachung erkannt; keine zweite Überwachung gestartet.")
+        self._update_monitoring_badge()
+        self._update_tray_status()
+        if notify:
+            self._messagebox.showinfo(
+                "Serverüberwachung bereits aktiv",
+                f"{message}\n\n"
+                "Diese Programmoberfläche startet deshalb keine zweite Verarbeitung. "
+                "Die Serverüberwachung wird über die Windows-Aufgabenplanung verwaltet.",
+            )
+
+    def _detect_external_monitoring(self) -> None:
+        """Detect a monitor held by SYSTEM without treating its protected mutex as an error."""
+        if self.watcher and self.watcher.running:
+            return
+        try:
+            settings = self._current_settings()
+            acquired, monitor_instance = acquire_single_instance(
+                self.settings_path,
+                settings.input_folder,
+            )
+        except (OSError, ValueError) as error:
+            if isinstance(error, OSError) and is_single_instance_access_denied(error):
+                self._set_external_monitoring_active()
+            else:
+                logging.warning("Status der externen Serverüberwachung konnte nicht geprüft werden: %s", error)
+            return
+        if acquired:
+            release_single_instance(monitor_instance)
+            return
+        self._set_external_monitoring_active()
 
     def show_window(self) -> None:
         self.root.deiconify()
@@ -1408,6 +1483,9 @@ class SettingsWindow:
     def start(self) -> None:
         if self.watcher and self.watcher.running:
             return
+        if self._external_monitoring_active:
+            self._set_external_monitoring_active(notify=True)
+            return
         if self._monitor_instance is not None:
             release_single_instance(self._monitor_instance)
             self._monitor_instance = None
@@ -1420,6 +1498,9 @@ class SettingsWindow:
                 settings.input_folder,
             )
         except OSError as error:
+            if is_single_instance_access_denied(error):
+                self._set_external_monitoring_active(notify=True)
+                return
             self._messagebox.showerror(
                 "Überwachungssperre nicht verfügbar",
                 "Der Eingangsordner kann nicht sicher gegen eine zweite Instanz gesperrt werden.\n\n"
@@ -1427,12 +1508,9 @@ class SettingsWindow:
             )
             return
         if not acquired:
-            self._messagebox.showerror(
-                "Eingangsordner bereits überwacht",
-                "Der konfigurierte Eingangsordner wird bereits von einer anderen Instanz oder "
-                "Serversitzung überwacht.",
-            )
+            self._set_external_monitoring_active(notify=True)
             return
+        self._external_monitoring_active = False
         self._monitor_instance = monitor_instance
         try:
             self.watcher = FolderWatcher(settings, self._from_worker, self._result_from_worker)
@@ -1451,6 +1529,8 @@ class SettingsWindow:
         self._update_tray_status()
 
     def stop(self) -> None:
+        if self._external_monitoring_active and not (self.watcher and self.watcher.running):
+            return
         if self.watcher and self.watcher.running:
             if self.watcher.processing:
                 message = "Überwachung wird beendet; der laufende Vorgang wird sicher abgeschlossen."

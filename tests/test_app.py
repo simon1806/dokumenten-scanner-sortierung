@@ -18,6 +18,7 @@ from scanner_sorter.app import (
     canonicalize_windows_network_path,
     cleanup_old_logs,
     initial_window_geometry,
+    is_single_instance_access_denied,
     main,
     release_single_instance,
     single_instance_identity,
@@ -28,6 +29,10 @@ from scanner_sorter.window_launcher import main as open_launcher_main
 
 
 class AppTests(unittest.TestCase):
+    def test_access_denied_mutex_is_recognized_as_cross_session_monitor(self) -> None:
+        self.assertTrue(is_single_instance_access_denied(OSError(5, "Zugriff verweigert")))
+        self.assertFalse(is_single_instance_access_denied(OSError(3, "Pfad nicht gefunden")))
+
     def test_default_window_is_large_and_centered_on_full_hd_screen(self) -> None:
         width, height, x, y = initial_window_geometry(1920, 1080)
 
@@ -193,11 +198,74 @@ class AppTests(unittest.TestCase):
     def test_manual_archive_reset_is_rejected_while_watcher_is_running(self) -> None:
         window = object.__new__(SettingsWindow)
         window.watcher = SimpleNamespace(running=True)
+        window._external_monitoring_active = False
         window._messagebox = Mock()
 
         window.clear_archive_manually()
 
         window._messagebox.showwarning.assert_called_once()
+
+    def test_manual_archive_reset_is_rejected_while_server_monitor_is_running(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window._external_monitoring_active = True
+        window._messagebox = Mock()
+
+        window.clear_archive_manually()
+
+        window._messagebox.showwarning.assert_called_once()
+
+    def test_start_treats_access_denied_mutex_as_active_server_monitor(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window._external_monitoring_active = False
+        window._monitor_instance = None
+        window.settings_path = Path("settings.json")
+        window.save = Mock(return_value=SimpleNamespace(input_folder="eingang"))
+        window._set_external_monitoring_active = Mock()
+
+        with patch(
+            "scanner_sorter.app.acquire_single_instance",
+            side_effect=OSError(5, "Einzelinstanz-Sperre konnte nicht erstellt werden."),
+        ):
+            window.start()
+
+        window._set_external_monitoring_active.assert_called_once_with(notify=True)
+
+    def test_window_detects_system_monitor_without_showing_an_error(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window.settings_path = Path("settings.json")
+        window._current_settings = Mock(return_value=SimpleNamespace(input_folder="eingang"))
+        window._set_external_monitoring_active = Mock()
+
+        with patch(
+            "scanner_sorter.app.acquire_single_instance",
+            side_effect=OSError(5, "Einzelinstanz-Sperre konnte nicht erstellt werden."),
+        ):
+            window._detect_external_monitoring()
+
+        window._set_external_monitoring_active.assert_called_once_with()
+
+    def test_external_monitor_disables_conflicting_controls_and_updates_status(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window._external_monitoring_active = False
+        window.start_button = Mock()
+        window.stop_button = Mock()
+        window.clear_archive_button = Mock()
+        window.status = Mock()
+        window._append_activity = Mock()
+        window._update_monitoring_badge = Mock()
+        window._update_tray_status = Mock()
+        window._messagebox = Mock()
+
+        window._set_external_monitoring_active()
+
+        window.start_button.configure.assert_called_once_with(state="disabled")
+        window.stop_button.configure.assert_called_once_with(state="disabled")
+        window.clear_archive_button.configure.assert_called_once_with(state="disabled")
+        self.assertIn("SYSTEM", window.status.set.call_args.args[0])
+        window._messagebox.showinfo.assert_not_called()
 
     def test_manual_archive_reset_requires_exact_confirmation_and_reports_result(self) -> None:
         window = object.__new__(SettingsWindow)
