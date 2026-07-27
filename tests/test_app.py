@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import queue
 import tempfile
@@ -17,12 +18,17 @@ from scanner_sorter.app import (
     app_asset_path,
     canonicalize_windows_network_path,
     cleanup_old_logs,
+    consume_server_stop_request,
     initial_window_geometry,
     is_single_instance_access_denied,
     main,
+    read_log_tail,
     release_single_instance,
     request_server_task_action,
+    run_headless,
     server_autostart_task_exists,
+    server_settings_path,
+    server_stop_request_path,
     single_instance_identity,
     single_instance_mutex_name,
     ui_icon_path,
@@ -52,9 +58,43 @@ class AppTests(unittest.TestCase):
 
         _window, verb, executable, arguments, _directory, _visibility = shell_execute.call_args.args
         self.assertEqual("runas", verb)
-        self.assertTrue(executable.lower().endswith(r"\system32\schtasks.exe"))
-        self.assertIn("/End", arguments)
-        self.assertIn("GlasHagen Dokumenten-Scanner-Sortierung", arguments)
+        self.assertTrue(executable.lower().endswith(r"\windowspowershell\v1.0\powershell.exe"))
+        encoded = arguments.rsplit(" ", 1)[-1]
+        script = base64.b64decode(encoded).decode("utf-16-le")
+        self.assertIn("server-stop.request", script)
+        self.assertIn("WriteAllText", script)
+        self.assertNotIn("/End", arguments)
+
+    def test_server_stop_request_is_consumed_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings_path = Path(directory) / "settings.json"
+            request_path = server_stop_request_path(settings_path)
+            request_path.write_text("stop", encoding="utf-8")
+
+            self.assertTrue(consume_server_stop_request(settings_path))
+            self.assertFalse(request_path.exists())
+            self.assertFalse(consume_server_stop_request(settings_path))
+
+    def test_headless_worker_stops_after_control_request(self) -> None:
+        settings_path = Path("central-settings.json")
+        settings = SimpleNamespace(validate=lambda: [], input_folder="eingang")
+        monitor_instance = object()
+        watcher = Mock()
+        with (
+            patch("scanner_sorter.app.load_settings", return_value=settings),
+            patch("scanner_sorter.app.consume_server_stop_request", side_effect=[False, True]),
+            patch("scanner_sorter.app.acquire_single_instance", return_value=(True, monitor_instance)),
+            patch("scanner_sorter.app.FolderWatcher", return_value=watcher),
+            patch("scanner_sorter.app.SERVER_STOP_POLL_SECONDS", 0),
+            patch("scanner_sorter.app.signal.signal"),
+            patch("scanner_sorter.app.release_single_instance") as release,
+        ):
+            result = run_headless(settings_path)
+
+        self.assertEqual(0, result)
+        watcher.start.assert_called_once_with()
+        watcher.stop.assert_called_once_with()
+        release.assert_called_once_with(monitor_instance)
 
     def test_default_window_is_large_and_centered_on_full_hd_screen(self) -> None:
         width, height, x, y = initial_window_geometry(1920, 1080)
@@ -207,6 +247,27 @@ class AppTests(unittest.TestCase):
             self.assertFalse(expired.exists())
             for path in (boundary, current, unrelated, malformed):
                 self.assertTrue(path.exists(), path.name)
+
+    def test_log_tail_is_bounded_and_keeps_complete_recent_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "daily.log"
+            path.write_text("eins\nzwei\ndrei\nvier\n", encoding="utf-8")
+
+            tail = read_log_tail(path, max_bytes=12, max_lines=2)
+
+            self.assertEqual("drei\nvier\n", tail)
+
+    def test_server_mode_selects_central_activity_log(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.activity_log = Mock()
+        window._reload_activity_log_tail = Mock()
+        central = server_settings_path()
+
+        window._select_activity_log_source(central)
+
+        self.assertEqual(central, window._activity_log_settings_path)
+        self.assertEqual(central.parent / "logs", window.log_path.parent)
+        window._reload_activity_log_tail.assert_called_once_with()
 
     def test_save_is_rejected_while_watcher_is_running(self) -> None:
         window = object.__new__(SettingsWindow)

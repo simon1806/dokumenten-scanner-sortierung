@@ -309,8 +309,8 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("$launch.Checked = $true", script)
         self.assertIn("Anwendung starten", script)
         self.assertIn("Installation beenden", script)
-        self.assertIn("Size(720,340)", script)
-        self.assertIn("Size(670,120)", script)
+        self.assertIn("Size(760,430)", script)
+        self.assertIn("Size(710,220)", script)
 
     @patch("installer.windows_dialog.subprocess.Popen")
     def test_installation_progress_dialog_is_modeless_and_cannot_be_closed(self, popen: Mock) -> None:

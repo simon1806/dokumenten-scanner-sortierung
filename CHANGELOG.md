@@ -1,5 +1,11 @@
 # Änderungsprotokoll
 
+## 0.2.6 – 2026-07-27
+
+- Die Oberfläche beendet die SYSTEM-Überwachung über ein administrativ geschriebenes Stoppsignal. Der Worker schließt einen bereits laufenden Scan sicher ab und beendet anschließend seinen vollständigen PyInstaller-Prozessbaum; ein verwaister Hintergrundprozess bleibt nicht mehr zurück.
+- Bei eingerichtetem Serverautostart zeigt das Aktivitätsprotokoll der Benutzeroberfläche automatisch das zentrale Tagesprotokoll aus `C:\ProgramData\DokumentenScannerSortierung\logs` an. Benutzer- und SYSTEM-Prozess schreiben weiterhin getrennt, sodass keine konkurrierenden Schreibzugriffe entstehen.
+- Das Abschlussfenster des Setups bietet mehr Platz für Installationspfad und Serverautostart-Status. Veraltete interne Hinweise auf eine frühere Build-Version wurden bereinigt.
+
 ## 0.2.5 – 2026-07-27
 
 - Eine unter `SYSTEM` laufende Serverüberwachung wird in der Benutzeroberfläche als aktiv erkannt. Die geschützte globale Sperre führt nicht mehr zu einer irreführenden Fehlermeldung. Die vorhandenen Schaltflächen starten und stoppen die SYSTEM-Aufgabe nach administrativer Bestätigung; das manuelle Archivleeren wird erst nach dem bestätigten Stopp freigegeben.

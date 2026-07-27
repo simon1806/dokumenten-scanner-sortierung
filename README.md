@@ -141,11 +141,11 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Version 0.2.5 ergänzt die Steuerung der SYSTEM-Überwachung aus der normalen Oberfläche und einen zehnminütigen Betriebsstatus im Tagesprotokoll. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft.
+Version 0.2.6 beendet die SYSTEM-Überwachung kontrolliert über ein administratives Stoppsignal und zeigt ihr zentrales Tagesprotokoll direkt in der normalen Oberfläche an. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.2.5 enthält:
+Release 0.2.6 enthält:
 
 - Tesseract OCR 5.5.2
 - Leptonica 1.87.0
@@ -185,7 +185,9 @@ Falls die Aufgabe ausnahmsweise manuell in der Windows-Aufgabenplanung eingerich
 
 Die automatisch erstellte Aufgabe heißt `GlasHagen Dokumenten-Scanner-Sortierung`, läuft als `SYSTEM`, startet nach 30 Sekunden und verwendet die zentrale Einstellungsdatei. Bei der Deinstallation wird sie entfernt, sofern die Deinstallation mit Administratorrechten ausgeführt wird.
 
-Wird die normale Benutzeroberfläche geöffnet, während diese SYSTEM-Aufgabe den Eingangsordner bereits überwacht, zeigt sie **Serverüberwachung aktiv** an und startet keine zweite Verarbeitung. **Überwachung starten** und **Überwachung beenden** steuern in diesem Betriebsmodus die SYSTEM-Aufgabe; Windows fordert dafür bei Bedarf eine administrative Bestätigung an. Das manuelle Archivleeren wird erst nach dem bestätigten Stopp wieder freigegeben.
+Wird die normale Benutzeroberfläche geöffnet, während diese SYSTEM-Aufgabe den Eingangsordner bereits überwacht, zeigt sie **Serverüberwachung aktiv** an und startet keine zweite Verarbeitung. **Überwachung starten** und **Überwachung beenden** steuern in diesem Betriebsmodus die SYSTEM-Aufgabe; Windows fordert dafür bei Bedarf eine administrative Bestätigung an. Beim Beenden schreibt die Oberfläche ein privilegiertes Stoppsignal. Der SYSTEM-Worker startet danach keinen neuen Scan, schließt einen bereits laufenden Vorgang sicher ab und beendet sich selbst. Das manuelle Archivleeren wird erst nach dem bestätigten Stopp wieder freigegeben.
+
+Das Aktivitätsprotokoll in der Oberfläche zeigt bei eingerichtetem Serverautostart automatisch das zentrale Tagesprotokoll aus `C:\ProgramData\DokumentenScannerSortierung\logs`. Die Benutzeroberfläche schreibt weiterhin ihr eigenes Diagnoseprotokoll unter `%APPDATA%`; dadurch lesen beide Betriebsarten gemeinsam sichtbar aus einer zentralen Quelle, ohne gleichzeitig dieselbe Datei zu verändern.
 
 Für Netzwerkfreigaben sind UNC-Pfade wie `\\server\freigabe\scanner\eingang` robuster als benutzerabhängige Laufwerksbuchstaben. Das Dienstkonto benötigt Lesen/Ändern/Löschen im Eingang sowie Lesen/Schreiben/Ändern in Ziel, Archiv, Prüfordner und am Ordner der zentralen `settings.json`.
 
@@ -212,11 +214,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.2.5 bauen:
+OCR-Paket vorbereiten und Release 0.2.6 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.2.5
+.\scripts\build-release.ps1 -Version 0.2.6
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.
