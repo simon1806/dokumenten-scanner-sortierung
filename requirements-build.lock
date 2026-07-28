@@ -1,6 +1,6 @@
 # Windows x64 / CPython 3.12 release environment.
-# Generated from the exact wheels used for version 0.1.24. Update hashes only
-# after an intentional dependency review and a complete release test.
+# Generated from the exact reviewed Windows wheels used by the current release.
+# Update hashes only after an intentional dependency review and a complete release test.
 altgraph==0.17.5 \
     --hash=sha256:f3a22400bce1b0c701683820ac4f3b159cd301acab067c51c653e06961600597
 packaging==26.2 \

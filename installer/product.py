@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 APPLICATION_FILENAME = "DokumentenScannerSortierung.exe"
+OPEN_LAUNCHER_FILENAME = "DokumentenScannerSortierung-Oeffnen.exe"
 APPLICATION_FOLDER = "DokumentenScannerSortierung"
 SHORTCUT_FILENAME = "Dokumenten-Scanner-Sortierung.lnk"
 STARTUP_SHORTCUT_FILENAME = "Dokumenten-Scanner-Sortierung.lnk"
@@ -19,6 +20,9 @@ PUBLISHER = "Simon Hagen – Glas Hagen"
 SUPPORT_EMAIL = "simon.hagen@glashagen.de"
 UNINSTALL_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\DokumentenScannerSortierung"
 SETUP_MUTEX_NAME = r"Global\GlasHagen.DokumentenScannerSortierung.Setup"
+SERVER_AUTOSTART_TASK_NAME = "GlasHagen Dokumenten-Scanner-Sortierung"
+SERVER_SETTINGS_FOLDER = "DokumentenScannerSortierung"
+SERVER_SETTINGS_FILENAME = "settings.json"
 
 INSTALL_ACTION_INSTALL = "install"
 INSTALL_ACTION_UPDATE = "update"

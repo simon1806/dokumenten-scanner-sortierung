@@ -8,6 +8,7 @@ import re
 import shutil
 import time
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -35,6 +36,15 @@ class ProcessingError(RuntimeError):
 
 class PendingJobError(ProcessingError):
     """A recoverable error while staging or publishing a persisted job."""
+
+
+@dataclass(frozen=True)
+class ArchiveClearResult:
+    """Summary of an explicit, operator-confirmed archive reset."""
+
+    removed_files: int = 0
+    removed_folders: int = 0
+    skipped_entries: tuple[str, ...] = ()
 
 
 def group_page_detections(detections: Iterable[DetectedDocument | None]) -> list[DocumentGroup]:
@@ -857,6 +867,65 @@ class DocumentProcessor:
                 except OSError:
                     LOGGER.exception("Archivdatei konnte nicht geprüft oder gelöscht werden: %s", pdf)
         return removed
+
+    def clear_archive_manually(self) -> ArchiveClearResult:
+        """Remove all application-owned archive contents after an operator confirmation.
+
+        This is deliberately stricter than a generic recursive delete: only dated
+        archive folders carrying this application's marker and the private control
+        folder are removed. Unexpected files or folders next to them remain in
+        place, so a mistaken archive configuration cannot silently erase unrelated
+        documents. Callers must ensure that folder monitoring is stopped first.
+        """
+        archive = self._assert_safe_archive_root()
+        if not archive.exists():
+            return ArchiveClearResult()
+        if not archive.is_dir():
+            raise ProcessingError("Der Archivpfad ist kein lesbarer Ordner.")
+
+        removed_files = 0
+        removed_folders = 0
+        skipped: list[str] = []
+        try:
+            entries = sorted(archive.iterdir(), key=lambda entry: entry.name.casefold())
+        except OSError as error:
+            raise ProcessingError(f"Archivordner kann nicht gelesen werden ({error}).") from error
+
+        for entry in entries:
+            try:
+                resolved = entry.resolve(strict=False)
+            except OSError:
+                skipped.append(entry.name)
+                continue
+            if entry.is_symlink() or resolved.parent != archive:
+                skipped.append(entry.name)
+                continue
+
+            is_owned_day = (
+                entry.is_dir()
+                and _DATE_FOLDER_PATTERN.fullmatch(entry.name) is not None
+                and self._is_owned_archive_folder(entry)
+            )
+            is_control_folder = entry.is_dir() and entry.name == _CONTROL_FOLDER
+            if not (is_owned_day or is_control_folder):
+                skipped.append(entry.name)
+                continue
+
+            try:
+                removed_files += sum(1 for child in entry.rglob("*") if child.is_file())
+                shutil.rmtree(entry)
+                removed_folders += 1
+            except OSError as error:
+                raise ProcessingError(f"Archivinhalt konnte nicht gelöscht werden ({entry.name}: {error}).") from error
+
+        result = ArchiveClearResult(removed_files, removed_folders, tuple(skipped))
+        LOGGER.warning(
+            "Archiv manuell zurückgesetzt; dateien=%s; ordner=%s; ausgelassen=%s",
+            result.removed_files,
+            result.removed_folders,
+            ",".join(result.skipped_entries) if result.skipped_entries else "keine",
+        )
+        return result
 
     def _pending_archive_paths(self) -> set[Path]:
         """Return archive originals referenced by any readable pending manifest.

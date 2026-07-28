@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import logging
 import ntpath
@@ -27,12 +28,20 @@ from .config import (
     save_settings,
 )
 from .models import ProcessResult
+from .processing import DocumentProcessor, ProcessingError
 from .version_info import VersionEntry, collect_version_information
 from .watcher import FolderWatcher
+from .window_launcher import activate_existing_window
 
 
+ERROR_ACCESS_DENIED = 5
 ERROR_ALREADY_EXISTS = 183
 WINDOWS_APP_ID = "GlasHagen.DokumentenScannerSortierung"
+SERVER_AUTOSTART_TASK_NAME = "GlasHagen Dokumenten-Scanner-Sortierung"
+SERVER_SETTINGS_FOLDER = "DokumentenScannerSortierung"
+SERVER_SETTINGS_FILENAME = "settings.json"
+SERVER_STOP_REQUEST_FILENAME = "server-stop.request"
+SERVER_STOP_POLL_SECONDS = 0.5
 LOG_RETENTION_DAYS = 90
 LOG_FILENAME_PATTERN = re.compile(r"^dokumentensortierer-(\d{4}-\d{2}-\d{2})\.log$")
 DRIVE_UNKNOWN = 0
@@ -44,8 +53,8 @@ ERROR_MORE_DATA = 234
 
 def initial_window_geometry(screen_width: int, screen_height: int) -> tuple[int, int, int, int]:
     """Return a large centered default size that still fits on smaller displays."""
-    width = min(1460, max(900, screen_width - 80))
-    height = min(1000, max(680, screen_height - 80))
+    width = min(1580, max(1000, screen_width - 40))
+    height = min(1120, max(720, screen_height - 40))
     x = max(0, (screen_width - width) // 2)
     y = max(0, (screen_height - height) // 2)
     return width, height, x, y
@@ -173,13 +182,16 @@ def single_instance_identity(settings_path: Path, input_folder: str = "") -> str
     configured_input = input_folder.strip()
     raw_path = configured_input or str(settings_path)
     expanded = os.path.expandvars(os.path.expanduser(raw_path))
+    if os.name == "nt" and configured_input:
+        # Resolve mapped drives before Path.resolve() can replace the mapped
+        # path with a server-specific alias. This keeps a mapped and a UNC
+        # configuration on the same server-wide lock identity.
+        expanded = canonicalize_windows_network_path(expanded)
     try:
         absolute = Path(expanded).resolve(strict=False)
     except OSError:
         absolute = Path(os.path.abspath(expanded))
     absolute_text = str(absolute)
-    if os.name == "nt" and configured_input:
-        absolute_text = canonicalize_windows_network_path(absolute_text)
     normalized = os.path.normcase(os.path.normpath(absolute_text)).casefold()
     identity_type = "input" if configured_input else "settings"
     return f"{identity_type}:{normalized}"
@@ -220,6 +232,128 @@ def acquire_single_instance(
     return True, (kernel32, int(handle))
 
 
+def is_single_instance_access_denied(error: OSError) -> bool:
+    """Return whether another Windows account owns an inaccessible global mutex."""
+    return ERROR_ACCESS_DENIED in {
+        getattr(error, "errno", None),
+        getattr(error, "winerror", None),
+    }
+
+
+def server_autostart_task_exists(
+    *,
+    platform_name: str | None = None,
+    runner: Callable[..., object] | None = None,
+) -> bool:
+    """Return whether the installer-managed SYSTEM task exists."""
+    effective_platform = os.name if platform_name is None else platform_name
+    if effective_platform != "nt":
+        return False
+    effective_runner = subprocess.run if runner is None else runner
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    schtasks = ntpath.join(system_root, "System32", "schtasks.exe")
+    try:
+        completed = effective_runner(
+            [schtasks, "/Query", "/TN", SERVER_AUTOSTART_TASK_NAME],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            creationflags=0x08000000,
+        )
+    except OSError:
+        return False
+    return getattr(completed, "returncode", 1) == 0
+
+
+def server_settings_path() -> Path:
+    program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+    return program_data / SERVER_SETTINGS_FOLDER / SERVER_SETTINGS_FILENAME
+
+
+def server_stop_request_path(settings_path: Path | None = None) -> Path:
+    """Return the privileged control file used for a graceful SYSTEM stop."""
+    effective_settings = settings_path or server_settings_path()
+    return effective_settings.parent / SERVER_STOP_REQUEST_FILENAME
+
+
+def _encoded_powershell_command(script: str) -> str:
+    return base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+
+
+def consume_server_stop_request(settings_path: Path) -> bool:
+    """Consume one pending graceful-stop request if it exists."""
+    request_path = server_stop_request_path(settings_path)
+    try:
+        request_path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def request_server_task_action(
+    action: str,
+    *,
+    platform_name: str | None = None,
+    shell_execute: Callable[..., object] | None = None,
+) -> None:
+    """Request an elevated start or stop of the installer-managed SYSTEM task."""
+    if action not in {"start", "stop"}:
+        raise ValueError(f"Unbekannte Serveraufgaben-Aktion: {action}")
+    effective_platform = os.name if platform_name is None else platform_name
+    if effective_platform != "nt":
+        raise OSError("Die Serverüberwachung kann nur unter Windows verwaltet werden.")
+
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    if action == "start":
+        executable = ntpath.join(system_root, "System32", "schtasks.exe")
+        arguments = f'/Run /TN "{SERVER_AUTOSTART_TASK_NAME}"'
+    else:
+        # PyInstaller's one-file bootloader creates a child process. `schtasks /End`
+        # can terminate only the registered parent and leave that worker alive.
+        # An elevated control file lets the worker finish an active document and
+        # then exit on its own, so the complete task process tree ends normally.
+        executable = ntpath.join(system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+        request_path = str(server_stop_request_path())
+        quoted_request = "'" + request_path.replace("'", "''") + "'"
+        script = (
+            "$ErrorActionPreference='Stop'; "
+            f"$path={quoted_request}; "
+            "$directory=[System.IO.Path]::GetDirectoryName($path); "
+            "[System.IO.Directory]::CreateDirectory($directory) | Out-Null; "
+            "$utf8=New-Object System.Text.UTF8Encoding($false); "
+            "[System.IO.File]::WriteAllText("
+            "$path,[DateTimeOffset]::UtcNow.ToString('O'),$utf8)"
+        )
+        arguments = (
+            "-NoProfile -NonInteractive -ExecutionPolicy Bypass "
+            f"-EncodedCommand {_encoded_powershell_command(script)}"
+        )
+
+    if shell_execute is None:
+        import ctypes
+
+        native_shell_execute = ctypes.windll.shell32.ShellExecuteW
+        native_shell_execute.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_wchar_p,
+            ctypes.c_int,
+        ]
+        native_shell_execute.restype = ctypes.c_void_p
+        shell_execute = native_shell_execute
+
+    result = shell_execute(None, "runas", executable, arguments, None, 0)
+    numeric_result = int(result) if result else 0
+    if numeric_result <= 32:
+        raise OSError(
+            numeric_result,
+            "Die administrative Bestätigung wurde abgebrochen oder Windows konnte die "
+            "Serveraufgabe nicht steuern.",
+        )
+
+
 def release_single_instance(instance: tuple[object, int] | None) -> None:
     if instance is None:
         return
@@ -235,26 +369,9 @@ def notify_already_running() -> None:
     if os.name == "nt":
         import ctypes
 
-        user32 = ctypes.windll.user32
-        windows: list[int] = []
-        callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-
-        def find_window(window: int, _parameter: int) -> bool:
-            length = user32.GetWindowTextLengthW(window)
-            if length:
-                title = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(window, title, length + 1)
-                if title.value.startswith("Dokumenten-Scanner-Sortierung"):
-                    windows.append(window)
-                    return False
-            return True
-
-        user32.EnumWindows(callback_type(find_window), 0)
-        if windows:
-            user32.ShowWindow(windows[0], 9)
-            user32.SetForegroundWindow(windows[0])
+        if activate_existing_window():
             return
-        user32.MessageBoxW(None, message, "Anwendung läuft bereits", 0x40)
+        ctypes.windll.user32.MessageBoxW(None, message, "Anwendung läuft bereits", 0x40)
     else:
         print(message, file=sys.stderr)
 
@@ -273,6 +390,28 @@ def notify_configuration_error(error: ConfigurationError) -> None:
 def log_file_path(settings_path: Path, log_date: date | None = None) -> Path:
     log_date = log_date or date.today()
     return settings_path.parent / "logs" / f"dokumentensortierer-{log_date.isoformat()}.log"
+
+
+def read_log_tail(path: Path, *, max_bytes: int = 128 * 1024, max_lines: int = 200) -> str:
+    """Read a bounded UTF-8 tail without locking the log written by SYSTEM."""
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            start = max(0, size - max(1, max_bytes))
+            stream.seek(start)
+            if start:
+                stream.seek(start - 1)
+                previous_byte = stream.read(1)
+                stream.seek(start)
+                if previous_byte != b"\n":
+                    stream.readline()  # Discard only a partial first line.
+            payload = stream.read()
+    except FileNotFoundError:
+        return ""
+    text = payload.decode("utf-8", errors="replace")
+    lines = text.splitlines()[-max(1, max_lines) :]
+    return "\n".join(lines) + ("\n" if lines else "")
 
 
 def cleanup_old_logs(
@@ -401,11 +540,11 @@ def run_self_test() -> int:
         version_output = version_result.stdout + "\n" + version_result.stderr
         if (
             version_result.returncode != 0
-            or re.search(r"(?im)^tesseract\s+v?5\.5\.2\b", version_output) is None
+            or re.search(r"(?im)^tesseract\s+v?5\.5\.3\b", version_output) is None
             or re.search(r"(?im)^\s*leptonica[-\s]+1\.87\.0\b", version_output) is None
         ):
             raise RuntimeError(
-                "Tesseract OCR 5.5.2 mit Leptonica 1.87.0 konnte nicht erfolgreich gestartet werden."
+                "Tesseract OCR 5.5.3 mit Leptonica 1.87.0 konnte nicht erfolgreich gestartet werden."
             )
         language_result = subprocess.run(
             [str(tesseract), "--list-langs"],
@@ -496,12 +635,16 @@ class SettingsWindow:
         self.tk = tk
         self.ttk = ttk
         self.settings_path = settings_path
-        self.log_path = log_file_path(settings_path)
+        self._activity_log_settings_path = settings_path
+        self.log_path = log_file_path(self._activity_log_settings_path)
         self.settings = load_settings(settings_path)
         self.watcher: FolderWatcher | None = None
         self._monitor_instance: tuple[object, int] | None = None
+        self._external_monitoring_active = False
+        self._server_task_available = False
         self._worker_messages: queue.Queue[str] = queue.Queue()
         self._worker_poll_after_id: str | None = None
+        self._activity_log_poll_after_id: str | None = None
         self.tray_icon: object | None = None
         self._quitting = False
         self._tooltips: list[ToolTip] = []
@@ -518,7 +661,7 @@ class SettingsWindow:
         screen_height = self.root.winfo_screenheight()
         width, height, x, y = initial_window_geometry(screen_width, screen_height)
         self.root.geometry(f"{width}x{height}+{x}+{y}")
-        self.root.minsize(min(1000, screen_width - 80), min(740, screen_height - 80))
+        self.root.minsize(min(1100, screen_width - 40), min(800, screen_height - 40))
         self.root.protocol("WM_DELETE_WINDOW", self.hide_to_tray)
 
         default_review_folder = self.settings.review_folder
@@ -535,15 +678,17 @@ class SettingsWindow:
             "backlog_threshold": tk.StringVar(value=str(self.settings.backlog_threshold)),
             "backlog_pause_seconds": tk.StringVar(value=str(self.settings.backlog_pause_seconds)),
             "processing_timeout_seconds": tk.StringVar(value=str(self.settings.processing_timeout_seconds)),
-            "tesseract_path": tk.StringVar(value=self.settings.tesseract_path),
         }
         self.status = tk.StringVar(value="Einstellungen speichern und Überwachung starten.")
         self._build()
         self._schedule_worker_message_poll()
+        self._schedule_activity_log_poll()
         self._apply_window_icon()
         self._start_tray_icon()
         if start_monitoring:
             self.root.after(250, self._start_from_autostart)
+        else:
+            self.root.after(250, self._detect_external_monitoring)
 
     @staticmethod
     def _app_image(size: int) -> object:
@@ -707,7 +852,7 @@ class SettingsWindow:
         return photo
 
     def _build(self) -> None:
-        from tkinter import filedialog, messagebox
+        from tkinter import filedialog, messagebox, simpledialog
 
         self._configure_styles()
         root = self.root
@@ -769,10 +914,10 @@ class SettingsWindow:
         ).pack(side="left")
 
         content = self.tk.Frame(shell, background="#F2F5F8")
-        content.grid(row=1, column=0, sticky="nsew", padx=20, pady=16)
+        content.grid(row=1, column=0, sticky="nsew", padx=20, pady=12)
         content.columnconfigure(0, weight=3)
         content.columnconfigure(1, weight=2)
-        content.rowconfigure(2, weight=1)
+        content.rowconfigure(2, weight=1, minsize=190)
 
         folder_card, folder_body, _folder_header = self._card(
             content,
@@ -914,30 +1059,8 @@ class SettingsWindow:
             style="Modern.TEntry",
         ).grid(row=2, column=0, sticky="ew")
 
-        tesseract_panel = self.tk.Frame(processing_body, background="#FFFFFF")
-        tesseract_panel.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        tesseract_panel.columnconfigure(0, weight=1)
-        self.tk.Label(
-            tesseract_panel,
-            text="Tesseract-Pfad",
-            background="#FFFFFF",
-            foreground="#233746",
-            font=("Segoe UI Semibold", 9),
-        ).grid(row=0, column=0, sticky="w")
-        self.tk.Label(
-            tesseract_panel,
-            text="Optional – leer bedeutet: mitgelieferte OCR verwenden",
-            background="#FFFFFF",
-            foreground="#7A8A96",
-            font=("Segoe UI", 8),
-            wraplength=330,
-            justify="left",
-        ).grid(row=1, column=0, sticky="w", pady=(1, 5))
-        self.ttk.Entry(tesseract_panel, textvariable=self.fields["tesseract_path"], style="Modern.TEntry").grid(
-            row=2, column=0, sticky="ew"
-        )
         notice = self.tk.Frame(processing_body, background="#EAF4FA")
-        notice.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        notice.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         self.tk.Label(
             notice,
             text="i",
@@ -982,7 +1105,7 @@ class SettingsWindow:
             actions,
             "Überwachung starten",
             self.start,
-            "Speichert die Einstellungen und beginnt anschließend mit der automatischen Verarbeitung neuer PDFs.",
+            "Startet die lokale Überwachung oder – falls eingerichtet – die SYSTEM-Serverüberwachung.",
             "Primary.TButton",
             icon="player-play",
         )
@@ -991,12 +1114,20 @@ class SettingsWindow:
             actions,
             "Überwachung beenden",
             self.stop,
-            "Stoppt die Ordnerüberwachung. Die Anwendung und bereits erzeugte Dateien bleiben erhalten.",
+            "Stoppt die lokale Überwachung oder – falls eingerichtet – die SYSTEM-Serverüberwachung.",
             "Secondary.TButton",
             "disabled",
             icon="player-stop",
         )
         self.stop_button.pack(side="left", padx=(8, 0))
+        self.clear_archive_button = self._button(
+            actions,
+            "Archiv manuell leeren",
+            self.clear_archive_manually,
+            "Löscht nach einer zweifachen Bestätigung alle vom Tool verwalteten Archivdaten. Die Überwachung muss beendet sein.",
+            "Secondary.TButton",
+        )
+        self.clear_archive_button.pack(side="left", padx=(8, 0))
         quit_button = self._button(
             actions,
             "Anwendung beenden",
@@ -1042,7 +1173,7 @@ class SettingsWindow:
         log_card, log_body, log_header = self._card(
             content,
             "Aktivitätsprotokoll",
-            "Letzte Ereignisse, Verarbeitungsergebnisse und Fehlermeldungen",
+            "Bei Serverautostart wird hier das zentrale SYSTEM-Protokoll angezeigt",
         )
         log_card.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(12, 0))
         open_log_button = self._button(
@@ -1078,6 +1209,7 @@ class SettingsWindow:
         self._append_activity(f"Protokolldatei: {self.log_path}")
 
         self._messagebox = messagebox
+        self._simpledialog = simpledialog
 
     def _choose_folder(self, field: str, filedialog: object) -> None:
         directory = filedialog.askdirectory(initialdir=self.fields[field].get() or None)
@@ -1091,12 +1223,123 @@ class SettingsWindow:
         self.activity_log.see("end")
         self.activity_log.configure(state="disabled")
 
+    def _select_activity_log_source(self, settings_path: Path) -> None:
+        """Select the persistent log shown by the UI.
+
+        The interactive process continues to write its own user log. When the
+        installer-managed SYSTEM task exists, the visible activity area follows
+        the central operational log instead, avoiding concurrent writes by two
+        security contexts to the same file.
+        """
+        self._activity_log_settings_path = settings_path
+        self.log_path = log_file_path(settings_path)
+        if hasattr(self, "activity_log"):
+            self._reload_activity_log_tail()
+
+    def _reload_activity_log_tail(self) -> None:
+        self.log_path = log_file_path(self._activity_log_settings_path)
+        central = self._activity_log_settings_path == server_settings_path()
+        label = "Zentrales SYSTEM-Protokoll" if central else "Protokolldatei"
+        tail = read_log_tail(self.log_path)
+        self.activity_log.configure(state="normal")
+        self.activity_log.delete("1.0", "end")
+        self.activity_log.insert("end", f"{label}: {self.log_path}\n")
+        if tail:
+            self.activity_log.insert("end", tail)
+        elif central:
+            self.activity_log.insert(
+                "end",
+                "Noch keine zentrale Protokolldatei für den heutigen Tag vorhanden.\n",
+            )
+        self.activity_log.see("end")
+        self.activity_log.configure(state="disabled")
+
+    def _schedule_activity_log_poll(self) -> None:
+        if self._quitting:
+            return
+        self._activity_log_poll_after_id = self.root.after(5000, self._poll_activity_log)
+
+    def _poll_activity_log(self) -> None:
+        self._activity_log_poll_after_id = None
+        if self._quitting:
+            return
+        if self._server_task_available:
+            self._reload_activity_log_tail()
+        self._schedule_activity_log_poll()
+
+    def _cancel_activity_log_poll(self) -> None:
+        after_id = getattr(self, "_activity_log_poll_after_id", None)
+        self._activity_log_poll_after_id = None
+        if after_id is None:
+            return
+        try:
+            self.root.after_cancel(after_id)
+        except self.tk.TclError:
+            pass
+
     def _open_log_folder(self) -> None:
         try:
+            self.log_path = log_file_path(self._activity_log_settings_path)
             self.log_path.parent.mkdir(parents=True, exist_ok=True)
             os.startfile(str(self.log_path.parent))
         except Exception as error:
             self._messagebox.showerror("Protokollordner", f"Ordner konnte nicht geöffnet werden:\n{error}")
+
+    def clear_archive_manually(self) -> None:
+        """Reset only application-owned archive data after explicit operator consent."""
+        if getattr(self, "_external_monitoring_active", False):
+            self._messagebox.showwarning(
+                "Serverüberwachung aktiv",
+                "Das Archiv kann nicht geleert werden, während die Serverüberwachung unter SYSTEM "
+                "oder in einer anderen Windows-Sitzung aktiv ist.",
+            )
+            return
+        if self.watcher and self.watcher.running:
+            self._messagebox.showwarning(
+                "Überwachung aktiv",
+                "Beenden Sie zuerst die Überwachung. Erst dann kann das Archiv sicher manuell geleert werden.",
+            )
+            return
+
+        archive_folder = self.settings.archive_folder.strip()
+        if not archive_folder:
+            self._messagebox.showerror("Archiv leeren", "Es ist kein Archivordner eingerichtet.")
+            return
+        if not self._messagebox.askyesno(
+            "Archiv manuell leeren?",
+            "Alle vom Tool verwalteten Tagesarchive und offenen Wiederherstellungsvorgänge werden gelöscht.\n\n"
+            f"Archivordner:\n{archive_folder}\n\n"
+            "Eingang, Ziel, Prüfungen und Protokolle bleiben erhalten. Nicht zuordenbare Dateien im Archivordner werden aus Sicherheitsgründen nicht gelöscht.\n\n"
+            "Möchten Sie fortfahren?",
+            icon="warning",
+        ):
+            return
+        confirmation = self._simpledialog.askstring(
+            "Archiv leeren bestätigen",
+            "Zum endgültigen Leeren bitte genau ARCHIV LEEREN eingeben:",
+            parent=self.root,
+        )
+        if confirmation != "ARCHIV LEEREN":
+            self.status.set("Archivbereinigung abgebrochen.")
+            self._append_activity("Archivbereinigung abgebrochen: Bestätigung nicht eingegeben.")
+            return
+
+        try:
+            result = DocumentProcessor(self.settings).clear_archive_manually()
+        except ProcessingError as error:
+            self._messagebox.showerror("Archiv leeren", str(error))
+            self._append_activity(f"Archivbereinigung fehlgeschlagen: {error}")
+            return
+
+        message = (
+            f"Archiv geleert: {result.removed_files} Datei(en) in "
+            f"{result.removed_folders} Ordner(n) entfernt."
+        )
+        if result.skipped_entries:
+            message += f" Unveränderte Einträge: {', '.join(result.skipped_entries)}."
+        self.status.set(message)
+        self._append_activity(message)
+        self._messagebox.showinfo("Archiv geleert", message)
 
     def show_version_info(self) -> None:
         if self._info_dialog is not None and self._info_dialog.winfo_exists():
@@ -1106,7 +1349,7 @@ class SettingsWindow:
             return
 
         report = collect_version_information(
-            self.fields["tesseract_path"].get(),
+            self.settings.tesseract_path,
             str(self.tk.TclVersion),
             str(self.tk.TkVersion),
         )
@@ -1290,13 +1533,24 @@ class SettingsWindow:
     def _update_tray_status(self) -> None:
         if self.tray_icon is None:
             return
-        active = bool(self.watcher and self.watcher.running)
-        status = "Überwachung aktiv" if active else "Überwachung nicht gestartet"
+        local_active = bool(self.watcher and self.watcher.running)
+        if self._external_monitoring_active:
+            status = "Serverüberwachung aktiv"
+        elif local_active:
+            status = "Überwachung aktiv"
+        else:
+            status = "Überwachung nicht gestartet"
         self.tray_icon.title = f"Dokumenten-Scanner-Sortierung {__version__} – {status}"
 
     def _update_monitoring_badge(self) -> None:
-        active = bool(self.watcher and self.watcher.running)
-        if active:
+        local_active = bool(self.watcher and self.watcher.running)
+        if self._external_monitoring_active:
+            self.header_status_badge.configure(
+                text="●  SERVERÜBERWACHUNG AKTIV",
+                background="#DDF2E4",
+                foreground="#26713D",
+            )
+        elif local_active:
             self.header_status_badge.configure(
                 text="●  ÜBERWACHUNG AKTIV",
                 background="#DDF2E4",
@@ -1308,6 +1562,146 @@ class SettingsWindow:
                 background="#E8EEF2",
                 foreground="#48606F",
             )
+
+    def _set_external_monitoring_active(self, *, notify: bool = False) -> None:
+        first_detection = not self._external_monitoring_active
+        self._external_monitoring_active = True
+        server_task_available = getattr(self, "_server_task_available", False)
+        self.start_button.configure(state="disabled")
+        self.stop_button.configure(state="normal" if server_task_available else "disabled")
+        self.clear_archive_button.configure(state="disabled")
+        if server_task_available:
+            message = "Die Serverüberwachung läuft unter SYSTEM."
+        else:
+            message = "Der Eingangsordner wird bereits in einer anderen Windows-Sitzung überwacht."
+        self.status.set(message)
+        if first_detection:
+            self._append_activity(message)
+            logging.info("Externe Serverüberwachung erkannt; keine zweite Überwachung gestartet.")
+        self._update_monitoring_badge()
+        self._update_tray_status()
+        if notify:
+            self._messagebox.showinfo(
+                "Serverüberwachung bereits aktiv",
+                f"{message}\n\n"
+                "Diese Programmoberfläche startet deshalb keine zweite Verarbeitung. "
+                "Mit „Überwachung beenden“ kann die eingerichtete Serverüberwachung gestoppt werden.",
+            )
+
+    def _detect_external_monitoring(self) -> None:
+        """Detect a monitor held by SYSTEM without treating its protected mutex as an error."""
+        if self.watcher and self.watcher.running:
+            return
+        self._server_task_available = server_autostart_task_exists()
+        self._select_activity_log_source(
+            server_settings_path() if self._server_task_available else self.settings_path
+        )
+        try:
+            settings = self._monitoring_settings()
+            acquired, monitor_instance = acquire_single_instance(
+                self.settings_path,
+                settings.input_folder,
+            )
+        except (OSError, ValueError) as error:
+            if isinstance(error, OSError) and is_single_instance_access_denied(error):
+                self._set_external_monitoring_active()
+            else:
+                logging.warning("Status der externen Serverüberwachung konnte nicht geprüft werden: %s", error)
+            return
+        if acquired:
+            release_single_instance(monitor_instance)
+            if self._server_task_available:
+                self.status.set("Serverüberwachung ist eingerichtet und kann gestartet werden.")
+                self.start_button.configure(state="normal")
+                self.stop_button.configure(state="disabled")
+                self.clear_archive_button.configure(state="normal")
+            return
+        self._set_external_monitoring_active()
+
+    def _monitoring_settings(self) -> Settings:
+        """Use the SYSTEM task's central settings when server mode is installed."""
+        if self._server_task_available:
+            central_path = server_settings_path()
+            try:
+                return load_settings(central_path)
+            except ConfigurationError as error:
+                logging.warning("Zentrale Servereinstellungen konnten nicht gelesen werden: %s", error)
+        return self._current_settings()
+
+    def _control_server_monitoring(self, action: str) -> None:
+        verb = "gestartet" if action == "start" else "beendet"
+        try:
+            request_server_task_action(action)
+        except (OSError, ValueError) as error:
+            self._messagebox.showerror(
+                f"Serverüberwachung konnte nicht {verb} werden",
+                str(error),
+            )
+            return
+
+        self.start_button.configure(state="disabled")
+        self.stop_button.configure(state="disabled")
+        self.clear_archive_button.configure(state="disabled")
+        progress = "Serverüberwachung wird gestartet …" if action == "start" else "Serverüberwachung wird beendet …"
+        self.status.set(progress)
+        self._append_activity(progress)
+        # A controlled stop can legitimately wait for the active document's
+        # bounded OCR processing to finish before the SYSTEM worker exits.
+        self.root.after(500, lambda: self._poll_server_monitoring_transition(action, 240))
+
+    def _probe_external_monitoring(self) -> bool | None:
+        try:
+            settings = self._monitoring_settings()
+            acquired, monitor_instance = acquire_single_instance(
+                self.settings_path,
+                settings.input_folder,
+            )
+        except OSError as error:
+            if is_single_instance_access_denied(error):
+                return True
+            logging.warning("Status der Serverüberwachung konnte nicht geprüft werden: %s", error)
+            return None
+        except ValueError:
+            return None
+        if acquired:
+            release_single_instance(monitor_instance)
+            return False
+        return True
+
+    def _poll_server_monitoring_transition(self, action: str, attempts_remaining: int) -> None:
+        active = self._probe_external_monitoring()
+        expected_active = action == "start"
+        if active is expected_active:
+            if expected_active:
+                self._set_external_monitoring_active()
+                message = "Serverüberwachung wurde gestartet."
+                self.status.set(message)
+                self._append_activity(message)
+            else:
+                self._external_monitoring_active = False
+                self.start_button.configure(state="normal")
+                self.stop_button.configure(state="disabled")
+                self.clear_archive_button.configure(state="normal")
+                self._update_monitoring_badge()
+                self._update_tray_status()
+                message = "Serverüberwachung wurde beendet."
+                self.status.set(message)
+                self._append_activity(message)
+            return
+        if attempts_remaining > 0:
+            self.root.after(
+                500,
+                lambda: self._poll_server_monitoring_transition(action, attempts_remaining - 1),
+            )
+            return
+
+        action_text = "Starten" if action == "start" else "Beenden"
+        self._messagebox.showerror(
+            f"{action_text} nicht bestätigt",
+            "Der Status der Serverüberwachung hat sich nicht innerhalb von 120 Sekunden geändert. "
+            "Bitte prüfen Sie die Aufgabe in der Windows-Aufgabenplanung und das zentrale Protokoll.",
+        )
+        self._detect_external_monitoring()
 
     def show_window(self) -> None:
         self.root.deiconify()
@@ -1352,7 +1746,9 @@ class SettingsWindow:
             backlog_threshold=backlog_threshold,
             backlog_pause_seconds=backlog_pause,
             processing_timeout_seconds=processing_timeout,
-            tesseract_path=self.fields["tesseract_path"].get().strip(),
+            # Tesseract is bundled with the application. Preserve a legacy
+            # override without exposing it in the normal operating interface.
+            tesseract_path=self.settings.tesseract_path,
             ocr_languages=self.settings.ocr_languages,
         )
 
@@ -1383,6 +1779,12 @@ class SettingsWindow:
     def start(self) -> None:
         if self.watcher and self.watcher.running:
             return
+        if self._external_monitoring_active:
+            self._set_external_monitoring_active(notify=True)
+            return
+        if getattr(self, "_server_task_available", False):
+            self._control_server_monitoring("start")
+            return
         if self._monitor_instance is not None:
             release_single_instance(self._monitor_instance)
             self._monitor_instance = None
@@ -1395,6 +1797,9 @@ class SettingsWindow:
                 settings.input_folder,
             )
         except OSError as error:
+            if is_single_instance_access_denied(error):
+                self._set_external_monitoring_active(notify=True)
+                return
             self._messagebox.showerror(
                 "Überwachungssperre nicht verfügbar",
                 "Der Eingangsordner kann nicht sicher gegen eine zweite Instanz gesperrt werden.\n\n"
@@ -1402,12 +1807,9 @@ class SettingsWindow:
             )
             return
         if not acquired:
-            self._messagebox.showerror(
-                "Eingangsordner bereits überwacht",
-                "Der konfigurierte Eingangsordner wird bereits von einer anderen Instanz oder "
-                "Serversitzung überwacht.",
-            )
+            self._set_external_monitoring_active(notify=True)
             return
+        self._external_monitoring_active = False
         self._monitor_instance = monitor_instance
         try:
             self.watcher = FolderWatcher(settings, self._from_worker, self._result_from_worker)
@@ -1421,10 +1823,15 @@ class SettingsWindow:
         self.save_button.configure(state="disabled")
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
+        self.clear_archive_button.configure(state="disabled")
         self._update_monitoring_badge()
         self._update_tray_status()
 
     def stop(self) -> None:
+        if self._external_monitoring_active and not (self.watcher and self.watcher.running):
+            if getattr(self, "_server_task_available", False):
+                self._control_server_monitoring("stop")
+            return
         if self.watcher and self.watcher.running:
             if self.watcher.processing:
                 message = "Überwachung wird beendet; der laufende Vorgang wird sicher abgeschlossen."
@@ -1445,6 +1852,7 @@ class SettingsWindow:
         self.save_button.configure(state="normal")
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
+        self.clear_archive_button.configure(state="normal")
         self._update_monitoring_badge()
         self._update_tray_status()
 
@@ -1492,7 +1900,11 @@ class SettingsWindow:
             return
         self._quitting = True
         self._cancel_worker_message_poll()
-        self.stop()
+        self._cancel_activity_log_poll()
+        # Closing the interactive UI must never stop an independently running
+        # SYSTEM task. Only a watcher owned by this process is stopped here.
+        if (self.watcher and self.watcher.running) or self._monitor_instance is not None:
+            self.stop()
         if self.tray_icon is not None:
             self.tray_icon.stop()
             self.tray_icon = None
@@ -1503,6 +1915,7 @@ class SettingsWindow:
             self.root.mainloop()
         finally:
             self._cancel_worker_message_poll()
+            self._cancel_activity_log_poll()
             if self.watcher is not None:
                 self.watcher.stop()
             release_single_instance(self._monitor_instance)
@@ -1524,6 +1937,19 @@ def run_headless(settings_path: Path) -> int:
         print("Ungültige Einstellungen:\n- " + "\n- ".join(errors), file=sys.stderr)
         return 2
 
+    # A stop marker left behind by a terminated predecessor must never stop a
+    # freshly booted task. Remove it before acquiring the input-folder mutex,
+    # so an interactive UI cannot yet mistake this process for an active worker.
+    try:
+        stale_request_removed = consume_server_stop_request(settings_path)
+    except OSError as error:
+        message = f"Veraltetes Server-Stoppsignal konnte nicht entfernt werden: {error}"
+        logging.error(message)
+        print(message, file=sys.stderr)
+        return 4
+    if stale_request_removed:
+        logging.warning("Veraltetes Server-Stoppsignal wurde vor dem Start entfernt.")
+
     try:
         acquired, monitor_instance = acquire_single_instance(settings_path, settings.input_folder)
     except OSError as error:
@@ -1542,6 +1968,7 @@ def run_headless(settings_path: Path) -> int:
         settings,
         on_status=lambda message: logging.info(message),
         on_result=lambda _result: None,
+        runtime_mode="SYSTEM/Headless",
     )
 
     def stop(_signal: int, _frame: object) -> None:
@@ -1551,7 +1978,17 @@ def run_headless(settings_path: Path) -> int:
     signal.signal(signal.SIGTERM, stop)
     try:
         watcher.start()
-        finished.wait()
+        while not finished.wait(SERVER_STOP_POLL_SECONDS):
+            try:
+                stop_requested = consume_server_stop_request(settings_path)
+            except OSError as error:
+                logging.warning("Server-Stoppsignal konnte nicht gelesen werden: %s", error)
+                continue
+            if stop_requested:
+                logging.info(
+                    "Kontrolliertes Server-Stoppsignal empfangen; laufender Vorgang wird sicher abgeschlossen."
+                )
+                finished.set()
     finally:
         watcher.stop()
         release_single_instance(monitor_instance)

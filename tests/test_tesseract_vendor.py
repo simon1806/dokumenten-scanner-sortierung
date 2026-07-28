@@ -11,10 +11,10 @@ class TesseractVendorTests(unittest.TestCase):
             Path(__file__).parents[1] / "scripts" / "prepare-tesseract-vendor.ps1"
         ).read_text(encoding="utf-8")
 
-    def test_preparation_pins_tesseract_5_5_2_and_package_hash(self) -> None:
-        self.assertIn("tesseract-ocr-5.5.2-1-any.pkg.tar.zst", self.script)
-        self.assertIn("6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA", self.script)
-        self.assertIn('"^tesseract 5\\.5\\.2$"', self.script)
+    def test_preparation_pins_tesseract_5_5_3_and_package_hash(self) -> None:
+        self.assertIn("tesseract-ocr-5.5.3-1-any.pkg.tar.zst", self.script)
+        self.assertIn("67C0A857E9F028F88D1463C0293885D806334346A81D70BE5E38F08BAD11E1E3", self.script)
+        self.assertIn('"^tesseract 5\\.5\\.3$"', self.script)
 
     def test_preparation_pins_required_gcc_runtime(self) -> None:
         self.assertIn("libgomp-1.dll", self.script)

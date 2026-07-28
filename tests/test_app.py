@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import queue
 import tempfile
@@ -17,25 +18,93 @@ from scanner_sorter.app import (
     app_asset_path,
     canonicalize_windows_network_path,
     cleanup_old_logs,
+    consume_server_stop_request,
     initial_window_geometry,
+    is_single_instance_access_denied,
     main,
+    read_log_tail,
     release_single_instance,
+    request_server_task_action,
+    run_headless,
+    server_autostart_task_exists,
+    server_settings_path,
+    server_stop_request_path,
     single_instance_identity,
     single_instance_mutex_name,
     ui_icon_path,
 )
+from scanner_sorter.window_launcher import main as open_launcher_main
 
 
 class AppTests(unittest.TestCase):
+    def test_access_denied_mutex_is_recognized_as_cross_session_monitor(self) -> None:
+        self.assertTrue(is_single_instance_access_denied(OSError(5, "Zugriff verweigert")))
+        self.assertFalse(is_single_instance_access_denied(OSError(3, "Pfad nicht gefunden")))
+
+    def test_installer_managed_server_task_is_detected_with_schtasks(self) -> None:
+        runner = Mock(return_value=SimpleNamespace(returncode=0))
+
+        exists = server_autostart_task_exists(platform_name="nt", runner=runner)
+
+        self.assertTrue(exists)
+        command = runner.call_args.args[0]
+        self.assertIn("/Query", command)
+        self.assertIn("GlasHagen Dokumenten-Scanner-Sortierung", command)
+
+    def test_server_task_control_requests_elevation_for_stop(self) -> None:
+        shell_execute = Mock(return_value=33)
+
+        request_server_task_action("stop", platform_name="nt", shell_execute=shell_execute)
+
+        _window, verb, executable, arguments, _directory, _visibility = shell_execute.call_args.args
+        self.assertEqual("runas", verb)
+        self.assertTrue(executable.lower().endswith(r"\windowspowershell\v1.0\powershell.exe"))
+        encoded = arguments.rsplit(" ", 1)[-1]
+        script = base64.b64decode(encoded).decode("utf-16-le")
+        self.assertIn("server-stop.request", script)
+        self.assertIn("WriteAllText", script)
+        self.assertNotIn("/End", arguments)
+
+    def test_server_stop_request_is_consumed_once(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            settings_path = Path(directory) / "settings.json"
+            request_path = server_stop_request_path(settings_path)
+            request_path.write_text("stop", encoding="utf-8")
+
+            self.assertTrue(consume_server_stop_request(settings_path))
+            self.assertFalse(request_path.exists())
+            self.assertFalse(consume_server_stop_request(settings_path))
+
+    def test_headless_worker_stops_after_control_request(self) -> None:
+        settings_path = Path("central-settings.json")
+        settings = SimpleNamespace(validate=lambda: [], input_folder="eingang")
+        monitor_instance = object()
+        watcher = Mock()
+        with (
+            patch("scanner_sorter.app.load_settings", return_value=settings),
+            patch("scanner_sorter.app.consume_server_stop_request", side_effect=[False, True]),
+            patch("scanner_sorter.app.acquire_single_instance", return_value=(True, monitor_instance)),
+            patch("scanner_sorter.app.FolderWatcher", return_value=watcher),
+            patch("scanner_sorter.app.SERVER_STOP_POLL_SECONDS", 0),
+            patch("scanner_sorter.app.signal.signal"),
+            patch("scanner_sorter.app.release_single_instance") as release,
+        ):
+            result = run_headless(settings_path)
+
+        self.assertEqual(0, result)
+        watcher.start.assert_called_once_with()
+        watcher.stop.assert_called_once_with()
+        release.assert_called_once_with(monitor_instance)
+
     def test_default_window_is_large_and_centered_on_full_hd_screen(self) -> None:
         width, height, x, y = initial_window_geometry(1920, 1080)
 
-        self.assertEqual((1460, 1000, 230, 40), (width, height, x, y))
+        self.assertEqual((1580, 1040, 170, 20), (width, height, x, y))
 
     def test_default_window_stays_inside_smaller_screen(self) -> None:
         width, height, x, y = initial_window_geometry(1366, 768)
 
-        self.assertEqual((1286, 688, 40, 40), (width, height, x, y))
+        self.assertEqual((1326, 728, 20, 20), (width, height, x, y))
 
     def test_required_button_icons_are_available(self) -> None:
         for name in ("folder-open", "device-floppy", "player-play", "player-stop", "window-minimize", "power"):
@@ -45,6 +114,32 @@ class AppTests(unittest.TestCase):
     def test_program_icons_are_available(self) -> None:
         self.assertTrue(app_asset_path("dokumenten-scanner-sortierung.ico").is_file())
         self.assertTrue(app_asset_path("dokumenten-scanner-sortierung.png").is_file())
+
+    def test_fast_open_launcher_self_test_does_not_start_application(self) -> None:
+        self.assertEqual(0, open_launcher_main(["--self-test"]))
+
+    def test_fast_open_launcher_activates_existing_window_without_starting_main_application(self) -> None:
+        with (
+            patch("scanner_sorter.window_launcher.activate_existing_window", return_value=True) as activate,
+            patch("scanner_sorter.window_launcher.start_main_application") as start,
+        ):
+            result = open_launcher_main([])
+
+        self.assertEqual(0, result)
+        activate.assert_called_once_with()
+        start.assert_not_called()
+
+    def test_fast_open_launcher_starts_main_application_when_no_window_exists(self) -> None:
+        command = ("C:/Programme/DokumentenScannerSortierung.exe",)
+        with (
+            patch("scanner_sorter.window_launcher.activate_existing_window", return_value=False),
+            patch("scanner_sorter.window_launcher.main_application_command", return_value=command),
+            patch("scanner_sorter.window_launcher.start_main_application", return_value=True) as start,
+        ):
+            result = open_launcher_main([])
+
+        self.assertEqual(0, result)
+        start.assert_called_once_with(command)
 
     def test_tray_image_has_windows_notification_size(self) -> None:
         image = SettingsWindow._tray_image()
@@ -153,6 +248,27 @@ class AppTests(unittest.TestCase):
             for path in (boundary, current, unrelated, malformed):
                 self.assertTrue(path.exists(), path.name)
 
+    def test_log_tail_is_bounded_and_keeps_complete_recent_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "daily.log"
+            path.write_text("eins\nzwei\ndrei\nvier\n", encoding="utf-8")
+
+            tail = read_log_tail(path, max_bytes=12, max_lines=2)
+
+            self.assertEqual("drei\nvier\n", tail)
+
+    def test_server_mode_selects_central_activity_log(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.activity_log = Mock()
+        window._reload_activity_log_tail = Mock()
+        central = server_settings_path()
+
+        window._select_activity_log_source(central)
+
+        self.assertEqual(central, window._activity_log_settings_path)
+        self.assertEqual(central.parent / "logs", window.log_path.parent)
+        window._reload_activity_log_tail.assert_called_once_with()
+
     def test_save_is_rejected_while_watcher_is_running(self) -> None:
         window = object.__new__(SettingsWindow)
         window.watcher = SimpleNamespace(running=True)
@@ -163,6 +279,156 @@ class AppTests(unittest.TestCase):
         self.assertIsNone(result)
         window._messagebox.showwarning.assert_called_once()
 
+    def test_manual_archive_reset_is_rejected_while_watcher_is_running(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = SimpleNamespace(running=True)
+        window._external_monitoring_active = False
+        window._messagebox = Mock()
+
+        window.clear_archive_manually()
+
+        window._messagebox.showwarning.assert_called_once()
+
+    def test_manual_archive_reset_is_rejected_while_server_monitor_is_running(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window._external_monitoring_active = True
+        window._messagebox = Mock()
+
+        window.clear_archive_manually()
+
+        window._messagebox.showwarning.assert_called_once()
+
+    def test_start_treats_access_denied_mutex_as_active_server_monitor(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window._external_monitoring_active = False
+        window._monitor_instance = None
+        window.settings_path = Path("settings.json")
+        window.save = Mock(return_value=SimpleNamespace(input_folder="eingang"))
+        window._set_external_monitoring_active = Mock()
+
+        with patch(
+            "scanner_sorter.app.acquire_single_instance",
+            side_effect=OSError(5, "Einzelinstanz-Sperre konnte nicht erstellt werden."),
+        ):
+            window.start()
+
+        window._set_external_monitoring_active.assert_called_once_with(notify=True)
+
+    def test_window_detects_system_monitor_without_showing_an_error(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window.settings_path = Path("settings.json")
+        window._current_settings = Mock(return_value=SimpleNamespace(input_folder="eingang"))
+        window._set_external_monitoring_active = Mock()
+
+        with patch(
+            "scanner_sorter.app.acquire_single_instance",
+            side_effect=OSError(5, "Einzelinstanz-Sperre konnte nicht erstellt werden."),
+        ):
+            window._detect_external_monitoring()
+
+        window._set_external_monitoring_active.assert_called_once_with()
+
+    def test_external_monitor_disables_conflicting_controls_and_updates_status(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window._external_monitoring_active = False
+        window._server_task_available = False
+        window.start_button = Mock()
+        window.stop_button = Mock()
+        window.clear_archive_button = Mock()
+        window.status = Mock()
+        window._append_activity = Mock()
+        window._update_monitoring_badge = Mock()
+        window._update_tray_status = Mock()
+        window._messagebox = Mock()
+
+        window._set_external_monitoring_active()
+
+        window.start_button.configure.assert_called_once_with(state="disabled")
+        window.stop_button.configure.assert_called_once_with(state="disabled")
+        window.clear_archive_button.configure.assert_called_once_with(state="disabled")
+        self.assertIn("anderen Windows-Sitzung", window.status.set.call_args.args[0])
+        window._messagebox.showinfo.assert_not_called()
+
+    def test_system_monitor_keeps_stop_control_available(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window._external_monitoring_active = False
+        window._server_task_available = True
+        window.start_button = Mock()
+        window.stop_button = Mock()
+        window.clear_archive_button = Mock()
+        window.status = Mock()
+        window._append_activity = Mock()
+        window._update_monitoring_badge = Mock()
+        window._update_tray_status = Mock()
+        window._messagebox = Mock()
+
+        window._set_external_monitoring_active()
+
+        window.start_button.configure.assert_called_once_with(state="disabled")
+        window.stop_button.configure.assert_called_once_with(state="normal")
+        window.clear_archive_button.configure.assert_called_once_with(state="disabled")
+
+    def test_start_control_uses_server_task_when_it_is_installed(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window._external_monitoring_active = False
+        window._server_task_available = True
+        window._control_server_monitoring = Mock()
+
+        window.start()
+
+        window._control_server_monitoring.assert_called_once_with("start")
+
+    def test_stop_control_uses_server_task_for_external_monitor(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window._external_monitoring_active = True
+        window._server_task_available = True
+        window._control_server_monitoring = Mock()
+
+        window.stop()
+
+        window._control_server_monitoring.assert_called_once_with("stop")
+
+    def test_quitting_ui_does_not_stop_external_system_monitor(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window._quitting = False
+        window.watcher = None
+        window._monitor_instance = None
+        window._cancel_worker_message_poll = Mock()
+        window.stop = Mock()
+        window.tray_icon = None
+        window.root = Mock()
+
+        window.quit_application()
+
+        window.stop.assert_not_called()
+        window.root.destroy.assert_called_once_with()
+
+    def test_manual_archive_reset_requires_exact_confirmation_and_reports_result(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.watcher = None
+        window.settings = SimpleNamespace(archive_folder="archiv")
+        window.root = object()
+        window._messagebox = Mock()
+        window._messagebox.askyesno.return_value = True
+        window._simpledialog = Mock()
+        window._simpledialog.askstring.return_value = "ARCHIV LEEREN"
+        window.status = Mock()
+        window._append_activity = Mock()
+        clear = Mock(return_value=SimpleNamespace(removed_files=4, removed_folders=2, skipped_entries=("manuell.txt",)))
+
+        with patch("scanner_sorter.app.DocumentProcessor") as processor:
+            processor.return_value.clear_archive_manually = clear
+            window.clear_archive_manually()
+
+        clear.assert_called_once_with()
+        self.assertIn("4 Datei(en)", window.status.set.call_args.args[0])
+        window._messagebox.showinfo.assert_called_once()
+
     def test_current_settings_reads_editable_protection_limits(self) -> None:
         class Value:
             def __init__(self, value: str):
@@ -172,7 +438,7 @@ class AppTests(unittest.TestCase):
                 return self.value
 
         window = object.__new__(SettingsWindow)
-        window.settings = SimpleNamespace(ocr_languages="deu+eng")
+        window.settings = SimpleNamespace(ocr_languages="deu+eng", tesseract_path="")
         window.fields = {
             "input_folder": Value("eingang"),
             "output_folder": Value("ziel"),
@@ -184,7 +450,6 @@ class AppTests(unittest.TestCase):
             "backlog_threshold": Value("4"),
             "backlog_pause_seconds": Value("12"),
             "processing_timeout_seconds": Value("95"),
-            "tesseract_path": Value(""),
         }
 
         settings = window._current_settings()

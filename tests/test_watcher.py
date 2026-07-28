@@ -233,6 +233,32 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(4.0, FolderWatcher.retry_backoff_seconds(3, 1))
         self.assertEqual(60.0, FolderWatcher.retry_backoff_seconds(100_000, 1))
 
+    def test_heartbeat_logs_runtime_folder_state_queue_and_last_result_every_ten_minutes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            settings = self._settings(root)
+            settings.ensure_directories()
+            waiting = Path(settings.input_folder) / "wartend.pdf"
+            waiting.write_bytes(b"scan")
+            watcher = FolderWatcher(settings, runtime_mode="SYSTEM/Headless")
+            watcher._started_monotonic = 100.0
+            watcher._last_heartbeat = 100.0
+            watcher._record_result(ProcessResult("vorher.pdf", True, "Fertig"))
+
+            with self.assertLogs("scanner_sorter.watcher", level="INFO") as captured:
+                self.assertFalse(watcher._heartbeat_if_due(0, now=699.9))
+                self.assertTrue(watcher._heartbeat_if_due(0, now=700.0))
+
+            heartbeat = "\n".join(captured.output)
+            self.assertIn("Betriebsstatus", heartbeat)
+            self.assertIn("modus=SYSTEM/Headless", heartbeat)
+            self.assertIn("laufzeit_s=600", heartbeat)
+            self.assertIn("wartende_pdfs=1", heartbeat)
+            self.assertIn("eingang=erreichbar", heartbeat)
+            self.assertIn("ziel=erreichbar", heartbeat)
+            self.assertIn("letzter_status=erfolgreich", heartbeat)
+            self.assertIn("letzte_datei=vorher.pdf", heartbeat)
+
     def test_recovery_results_are_forwarded_to_callbacks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = ProcessResult("scan.pdf", True, "Offenen Vorgang wiederhergestellt.")

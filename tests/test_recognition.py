@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
+from pathlib import Path
 from unittest.mock import patch
 
 from scanner_sorter.config import Settings
@@ -13,6 +15,7 @@ from scanner_sorter.recognition import (
     is_assignment_declaration,
     is_neuma_order,
     is_nowak_header,
+    scan_date_from_source,
 )
 
 
@@ -314,6 +317,37 @@ class RecognitionTests(unittest.TestCase):
         detected = detect_document_from_text("Montageber’cht Auftrag: 3260576 [MI-Nr. 1]")
         self.assertIsNotNone(detected)
         self.assertEqual("MI_3260576.pdf", detected.filename)
+
+    def test_montagebericht_without_number_uses_scan_date(self) -> None:
+        detected = detect_document_from_text(
+            "Montagebericht\nDurchgeführte Arbeiten",
+            mi_scan_date="2026-07-22",
+        )
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("MI_2026-07-22.pdf", detected.filename)
+
+    def test_montagebericht_barcode_still_has_priority_over_scan_date(self) -> None:
+        detected = detect_document_from_text(
+            "Montagebericht\nDurchgeführte Arbeiten",
+            ["MI_3260635"],
+            mi_scan_date="2026-07-22",
+        )
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("MI_3260635.pdf", detected.filename)
+
+    def test_scan_date_is_read_from_konica_scanner_filename(self) -> None:
+        source = Path("KM_C250i26072216510.pdf")
+
+        self.assertEqual("2026-07-22", scan_date_from_source(source))
+
+    def test_scan_date_falls_back_to_file_timestamp(self) -> None:
+        source = Path("ohne_scanner_datum.pdf")
+        timestamp = datetime(2026, 7, 23, 10, 30).timestamp()
+
+        with patch.object(Path, "stat", return_value=type("Stat", (), {"st_mtime": timestamp})()):
+            self.assertEqual("2026-07-23", scan_date_from_source(source))
 
     def test_assignment_declaration(self) -> None:
         detected = detect_document_from_text(
