@@ -1,5 +1,9 @@
 # Änderungsprotokoll
 
+## 0.2.7 – 2026-07-28
+
+- Die mitgelieferte OCR-Laufzeit wurde auf Tesseract OCR 5.5.3 aktualisiert. Leptonica 1.87.0 und die Sprachmodelle `deu`, `eng` und `osd` bleiben unverändert. Das Wartungsupdate verbessert insbesondere die Speichersicherheit beim Laden von Sprachmodellen und behebt weitere Stabilitätsprobleme.
+
 ## 0.2.6 – 2026-07-27
 
 - Die Oberfläche beendet die SYSTEM-Überwachung über ein administrativ geschriebenes Stoppsignal. Der Worker schließt einen bereits laufenden Scan sicher ab und beendet anschließend seinen vollständigen PyInstaller-Prozessbaum; ein verwaister Hintergrundprozess bleibt nicht mehr zurück.

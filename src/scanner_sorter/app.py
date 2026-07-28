@@ -540,11 +540,11 @@ def run_self_test() -> int:
         version_output = version_result.stdout + "\n" + version_result.stderr
         if (
             version_result.returncode != 0
-            or re.search(r"(?im)^tesseract\s+v?5\.5\.2\b", version_output) is None
+            or re.search(r"(?im)^tesseract\s+v?5\.5\.3\b", version_output) is None
             or re.search(r"(?im)^\s*leptonica[-\s]+1\.87\.0\b", version_output) is None
         ):
             raise RuntimeError(
-                "Tesseract OCR 5.5.2 mit Leptonica 1.87.0 konnte nicht erfolgreich gestartet werden."
+                "Tesseract OCR 5.5.3 mit Leptonica 1.87.0 konnte nicht erfolgreich gestartet werden."
             )
         language_result = subprocess.run(
             [str(tesseract), "--list-langs"],

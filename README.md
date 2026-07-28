@@ -141,13 +141,13 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Version 0.2.6 beendet die SYSTEM-Überwachung kontrolliert über ein administratives Stoppsignal und zeigt ihr zentrales Tagesprotokoll direkt in der normalen Oberfläche an. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft.
+Version 0.2.7 verwendet Tesseract OCR 5.5.3 und behält die kontrollierte SYSTEM-Überwachung aus Version 0.2.6 bei. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.2.6 enthält:
+Release 0.2.7 enthält:
 
-- Tesseract OCR 5.5.2
+- Tesseract OCR 5.5.3
 - Leptonica 1.87.0
 - Sprachmodelle `deu`, `eng` und `osd`
 
@@ -214,11 +214,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.2.6 bauen:
+OCR-Paket vorbereiten und Release 0.2.7 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.2.6
+.\scripts\build-release.ps1 -Version 0.2.7
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.

@@ -1,8 +1,8 @@
 param(
     [string]$BaseInstallerUrl = "https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe",
     [string]$BaseInstallerSha256 = "F3FC4236425B690C8BE756F35793F77394EE004BE0A6460A440C754D892F68BC",
-    [string]$TesseractPackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-tesseract-ocr-5.5.2-1-any.pkg.tar.zst",
-    [string]$TesseractPackageSha256 = "6667BE5FCD6A9489D65B84C954DAF21B3994155ADA92AD703EDCEC72B374D2EA",
+    [string]$TesseractPackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-tesseract-ocr-5.5.3-1-any.pkg.tar.zst",
+    [string]$TesseractPackageSha256 = "67C0A857E9F028F88D1463C0293885D806334346A81D70BE5E38F08BAD11E1E3",
     [string]$LeptonicaPackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-leptonica-1.87.0-1-any.pkg.tar.zst",
     [string]$LeptonicaPackageSha256 = "702D6EE60255B083AA37A3CBBE1A53EF253D9119204D0478D025EFEA2D0C91F9",
     [string]$GccRuntimePackageUrl = "https://mirror.msys2.org/mingw/mingw64/mingw-w64-x86_64-gcc-libs-16.1.0-5-any.pkg.tar.zst",
@@ -127,7 +127,7 @@ if (-not (Test-Path -LiteralPath $TesseractExe)) {
 }
 
 $existingVersion = (& $TesseractExe --version 2>&1 | Select-Object -First 1)
-if ($existingVersion -notmatch "tesseract (v5\.5\.0|5\.5\.2)") {
+if ($existingVersion -notmatch "tesseract (v5\.5\.0|5\.5\.[23])") {
     throw "Der Zielordner enthaelt keine unterstuetzte Tesseract-Basis: $existingVersion"
 }
 
@@ -135,7 +135,7 @@ $tesseractPackage = Get-VerifiedDownload $TesseractPackageUrl $TesseractPackageS
 $leptonicaPackage = Get-VerifiedDownload $LeptonicaPackageUrl $LeptonicaPackageSha256
 $gccPackage = Get-VerifiedDownload $GccRuntimePackageUrl $GccRuntimePackageSha256
 $winPthreadsPackage = Get-VerifiedDownload $WinPthreadsPackageUrl $WinPthreadsPackageSha256
-$tesseractRoot = Expand-Msys2Package $tesseractPackage "tesseract-5.5.2"
+$tesseractRoot = Expand-Msys2Package $tesseractPackage "tesseract-5.5.3"
 $leptonicaRoot = Expand-Msys2Package $leptonicaPackage "leptonica-1.87.0"
 $gccRoot = Expand-Msys2Package $gccPackage "gcc-runtime"
 $winPthreadsRoot = Expand-Msys2Package $winPthreadsPackage "winpthreads-runtime"
@@ -185,9 +185,9 @@ foreach ($languageFile in @($GermanData, $EnglishData, $OsdData)) {
 
 $versionOutput = (& $TesseractExe --version 2>&1)
 if ($LASTEXITCODE -ne 0 -or
-    ($versionOutput | Select-Object -First 1) -notmatch "^tesseract 5\.5\.2$" -or
+    ($versionOutput | Select-Object -First 1) -notmatch "^tesseract 5\.5\.3$" -or
     ($versionOutput -join "`n") -notmatch "leptonica-1\.87\.0") {
-    throw "Tesseract 5.5.2 mit Leptonica 1.87.0 konnte nicht gestartet werden: $($versionOutput -join ' ')"
+    throw "Tesseract 5.5.3 mit Leptonica 1.87.0 konnte nicht gestartet werden: $($versionOutput -join ' ')"
 }
 $languages = (& $TesseractExe --list-langs 2>&1)
 foreach ($language in @("deu", "eng", "osd")) {
@@ -203,4 +203,4 @@ if (-not $KeepDownloads) {
 }
 
 Write-Host ($versionOutput -join [Environment]::NewLine)
-Write-Host "Tesseract 5.5.2 mit Leptonica 1.87.0 ist vorbereitet. Der Release-Build nimmt diesen Ordner automatisch mit."
+Write-Host "Tesseract 5.5.3 mit Leptonica 1.87.0 ist vorbereitet. Der Release-Build nimmt diesen Ordner automatisch mit."

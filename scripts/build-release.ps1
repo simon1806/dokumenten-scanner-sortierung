@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.2.6",
+    [string]$Version = "0.2.7",
     [string]$TesseractDir = "",
     [switch]$WithoutBundledTesseract,
     [string]$SignToolPath = "",
@@ -43,7 +43,7 @@ $OpenLauncherVersionResource = Join-Path $BuildRoot "version-open-launcher.txt"
 $SetupVersionResource = Join-Path $BuildRoot "version-setup.txt"
 $ConstraintsFile = Join-Path $ProjectRoot "constraints-build.txt"
 $LockFile = Join-Path $ProjectRoot "requirements-build.lock"
-$ExpectedTesseractVersion = "5.5.2"
+$ExpectedTesseractVersion = "5.5.3"
 $ExpectedLeptonicaVersion = "1.87.0"
 
 function Assert-ProjectChildPath([string]$Path) {

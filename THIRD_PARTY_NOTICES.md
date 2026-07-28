@@ -27,19 +27,19 @@ eingehalten wird. Weitere Informationen: https://pymupdf.readthedocs.io/en/lates
 
 ## Tesseract OCR
 
-Die Anwendung liefert Tesseract OCR `5.5.2` mit Leptonica `1.87.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` mit.
+Die Anwendung liefert Tesseract OCR `5.5.3` mit Leptonica `1.87.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd` mit.
 
 - Tesseract OCR: Apache License 2.0
 - Leptonica: BSD 2-Clause License
 - Projekt: https://github.com/tesseract-ocr/tesseract
-- Quellrelease: https://github.com/tesseract-ocr/tesseract/releases/tag/5.5.2
+- Quellrelease: https://github.com/tesseract-ocr/tesseract/releases/tag/5.5.3
 - Windows-Paket: https://packages.msys2.org/packages/mingw-w64-x86_64-tesseract-ocr
 - Leptonica-Release: https://github.com/DanBloomberg/leptonica/releases/tag/1.87.0
 - Leptonica-Windows-Paket: https://packages.msys2.org/packages/mingw-w64-x86_64-leptonica
 
 ## GCC- und Winpthreads-Laufzeit
 
-Fuer Tesseract 5.5.2 werden die MSYS2-Pakete `mingw-w64-x86_64-gcc-libs` und `mingw-w64-x86_64-libwinpthread` mitgeliefert.
+Fuer Tesseract 5.5.3 werden die MSYS2-Pakete `mingw-w64-x86_64-gcc-libs` und `mingw-w64-x86_64-libwinpthread` mitgeliefert.
 
 - GCC-Laufzeitbibliotheken: GPL-3.0-or-later mit GCC Runtime Library Exception 3.1 sowie LGPL-2.1-or-later
 - Winpthreads: MIT und BSD-3-Clause-Clear
