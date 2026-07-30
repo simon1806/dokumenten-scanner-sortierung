@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from datetime import datetime
@@ -10,6 +11,7 @@ from typing import Callable
 from .config import Settings
 from .models import ProcessResult
 from .processing import DocumentProcessor
+from .version_info import collect_version_information
 
 LOGGER = logging.getLogger(__name__)
 
@@ -28,6 +30,7 @@ class FolderWatcher:
     MAX_RETRY_BACKOFF_SECONDS = 60.0
     RECOVERY_INTERVAL_SECONDS = 60.0
     HEARTBEAT_INTERVAL_SECONDS = 600.0
+    FOLDER_ERROR_LOG_INTERVAL_SECONDS = 600.0
 
     def __init__(
         self,
@@ -56,6 +59,36 @@ class FolderWatcher:
         self._last_result_at: datetime | None = None
         self._last_result_source = ""
         self._last_result_success: bool | None = None
+        self._folder_error_signature: tuple[str, str] | None = None
+        self._folder_error_started_at = 0.0
+        self._folder_error_started_wallclock: datetime | None = None
+        self._last_folder_error_log = 0.0
+        self._application_version = "unbekannt"
+        self._tesseract_version = "unbekannt"
+        self._leptonica_version = "unbekannt"
+        self._collect_runtime_versions()
+
+    @staticmethod
+    def _log_version(value: str) -> str:
+        normalised = value.strip()
+        if not normalised or normalised.casefold().startswith(("unbekannt", "nicht ")):
+            return "unbekannt"
+        return normalised
+
+    def _collect_runtime_versions(self) -> None:
+        """Collect immutable process metadata once for later heartbeats."""
+        try:
+            report = collect_version_information(self.settings.tesseract_path)
+            application = {entry.name: entry.version for entry in report.application}
+            ocr = {entry.name: entry.version for entry in report.ocr}
+            self._application_version = self._log_version(
+                application.get("Dokumenten-Scanner-Sortierung", "")
+            )
+            self._tesseract_version = self._log_version(ocr.get("Tesseract OCR", ""))
+            self._leptonica_version = self._log_version(ocr.get("Leptonica", ""))
+        except Exception:
+            # Missing metadata must never prevent folder monitoring.
+            LOGGER.warning("Laufzeitversionen konnten nicht ermittelt werden.", exc_info=True)
 
     @property
     def running(self) -> bool:
@@ -194,12 +227,7 @@ class FolderWatcher:
                         break
                     failure_count += 1
                     delay = self.retry_backoff_seconds(failure_count, self.settings.poll_interval_seconds)
-                    LOGGER.exception(
-                        "Fehler bei der Ordnerüberwachung; versuch=%s; erneut_in_s=%.1f; fehler=%s",
-                        failure_count,
-                        delay,
-                        error,
-                    )
+                    self._log_folder_error(error, failure_count, delay)
                     self._notify_status(
                         "Ordner oder Netzwerk nicht erreichbar. "
                         f"Neuer Versuch in {delay:g} Sekunden; Details im Protokoll."
@@ -208,7 +236,7 @@ class FolderWatcher:
                     continue
 
                 if failure_count:
-                    LOGGER.info("Ordnerüberwachung nach %s Fehler(n) wiederhergestellt.", failure_count)
+                    self._log_folder_recovery(failure_count)
                     self._notify_status("Ordner und Netzwerk wieder erreichbar; Überwachung fortgesetzt.")
                     failure_count = 0
                 self._stop_event.wait(self.settings.poll_interval_seconds)
@@ -216,6 +244,60 @@ class FolderWatcher:
             self._end_operation()
             LOGGER.info("Überwachung beendet.")
             self._notify_status("Überwachung beendet.")
+
+    def _log_folder_error(
+        self,
+        error: Exception,
+        failure_count: int,
+        delay: float,
+        *,
+        now: float | None = None,
+        wallclock: datetime | None = None,
+    ) -> str:
+        """Log the first/changed error fully and identical repeats sparingly."""
+        current = time.monotonic() if now is None else now
+        signature = (type(error).__qualname__, str(error))
+        if signature != self._folder_error_signature:
+            self._folder_error_signature = signature
+            self._folder_error_started_at = current
+            self._folder_error_started_wallclock = wallclock or datetime.now().astimezone()
+            self._last_folder_error_log = current
+            LOGGER.exception(
+                "Fehler bei der Ordnerüberwachung; versuch=%s; erneut_in_s=%.1f; fehler=%s",
+                failure_count,
+                delay,
+                error,
+            )
+            return "vollstaendig"
+
+        if current - self._last_folder_error_log < self.FOLDER_ERROR_LOG_INTERVAL_SECONDS:
+            return "unterdrueckt"
+
+        self._last_folder_error_log = current
+        first_error = self._folder_error_started_wallclock
+        LOGGER.warning(
+            "Ordnerfehler besteht fort; versuche=%s; erster_fehler=%s; dauer_s=%s; "
+            "erneut_in_s=%.1f; fehler=%s",
+            failure_count,
+            first_error.isoformat(timespec="seconds") if first_error else "unbekannt",
+            max(0, round(current - self._folder_error_started_at)),
+            delay,
+            error,
+        )
+        return "kompakt"
+
+    def _log_folder_recovery(self, failure_count: int, *, now: float | None = None) -> None:
+        current = time.monotonic() if now is None else now
+        duration = max(0, round(current - self._folder_error_started_at))
+        LOGGER.info(
+            "Ordnerüberwachung wiederhergestellt; fehlerdauer_s=%s; versuche=%s.",
+            duration,
+            failure_count,
+        )
+        self._folder_error_signature = None
+        self._folder_error_started_at = 0.0
+        self._folder_error_started_wallclock = None
+        self._last_folder_error_log = 0.0
 
     def _check_input_folder(self) -> None:
         input_folder = Path(self.settings.input_folder)
@@ -347,10 +429,15 @@ class FolderWatcher:
             last_status = "erfolgreich" if self._last_result_success else "nicht_erkannt_oder_fehler"
             last_source = self._last_result_source
         LOGGER.info(
-            "Betriebsstatus; anwendung=aktiv; ueberwachung=aktiv; modus=%s; laufzeit_s=%s; "
+            "Betriebsstatus; anwendung=aktiv; ueberwachung=aktiv; version=%s; prozess_id=%s; "
+            "tesseract=%s; leptonica=%s; modus=%s; laufzeit_s=%s; "
             "verarbeitung=%s; wartende_pdfs=%s; eingang=%s; ziel=%s; archiv=%s; "
             "pruefordner=%s; fortlaufende_ordnerfehler=%s; letzter_vorgang=%s; "
             "letzter_status=%s; letzte_datei=%s",
+            self._application_version,
+            os.getpid(),
+            self._tesseract_version,
+            self._leptonica_version,
             self.runtime_mode,
             uptime_seconds,
             "ja" if self.processing else "nein",

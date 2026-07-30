@@ -5,6 +5,7 @@ import platform
 import re
 import subprocess
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 from . import __version__
@@ -43,7 +44,9 @@ def parse_tesseract_versions(output: str) -> tuple[str, str]:
     return tesseract, leptonica
 
 
+@lru_cache(maxsize=8)
 def _tesseract_versions(configured_path: str) -> tuple[str, str, Path | None]:
+    """Read OCR runtime versions once per configured executable."""
     executable = find_tesseract_executable(configured_path)
     if executable is None:
         return "Nicht gefunden", "Nicht verfügbar", None

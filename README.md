@@ -141,11 +141,11 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Version 0.2.7 verwendet Tesseract OCR 5.5.3 und behält die kontrollierte SYSTEM-Überwachung aus Version 0.2.6 bei. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft.
+Version 0.2.8 verwendet Tesseract OCR 5.5.3 und verbessert Barcode-Erkennung, Betriebsprotokoll und Setup-Ablauf. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-Lieferschein, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.2.7 enthält:
+Release 0.2.8 enthält:
 
 - Tesseract OCR 5.5.3
 - Leptonica 1.87.0
@@ -191,9 +191,9 @@ Das Aktivitätsprotokoll in der Oberfläche zeigt bei eingerichtetem Serverautos
 
 Für Netzwerkfreigaben sind UNC-Pfade wie `\\server\freigabe\scanner\eingang` robuster als benutzerabhängige Laufwerksbuchstaben. Das Dienstkonto benötigt Lesen/Ändern/Löschen im Eingang sowie Lesen/Schreiben/Ändern in Ziel, Archiv, Prüfordner und am Ordner der zentralen `settings.json`.
 
-Bei einem vorübergehenden Ausfall eines Serverpfads wartet die Anwendung mit exponentiellem Backoff zwischen 1 und 60 Sekunden und setzt die Überwachung nach der Wiederkehr automatisch fort.
+Bei einem vorübergehenden Ausfall eines Serverpfads wartet die Anwendung mit exponentiellem Backoff zwischen 1 und 60 Sekunden und setzt die Überwachung nach der Wiederkehr automatisch fort. Der erste Fehler und jede geänderte Fehlerursache werden vollständig protokolliert; identische Folgefehler erscheinen höchstens alle zehn Minuten kompakt. Nach der Wiederherstellung nennt das Protokoll Fehlerdauer und Anzahl der Versuche.
 
-Alle zehn Minuten schreibt die aktive Überwachung ein Lebenszeichen mit Laufzeit, Betriebsart, laufender Verarbeitung, Anzahl wartender PDFs, Erreichbarkeit der Arbeitsordner, fortlaufenden Ordnerfehlern und dem letzten Verarbeitungsergebnis in das jeweilige Tagesprotokoll. Fehlt dieses Lebenszeichen länger als erwartet, sollte der Status der geplanten Aufgabe geprüft werden.
+Alle zehn Minuten schreibt die aktive Überwachung ein Lebenszeichen mit Anwendungsversion, Prozess-ID, Tesseract-/Leptonica-Version, Laufzeit, Betriebsart, laufender Verarbeitung, Anzahl wartender PDFs, Erreichbarkeit der Arbeitsordner, fortlaufenden Ordnerfehlern und dem letzten Verarbeitungsergebnis in das jeweilige Tagesprotokoll. Die Laufzeitversionen werden beim Start einmalig ermittelt und für spätere Einträge wiederverwendet. Fehlt dieses Lebenszeichen länger als erwartet, sollte der Status der geplanten Aufgabe geprüft werden.
 
 ## Sicherheitsgrenzen
 
@@ -214,11 +214,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.2.7 bauen:
+OCR-Paket vorbereiten und Release 0.2.8 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.2.7
+.\scripts\build-release.ps1 -Version 0.2.8
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.

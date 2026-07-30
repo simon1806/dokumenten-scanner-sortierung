@@ -1,5 +1,12 @@
 # Änderungsprotokoll
 
+## 0.2.8 – 2026-07-30
+
+- Eigene Empfangsscheine werden auch bei numerischen Code-39-Prüfzeichen korrekt erkannt. Der verifizierte Mod-43-Prüfwert wird nicht mehr fälschlich als Teil der Auftragsnummer übernommen; ein gezielter Barcode-Ausschnitt im Kopfbereich verbessert schwache Scans ohne langsame Ganzseitenvergrößerung.
+- Wiederholte identische Ordner- und Netzwerkfehler erzeugen nur beim ersten Auftreten einen vollständigen Traceback. Danach folgt höchstens alle zehn Minuten eine kompakte Zustandsmeldung; geänderte Fehler werden erneut vollständig und die Wiederherstellung mit Dauer und Versuchszahl protokolliert.
+- Der zehnminütige Betriebsstatus enthält nun Anwendungsversion, Prozess-ID sowie die beim Start ermittelten Tesseract- und Leptonica-Versionen. Die zwischengespeicherten Angaben starten während späterer Statusmeldungen keine zusätzlichen OCR-Prozesse.
+- Das Setup übergibt die sichtbare Bestätigungsmaske direkt an die Fortschrittsanzeige und schließt diese erst, nachdem die Abschlussmaske sichtbar ist. Dadurch bleibt während Installation, Update und Reparatur durchgehend ein Installer-Fenster sichtbar.
+
 ## 0.2.7 – 2026-07-28
 
 - Die mitgelieferte OCR-Laufzeit wurde auf Tesseract OCR 5.5.3 aktualisiert. Leptonica 1.87.0 und die Sprachmodelle `deu`, `eng` und `osd` bleiben unverändert. Das Wartungsupdate verbessert insbesondere die Speichersicherheit beim Laden von Sprachmodellen und behebt weitere Stabilitätsprobleme.

@@ -19,6 +19,8 @@ NOWAK_NUMBER = r"(\d{7,12})"
 NOWAK_CONTACT_FRAGMENT = "60686"
 NOWAK_FAST_CROP = (0.39, 0.025, 0.75, 0.205)
 MONTAGE_FAST_CROP = (0.0, 0.02, 1.0, 0.24)
+INTERNAL_BARCODE_FAST_CROP = (0.03, 0.02, 0.48, 0.18)
+CODE39_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%"
 ASSIGNMENT_DECLARATION_SIGNAL = "ABTRETUNGSERKLARUNG"
 ASSIGNMENT_NUMBER_CROP = (0.08, 0.43, 0.78, 0.67)
 ASSIGNMENT_NUMBER = r"((?:32|52)\d{5})"
@@ -65,6 +67,36 @@ def extract_number(text: str, expression: str, barcodes: Iterable[str]) -> str |
         if re.fullmatch(NUMBER, barcode):
             return barcode
     return None
+
+
+def code39_mod43_check_character(value: str) -> str:
+    """Return the Mod-43 check character used by Glas Hagen's Code-39 labels."""
+    try:
+        checksum = sum(CODE39_ALPHABET.index(character) for character in value.upper()) % 43
+    except ValueError:
+        return ""
+    return CODE39_ALPHABET[checksum]
+
+
+def internal_document_from_barcode(barcode: str) -> DetectedDocument | None:
+    """Read an AM/EM/MI barcode and remove verified padding/check characters."""
+    value = barcode.strip().upper()
+    checked = re.fullmatch(r"(AM|EM|MI)([-_]?)(\d{8})([0-9A-Z])", value)
+    if checked:
+        document_type, separator, payload, check_character = checked.groups()
+        checked_value = f"{document_type}{separator}{payload}"
+        if code39_mod43_check_character(checked_value) == check_character:
+            number = payload[1:] if payload.startswith("0") else payload
+            return DetectedDocument(document_type, number)
+        return None
+
+    match = re.fullmatch(r"(AM|EM|MI)[-_]?(\d{6,12})(?:[A-Z])?", value)
+    if not match:
+        return None
+    number = match.group(2)
+    if len(number) == 8 and number.startswith("0"):
+        number = number[1:]
+    return DetectedDocument(match.group(1), number)
 
 
 def is_nowak_header(text: str) -> bool:
@@ -213,12 +245,9 @@ def detect_document_from_text(
             return DetectedDocument("AM", number)
 
     for barcode in barcode_values:
-        match = re.fullmatch(r"(AM|EM|MI)[-_]?(\d{6,12})(?:[A-Z])?", barcode.strip(), flags=re.IGNORECASE)
-        if match:
-            number = match.group(2)
-            if len(number) == 8 and number.startswith("0"):
-                number = number[1:]
-            return DetectedDocument(match.group(1).upper(), number)
+        detected = internal_document_from_barcode(barcode)
+        if detected:
+            return detected
     if mi_scan_date and is_montage_report(normalised):
         # Rarely a Montageinfo is issued without an order number and without a
         # usable MI barcode. It remains a valid one-page report, so preserve it
@@ -428,7 +457,31 @@ class PageRecognizer:
         try:
             import zxingcpp
 
-            return tuple(result.text.strip() for result in zxingcpp.read_barcodes(image) if result.text.strip())
+            values = tuple(result.text.strip() for result in zxingcpp.read_barcodes(image) if result.text.strip())
+            if values:
+                return values
+
+            # Glas Hagen druckt den langen Code-39-Belegcode oben links. Bei
+            # bildbasierten Scanner-PDFs reicht die normale Seitenauflösung
+            # gelegentlich nicht für die schmalen Balken. Nur dieser kleine
+            # Ausschnitt wird deshalb vergrößert; ein doppeltes Rendern der
+            # vollständigen A4-Seite würde Zeit und Speicher vervierfachen.
+            width, height = image.size
+            left, top, right, bottom = INTERNAL_BARCODE_FAST_CROP
+            barcode_area = image.crop(
+                (
+                    round(width * left),
+                    round(height * top),
+                    max(1, round(width * right)),
+                    max(1, round(height * bottom)),
+                )
+            )
+            enlarged = barcode_area.resize((barcode_area.width * 2, barcode_area.height * 2))
+            return tuple(
+                result.text.strip()
+                for result in zxingcpp.read_barcodes(enlarged)
+                if result.text.strip()
+            )
         except Exception:
             # OCR remains available when a page contains no readable barcode.
             LOGGER.warning("Barcode-Erkennung fehlgeschlagen; OCR wird als Ersatz verwendet.", exc_info=True)
