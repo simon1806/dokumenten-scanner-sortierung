@@ -333,6 +333,67 @@ class InstallerTests(unittest.TestCase):
         process.terminate.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=3)
 
+    @patch("installer.windows_dialog.subprocess.Popen")
+    def test_confirmation_hands_visible_window_to_progress_process(self, popen: Mock) -> None:
+        process = Mock()
+        process.poll.return_value = None
+        popen.return_value = process
+        with TemporaryDirectory() as directory:
+            selection_path = Path(directory) / "selection"
+            ready_path = Path(directory) / "ready"
+            selection_path.write_text("server", encoding="utf-8")
+            ready_path.write_text("ready", encoding="utf-8")
+            with patch(
+                "installer.windows_dialog._dialog_response_path",
+                side_effect=[selection_path, ready_path],
+            ):
+                confirmed, server_autostart, progress = (
+                    windows_dialog.show_confirmation_with_server_autostart_and_progress(
+                        "Update bestätigen",
+                        "Update ausführen?",
+                        "Inhalt",
+                        "Update ausführen",
+                        Path("app.ico"),
+                        ("Update wird installiert", "Bitte warten", "Programmdateien"),
+                    )
+                )
+
+        script = popen.call_args.args[0][-1]
+        self.assertTrue(confirmed)
+        self.assertTrue(server_autostart)
+        self.assertIsNotNone(progress)
+        self.assertIn("Update wird installiert", script)
+        self.assertIn("Application]::Run($form)", script)
+        self.assertIn("WriteAllText", script)
+        process.terminate.assert_not_called()
+
+    @patch("installer.windows_dialog.subprocess.Popen")
+    def test_completion_is_shown_before_previous_progress_is_closed(self, popen: Mock) -> None:
+        process = Mock()
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        popen.return_value = process
+        previous = Mock()
+        with TemporaryDirectory() as directory:
+            ready_path = Path(directory) / "completion-ready"
+            ready_path.write_text("ready", encoding="utf-8")
+            with patch("installer.windows_dialog._dialog_response_path", return_value=ready_path):
+                should_launch = windows_dialog.show_completion(
+                    "Update abgeschlossen",
+                    "Update erfolgreich",
+                    "Fertig",
+                    Path("app.ico"),
+                    previous_dialog=previous,
+                )
+
+        self.assertTrue(should_launch)
+        previous.close.assert_called_once_with()
+        popen.assert_called_once()
+        process.wait.assert_called_once_with()
+        script = popen.call_args.args[0][-1]
+        self.assertIn("completion-ready", script)
+        self.assertIn("Add_Shown", script)
+
     @patch("installer.windows_dialog.subprocess.run")
     def test_server_autostart_choice_is_offered_by_confirmation_dialog(self, run: Mock) -> None:
         run.return_value = SimpleNamespace(returncode=10)

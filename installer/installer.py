@@ -53,11 +53,11 @@ if __package__:
         VERSION_FILENAME,
     )
     from .windows_dialog import (
+        ProgressDialog,
         powershell_quote,
         show_completion,
         show_confirmation,
-        show_confirmation_with_server_autostart,
-        show_installation_progress,
+        show_confirmation_with_server_autostart_and_progress,
     )
 else:
     from product import (  # type: ignore[no-redef]
@@ -91,11 +91,11 @@ else:
         VERSION_FILENAME,
     )
     from windows_dialog import (  # type: ignore[no-redef]
+        ProgressDialog,
         powershell_quote,
         show_completion,
         show_confirmation,
-        show_confirmation_with_server_autostart,
-        show_installation_progress,
+        show_confirmation_with_server_autostart_and_progress,
     )
 
 
@@ -147,6 +147,7 @@ class PayloadFile:
 class InstallationSelection:
     confirmed: bool
     configure_server_autostart: bool = False
+    progress_dialog: ProgressDialog | None = None
 
 
 @dataclass(slots=True)
@@ -1444,14 +1445,17 @@ def confirm_installation_selection(
     if "--silent" in sys.argv:
         return InstallationSelection(True, "--server-autostart" in sys.argv)
     title, instruction, content, action_text = prompt_text(action, version, installed_version)
-    confirmed, configure_server_autostart = show_confirmation_with_server_autostart(
-        title,
-        instruction,
-        content,
-        action_text,
-        icon_payload_path(),
+    confirmed, configure_server_autostart, progress_dialog = (
+        show_confirmation_with_server_autostart_and_progress(
+            title,
+            instruction,
+            content,
+            action_text,
+            icon_payload_path(),
+            installation_progress_text(action, version),
+        )
     )
-    return InstallationSelection(confirmed, configure_server_autostart)
+    return InstallationSelection(confirmed, configure_server_autostart, progress_dialog)
 
 
 def installation_progress_text(action: str | bool, version: str) -> tuple[str, str, str]:
@@ -1693,17 +1697,7 @@ def run_installation() -> int:
     if not selection.confirmed:
         return 0
 
-    progress_dialog = None
-    if "--silent" not in sys.argv:
-        try:
-            progress_dialog = show_installation_progress(
-                *installation_progress_text(action, version),
-                icon_payload_path(),
-            )
-        except OSError:
-            # The progress UI is an operator aid. A policy blocking PowerShell must
-            # not turn an otherwise safe setup into a failed installation.
-            progress_dialog = None
+    progress_dialog = selection.progress_dialog
 
     transaction: InstallationTransaction | None = None
     registry_snapshot: dict[str, tuple[object, int]] | None = None
@@ -1741,9 +1735,6 @@ def run_installation() -> int:
         registry_touched = False
         shortcuts_to_restore.clear()
     except Exception as error:
-        if progress_dialog is not None:
-            progress_dialog.close()
-            progress_dialog = None
         rollback_errors: list[str] = []
         if registry_touched:
             try:
@@ -1768,11 +1759,9 @@ def run_installation() -> int:
             rollback_text = "\n\nRollback-Hinweis: " + " | ".join(rollback_errors)
         title = "Update nicht möglich" if target_exists else "Installation fehlgeschlagen"
         show_message("showerror", title, f"Es wurden keine unvollständigen Programmdateien übernommen.\n\n{error}{rollback_text}")
-        return 1
-
-    finally:
         if progress_dialog is not None:
             progress_dialog.close()
+        return 1
 
     if cleanup_warning:
         show_message(
@@ -1826,13 +1815,18 @@ def run_installation() -> int:
                     f"SYSTEM-Aufgabe: {SERVER_AUTOSTART_TASK_NAME}\n"
                     f"Zentrale Einstellungen: {server_settings_path()}"
                 )
-        should_launch = show_completion(
-            title,
-            instruction,
-            content,
-            icon_payload_path(),
-            start_application="--no-launch" not in sys.argv,
-        )
+        try:
+            should_launch = show_completion(
+                title,
+                instruction,
+                content,
+                icon_payload_path(),
+                start_application="--no-launch" not in sys.argv,
+                previous_dialog=progress_dialog,
+            )
+        finally:
+            if progress_dialog is not None:
+                progress_dialog.close()
     if should_launch:
         subprocess.Popen([str(target)], close_fds=True)
     return 0

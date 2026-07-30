@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -233,6 +234,52 @@ class WatcherTests(unittest.TestCase):
         self.assertEqual(4.0, FolderWatcher.retry_backoff_seconds(3, 1))
         self.assertEqual(60.0, FolderWatcher.retry_backoff_seconds(100_000, 1))
 
+    def test_identical_folder_errors_are_throttled_and_recovery_is_summarised(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            watcher = FolderWatcher(self._settings(Path(directory)))
+            first_wallclock = datetime(2026, 7, 30, 8, 0, 0).astimezone()
+
+            with self.assertLogs("scanner_sorter.watcher", level="INFO") as captured:
+                self.assertEqual(
+                    "vollstaendig",
+                    watcher._log_folder_error(
+                        OSError("Pfad fehlt"),
+                        1,
+                        1.0,
+                        now=100.0,
+                        wallclock=first_wallclock,
+                    ),
+                )
+                self.assertEqual(
+                    "unterdrueckt",
+                    watcher._log_folder_error(OSError("Pfad fehlt"), 2, 2.0, now=699.9),
+                )
+                self.assertEqual(
+                    "kompakt",
+                    watcher._log_folder_error(OSError("Pfad fehlt"), 12, 60.0, now=700.0),
+                )
+                watcher._log_folder_recovery(12, now=725.0)
+
+            output = "\n".join(captured.output)
+            self.assertEqual(1, output.count("Fehler bei der Ordnerüberwachung"))
+            self.assertIn("Ordnerfehler besteht fort", output)
+            self.assertIn("versuche=12", output)
+            self.assertIn(first_wallclock.isoformat(timespec="seconds"), output)
+            self.assertIn("fehlerdauer_s=625", output)
+            self.assertIsNone(watcher._folder_error_signature)
+
+    def test_changed_folder_error_is_logged_fully_again(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            watcher = FolderWatcher(self._settings(Path(directory)))
+            with self.assertLogs("scanner_sorter.watcher", level="ERROR") as captured:
+                watcher._log_folder_error(OSError("Pfad A fehlt"), 1, 1.0, now=100.0)
+                watcher._log_folder_error(OSError("Pfad B fehlt"), 2, 2.0, now=101.0)
+
+            self.assertEqual(
+                2,
+                "\n".join(captured.output).count("Fehler bei der Ordnerüberwachung"),
+            )
+
     def test_heartbeat_logs_runtime_folder_state_queue_and_last_result_every_ten_minutes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -243,6 +290,9 @@ class WatcherTests(unittest.TestCase):
             watcher = FolderWatcher(settings, runtime_mode="SYSTEM/Headless")
             watcher._started_monotonic = 100.0
             watcher._last_heartbeat = 100.0
+            watcher._application_version = "0.2.8"
+            watcher._tesseract_version = "5.5.3"
+            watcher._leptonica_version = "1.87.0"
             watcher._record_result(ProcessResult("vorher.pdf", True, "Fertig"))
 
             with self.assertLogs("scanner_sorter.watcher", level="INFO") as captured:
@@ -251,6 +301,10 @@ class WatcherTests(unittest.TestCase):
 
             heartbeat = "\n".join(captured.output)
             self.assertIn("Betriebsstatus", heartbeat)
+            self.assertIn("version=0.2.8", heartbeat)
+            self.assertRegex(heartbeat, r"prozess_id=\d+")
+            self.assertIn("tesseract=5.5.3", heartbeat)
+            self.assertIn("leptonica=1.87.0", heartbeat)
             self.assertIn("modus=SYSTEM/Headless", heartbeat)
             self.assertIn("laufzeit_s=600", heartbeat)
             self.assertIn("wartende_pdfs=1", heartbeat)
@@ -258,6 +312,16 @@ class WatcherTests(unittest.TestCase):
             self.assertIn("ziel=erreichbar", heartbeat)
             self.assertIn("letzter_status=erfolgreich", heartbeat)
             self.assertIn("letzte_datei=vorher.pdf", heartbeat)
+
+    @patch("scanner_sorter.watcher.collect_version_information", side_effect=OSError("nicht verfügbar"))
+    def test_missing_runtime_versions_do_not_interrupt_watcher(self, _collect: Mock) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertLogs("scanner_sorter.watcher", level="WARNING"):
+                watcher = FolderWatcher(self._settings(Path(directory)))
+
+        self.assertEqual("unbekannt", watcher._application_version)
+        self.assertEqual("unbekannt", watcher._tesseract_version)
+        self.assertEqual("unbekannt", watcher._leptonica_version)
 
     def test_recovery_results_are_forwarded_to_callbacks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

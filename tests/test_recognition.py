@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from scanner_sorter.config import Settings
@@ -90,6 +91,48 @@ class RecognitionTests(unittest.TestCase):
 
         self.assertIsNotNone(detected)
         self.assertEqual("EM_6260367.pdf", detected.filename)
+
+    def test_code39_barcode_with_numeric_check_character_skips_ocr(self) -> None:
+        detected = detect_document_from_text("", ("EM-062604004",))
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("EM_6260400.pdf", detected.filename)
+
+    def test_code39_barcode_with_invalid_check_character_is_rejected(self) -> None:
+        detected = detect_document_from_text("", ("EM-062604005",))
+
+        self.assertIsNone(detected)
+
+    @patch("zxingcpp.read_barcodes")
+    def test_unreadable_full_page_barcode_retries_enlarged_top_left_area(self, read_barcodes: object) -> None:
+        crop_boxes: list[tuple[int, int, int, int]] = []
+        resize_sizes: list[tuple[int, int]] = []
+
+        class BarcodeArea:
+            width = 450
+            height = 224
+
+            @staticmethod
+            def resize(size: tuple[int, int]) -> str:
+                resize_sizes.append(size)
+                return "Vergroesserter Barcode"
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> BarcodeArea:
+                crop_boxes.append(box)
+                return BarcodeArea()
+
+        read_barcodes.side_effect = ((), (SimpleNamespace(text="EM-062604059"),))
+
+        values = PageRecognizer._read_barcodes(ScanImage())
+
+        self.assertEqual(("EM-062604059",), values)
+        self.assertEqual([(30, 28, 480, 252)], crop_boxes)
+        self.assertEqual([(900, 448)], resize_sizes)
+        self.assertEqual("Vergroesserter Barcode", read_barcodes.call_args_list[1].args[0])
 
     def test_header_ocr_skips_full_page_ocr_when_document_is_detected(self) -> None:
         crop_boxes: list[tuple[int, int, int, int]] = []
