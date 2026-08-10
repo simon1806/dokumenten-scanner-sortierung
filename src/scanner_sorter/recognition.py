@@ -18,12 +18,20 @@ NUMBER = r"(\d{6,12})"
 NOWAK_NUMBER = r"(\d{7,12})"
 NOWAK_CONTACT_FRAGMENT = "60686"
 NOWAK_FAST_CROP = (0.39, 0.025, 0.75, 0.205)
+BOHLE_NUMBER = r"(\d{5,12})"
+BOHLE_NUMBER_FAST_CROP = (0.02, 0.015, 0.46, 0.13)
 MONTAGE_FAST_CROP = (0.0, 0.02, 1.0, 0.24)
 INTERNAL_BARCODE_FAST_CROP = (0.03, 0.02, 0.48, 0.18)
 CODE39_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%"
 ASSIGNMENT_DECLARATION_SIGNAL = "ABTRETUNGSERKLARUNG"
 ASSIGNMENT_NUMBER_CROP = (0.08, 0.43, 0.78, 0.67)
 ASSIGNMENT_NUMBER = r"((?:32|52)\d{5})"
+SIGNED_OFFER_CONFIRMATION_CROP = (0.02, 0.42, 0.98, 0.92)
+SIGNED_OFFER_LINE_SEARCH = (0.22, 0.74, 0.78, 0.895)
+SIGNED_OFFER_INK_X_RANGE = (0.26, 0.78)
+SIGNED_OFFER_INK_ABOVE_LINE = (0.065, 0.004)
+SIGNED_OFFER_MIN_LINE_DARK_RATIO = 0.18
+SIGNED_OFFER_MIN_INK_RATIO = 0.003
 SCANNER_TIMESTAMP = re.compile(r"(?<!\d)(\d{2})(\d{2})(\d{2})\d{4,6}(?!\d)")
 NEUMA_ORDER = r"(?:I|1|\|)\s*[-–—]\s*(20\d{2})\s*[-–—]\s*(\d{6})"
 SUPPORTED_DOCUMENT_SIGNALS = (
@@ -33,7 +41,7 @@ SUPPORTED_DOCUMENT_SIGNALS = (
     "MONTAGEBERICHT",
     "MONTAGEINFO",
     "HEITZER",
-    "PAULI",
+    "BOHLE",
     "GLAS-NOWAK",
     "GLAS NOWAK",
     "NOWAK",
@@ -110,12 +118,45 @@ def is_nowak_header(text: str) -> bool:
     return has_name or has_contact
 
 
+def is_bohle_header(text: str) -> bool:
+    """Recognise the stable Bohle supplier header."""
+    normalised = normalise(text)
+    return "BOHLE AG" in normalised or "BOHLE.COM" in normalised
+
+
+def is_pauli_measurement_attachment(text: str) -> bool:
+    """Recognise Pauli measurement/order sheets that belong to a preceding AM.
+
+    These supplier pages do not carry a Glas-Hagen document number. Returning
+    no document start keeps them attached to the preceding Aufmassschein while
+    avoiding an unnecessary full-page OCR run. A real Pauli delivery note is
+    deliberately excluded.
+    """
+    normalised = normalise(text)
+    has_supplier = "PAULI" in normalised and (
+        "SOHN" in normalised or "FLAMEA" in normalised
+    )
+    has_set_number = bool(re.search(r"\bSET\s*[- ]?\s*NR\.?", normalised))
+    has_sheet_heading = "AUFMASS" in normalised or "GLASBESTELLUNG" in normalised
+    return (
+        has_supplier
+        and has_set_number
+        and has_sheet_heading
+        and "LIEFERSCHEIN" not in normalised
+    )
+
+
 def has_supported_document_signal(text: str) -> bool:
     """Return whether header OCR warrants the expensive full-page OCR fallback."""
     normalised = normalise(text)
     return (
         is_assignment_declaration(normalised)
         or is_montage_report(normalised)
+        or (
+            "PAULI" in normalised
+            and "SOHN" in normalised
+            and "LIEFERSCHEIN" in normalised
+        )
         or any(signal in normalised for signal in SUPPORTED_DOCUMENT_SIGNALS)
     )
 
@@ -169,6 +210,54 @@ def is_neuma_order(text: str) -> bool:
     return "NEUMA" in normalised and bool(re.search(rf"\bAUFTRAG\s+{NEUMA_ORDER}\b", normalised))
 
 
+def offer_number_from_text(text: str) -> str | None:
+    """Read the number printed in a Glas Hagen offer header."""
+    match = re.search(
+        rf"\bANGEBOT\s*(?:[-–—]\s*)?NR\.?\s*:?[ ]*{NUMBER}",
+        normalise(text),
+    )
+    return match.group(1) if match else None
+
+
+def is_signed_offer(text: str) -> bool:
+    """Recognise the acceptance block of a customer-signed Glas Hagen offer."""
+    normalised = normalise(text)
+    has_acceptance = bool(
+        re.search(
+            r"\bICH\s+ERTEILE\s+I(?:HN|NN)EN\s+DEN\s+AUFTRAG\s+ZUR\s+"
+            r"AUSF(?:U|UE)HRUNG\s+DER\s+ANGEBOTENEN\s+LEISTUNG\b",
+            normalised,
+        )
+    )
+    has_signature_field = bool(
+        re.search(r"\bDATUM\s*/\s*UNTERSCHR[A-Z]{2,8}\b", normalised)
+    )
+    return has_acceptance and has_signature_field
+
+
+def complete_signed_offer_pages(
+    detections: list[DetectedDocument | None],
+) -> list[DetectedDocument | None]:
+    """Attach all pages when one page identifies a single signed offer.
+
+    Customers sometimes return the offer with its pages scanned in reverse
+    order. Only the acceptance page identifies the document type, so the
+    remaining otherwise-unrecognised pages inherit that detection when no
+    other document type is present in the same scan.
+    """
+    recognised = [detection for detection in detections if detection is not None]
+    signed_offers = [
+        detection for detection in recognised if detection.document_type == "AG"
+    ]
+    if not signed_offers:
+        return detections
+
+    signed_offer = signed_offers[0]
+    if any(detection.key != signed_offer.key for detection in recognised):
+        return detections
+    return [detection or signed_offer for detection in detections]
+
+
 def detect_document_from_text(
     text: str,
     barcodes: Iterable[str] = (),
@@ -177,6 +266,10 @@ def detect_document_from_text(
     """Recognise the supported document headers from OCR text and barcode values."""
     normalised = normalise(text)
     barcode_values = tuple(barcodes)
+
+    offer_number = offer_number_from_text(normalised)
+    if offer_number and is_signed_offer(normalised):
+        return DetectedDocument("AG", f"{offer_number}_UNTERS")
 
     if is_assignment_declaration(normalised):
         match = re.search(
@@ -220,6 +313,14 @@ def detect_document_from_text(
         )
         if number:
             return DetectedDocument("LS", number, "Pauli")
+
+    if is_bohle_header(normalised) and "LIEFERSCHEIN" in normalised:
+        match = re.search(
+            rf"(?:LIEFERSCHEIN|NUMMER)\s*:?\s*{BOHLE_NUMBER}",
+            normalised,
+        )
+        if match:
+            return DetectedDocument("LS", match.group(1), "Bohle")
 
     if "EMPFANGSSCHEIN" in normalised:
         number = extract_number(
@@ -273,7 +374,7 @@ class PageRecognizer:
             self._processing_deadline = previous_deadline
 
     def _recognise_document_with_deadline(self, source: Path) -> list[DetectedDocument | None]:
-        import fitz
+        import pymupdf
 
         source_size = source.stat().st_size
         if source_size > MAX_PDF_BYTES:
@@ -282,7 +383,7 @@ class PageRecognizer:
                 f"von {MAX_PDF_BYTES // (1024 * 1024)} MB."
             )
 
-        with fitz.open(source) as document:
+        with pymupdf.open(source) as document:
             page_count = document.page_count
         if page_count == 0:
             return []
@@ -304,7 +405,8 @@ class PageRecognizer:
             # Read results in page order. If one page fails, queued pages are
             # cancelled instead of allowing a long PDF to continue spawning OCR
             # processes after the document has already been rejected.
-            return [future.result() for future in futures]
+            detections = [future.result() for future in futures]
+            return complete_signed_offer_pages(detections)
         except Exception:
             for future in futures:
                 future.cancel()
@@ -323,9 +425,9 @@ class PageRecognizer:
         return max(1, min(OCR_TIMEOUT_SECONDS, math.ceil(remaining)))
 
     def _recognise_file_page(self, source: Path, page_index: int) -> DetectedDocument | None:
-        import fitz
+        import pymupdf
 
-        with fitz.open(source) as document:
+        with pymupdf.open(source) as document:
             return self.recognise(document.load_page(page_index), scan_date_from_source(source))
 
     def recognise(self, page: object, mi_scan_date: str | None = None) -> DetectedDocument | None:
@@ -338,13 +440,18 @@ class PageRecognizer:
 
         if embedded_text:
             detected = detect_document_from_text(embedded_text, mi_scan_date=mi_scan_date)
-            if detected:
+            if detected and detected.document_type != "AG":
                 return detected
+            if is_pauli_measurement_attachment(embedded_text):
+                LOGGER.info(
+                    "Pauli-Aufmassanlage erkannt; Bildrendering und Ganzseiten-OCR uebersprungen."
+                )
+                return None
 
         image = self._render(page)
         barcodes = self._read_barcodes(image)
         detected = detect_document_from_text(embedded_text, barcodes, mi_scan_date)
-        if detected:
+        if detected and detected.document_type != "AG":
             return detected
 
         # Nowak druckt Lieferant, Belegart und Lieferscheinnummer stets in
@@ -357,6 +464,21 @@ class PageRecognizer:
         if detected and detected.supplier == "Nowak":
             LOGGER.info("Nowak-Schnellerkennung verwendet; lieferschein=%s", detected.number)
             return detected
+
+        # Bohle druckt das Logo im bereits gelesenen rechten Kopfbereich und
+        # die Lieferscheinnummer oben links. Nach dem Lieferantenhinweis wird
+        # deshalb nur dieses kleine Nummernfeld statt des allgemeinen Kopfs
+        # gelesen.
+        if is_bohle_header(nowak_text):
+            bohle_number_text = self._read_ocr(self._bohle_number_crop(image))
+            detected = detect_document_from_text(
+                f"{nowak_text}\n{bohle_number_text}",
+                barcodes,
+                mi_scan_date,
+            )
+            if detected and detected.supplier == "Bohle":
+                LOGGER.info("Bohle-Schnellerkennung verwendet; lieferschein=%s", detected.number)
+                return detected
 
         # Montageberichte drucken ihre Auftragsnummer im selben kleinen Bereich
         # wie Nowak oben rechts. Sie erhalten nur bei diesem Hinweis einen
@@ -380,6 +502,34 @@ class PageRecognizer:
                 LOGGER.info("Abtretungserklaerung-Schnellerkennung verwendet; auftrag=%s", detected.number)
                 return detected
 
+        if offer_number_from_text(header_text):
+            confirmation_text = self._read_ocr(self._signed_offer_confirmation_crop(image))
+            detected = detect_document_from_text(
+                f"{header_text}\n{confirmation_text}",
+                barcodes,
+                mi_scan_date,
+            )
+            if detected and detected.document_type == "AG":
+                if not self._has_signed_offer_mark(image):
+                    LOGGER.info(
+                        "Angebot ohne handschriftliche Eintragung im Unterschriftsbereich "
+                        "bleibt unberuecksichtigt."
+                    )
+                    return None
+                LOGGER.info(
+                    "Unterschriebenes Angebot erkannt; angebot=%s",
+                    detected.number.removesuffix("_UNTERS"),
+                )
+                return detected
+            LOGGER.info("Angebot ohne erkennbare Auftragsbestaetigung bleibt unberuecksichtigt.")
+            return None
+
+        if is_pauli_measurement_attachment(
+            f"{embedded_text}\n{nowak_text}\n{header_text}"
+        ):
+            LOGGER.info("Pauli-Aufmassanlage erkannt; Ganzseiten-OCR uebersprungen.")
+            return None
+
         if not has_supported_document_signal(header_text):
             LOGGER.info(
                 "Ganzseiten-OCR uebersprungen; keine bekannte Dokument-Signatur im Kopfbereich."
@@ -401,7 +551,7 @@ class PageRecognizer:
                 f"PDF-Seite wuerde {pixels:,} Pixel erzeugen und ueberschreitet das Render-Limit "
                 f"von {MAX_RENDER_PIXELS:,} Pixeln."
             )
-        pixmap = page.get_pixmap(matrix=__import__("fitz").Matrix(scale, scale), alpha=False)
+        pixmap = page.get_pixmap(matrix=__import__("pymupdf").Matrix(scale, scale), alpha=False)
         from PIL import Image
 
         return Image.open(io.BytesIO(pixmap.tobytes("png")))
@@ -451,6 +601,70 @@ class PageRecognizer:
                 max(1, round(height * bottom)),
             )
         )
+
+    @staticmethod
+    def _bohle_number_crop(image: object):
+        """Read Bohle's delivery-note number from the small top-left field."""
+        width, height = image.size
+        left, top, right, bottom = BOHLE_NUMBER_FAST_CROP
+        return image.crop(
+            (
+                round(width * left),
+                round(height * top),
+                max(1, round(width * right)),
+                max(1, round(height * bottom)),
+            )
+        )
+
+    @staticmethod
+    def _signed_offer_confirmation_crop(image: object):
+        """Read the lower acceptance and signature block of a Glas Hagen offer."""
+        width, height = image.size
+        left, top, right, bottom = SIGNED_OFFER_CONFIRMATION_CROP
+        return image.crop(
+            (
+                round(width * left),
+                round(height * top),
+                max(1, round(width * right)),
+                max(1, round(height * bottom)),
+            )
+        )
+
+    @staticmethod
+    def _has_signed_offer_mark(image: object) -> bool:
+        """Return whether handwriting is present above the printed signature line."""
+        grayscale = image.convert("L")
+        width, height = grayscale.size
+        left, top, right, bottom = SIGNED_OFFER_LINE_SEARCH
+        x_start = round(width * left)
+        x_end = max(x_start + 1, round(width * right))
+        y_start = round(height * top)
+        y_end = max(y_start + 1, round(height * bottom))
+
+        darkest_row_count = 0
+        signature_line_y = y_start
+        for y_position in range(y_start, y_end):
+            histogram = grayscale.crop((x_start, y_position, x_end, y_position + 1)).histogram()
+            dark_pixels = sum(histogram[:170])
+            if dark_pixels > darkest_row_count:
+                darkest_row_count = dark_pixels
+                signature_line_y = y_position
+
+        line_width = x_end - x_start
+        if darkest_row_count < line_width * SIGNED_OFFER_MIN_LINE_DARK_RATIO:
+            return False
+
+        ink_left, ink_right = SIGNED_OFFER_INK_X_RANGE
+        above_start, above_end = SIGNED_OFFER_INK_ABOVE_LINE
+        ink_box = (
+            round(width * ink_left),
+            max(0, signature_line_y - round(height * above_start)),
+            max(1, round(width * ink_right)),
+            max(1, signature_line_y - round(height * above_end)),
+        )
+        ink_area = grayscale.crop(ink_box)
+        dark_ink = sum(ink_area.histogram()[:170])
+        return dark_ink >= ink_area.width * ink_area.height * SIGNED_OFFER_MIN_INK_RATIO
 
     @staticmethod
     def _read_barcodes(image: object) -> tuple[str, ...]:

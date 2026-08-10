@@ -512,7 +512,7 @@ def configure_logging(settings_path: Path) -> Path:
 def run_self_test() -> int:
     """Exercise packaged runtime components without opening the GUI or changing data."""
     try:
-        import fitz  # noqa: F401
+        import pymupdf  # noqa: F401
         import PIL  # noqa: F401
         import pypdf  # noqa: F401
         import pystray  # noqa: F401

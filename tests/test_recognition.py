@@ -6,16 +6,24 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from PIL import Image, ImageDraw
+
 from scanner_sorter.config import Settings
+from scanner_sorter.models import DetectedDocument
 from scanner_sorter.recognition import (
     MAX_RENDER_PIXELS,
     OCR_TIMEOUT_SECONDS,
     PageRecognizer,
+    complete_signed_offer_pages,
     detect_document_from_text,
     has_supported_document_signal,
     is_assignment_declaration,
+    is_bohle_header,
     is_neuma_order,
     is_nowak_header,
+    is_pauli_measurement_attachment,
+    is_signed_offer,
+    offer_number_from_text,
     scan_date_from_source,
 )
 
@@ -336,6 +344,141 @@ class RecognitionTests(unittest.TestCase):
         self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 490), (80, 602, 780, 938)], crop_boxes)
         self.assertEqual(3, read_ocr.call_count)
 
+    def test_signed_offer_reads_targeted_confirmation_area(self) -> None:
+        crop_boxes: list[tuple[int, int, int, int]] = []
+
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                crop_boxes.append(box)
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(recognizer, "_has_signed_offer_mark", return_value=True),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=(
+                    "Kein Nowak-Lieferschein",
+                    "Angebot Nr. 5260661 Kunden-Nummer 26054",
+                    "Ich erteile Ihnen den Auftrag zur Ausfuehrung der angebotenen Leistung. "
+                    "Datum / Unterschrift: 04.08.2026",
+                ),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("AG_5260661_UNTERS.pdf", detected.filename)
+        self.assertEqual(
+            [(390, 35, 750, 287), (0, 0, 1000, 490), (20, 588, 980, 1288)],
+            crop_boxes,
+        )
+        self.assertEqual(3, read_ocr.call_count)
+
+    def test_offer_without_handwritten_mark_is_not_recognised(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(recognizer, "_has_signed_offer_mark", return_value=False),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=(
+                    "Kein Nowak-Lieferschein",
+                    "Angebot Nr. 5260661 Kunden-Nummer 26054",
+                    "Ich erteile Ihnen den Auftrag zur Ausfuehrung der angebotenen Leistung. "
+                    "Datum / Unterschrift:",
+                ),
+            ),
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNone(detected)
+
+    def test_handwritten_offer_mark_is_distinguished_from_empty_signature_line(self) -> None:
+        empty = Image.new("RGB", (1000, 1400), "white")
+        empty_draw = ImageDraw.Draw(empty)
+        empty_draw.line((260, 1120, 600, 1120), fill="black", width=2)
+
+        signed = empty.copy()
+        signed_draw = ImageDraw.Draw(signed)
+        signed_draw.line(
+            ((300, 1100), (380, 1050), (460, 1090), (540, 1035), (700, 1095)),
+            fill="blue",
+            width=4,
+        )
+
+        self.assertFalse(PageRecognizer._has_signed_offer_mark(empty))
+        self.assertTrue(PageRecognizer._has_signed_offer_mark(signed))
+
+    def test_unsigned_offer_is_not_recognised(self) -> None:
+        detected = detect_document_from_text(
+            "Angebot Nr. 5260661\nDatum / Unterschrift\nNoch keine Auftragserteilung"
+        )
+
+        self.assertIsNone(detected)
+
+    def test_signed_offer_accepts_known_ocr_variants(self) -> None:
+        text = (
+            "Angebot Nr. 5250798\n"
+            "Ich erteile Innen den Auftrag zur Ausfuehrung der angebotenen Leistung:\n"
+            "Datum / Unterschritt: 04.08.26"
+        )
+
+        detected = detect_document_from_text(text)
+
+        self.assertTrue(is_signed_offer(text))
+        self.assertEqual("5250798", offer_number_from_text(text))
+        self.assertIsNotNone(detected)
+        self.assertEqual("AG_5250798_UNTERS.pdf", detected.filename)
+
+    def test_signed_offer_detection_is_copied_to_normal_and_reversed_pages(self) -> None:
+        signed_offer = detect_document_from_text(
+            "Angebot Nr. 5260615\n"
+            "Ich erteile Ihnen den Auftrag zur Ausfuehrung der angebotenen Leistung.\n"
+            "Datum / Unterschrift"
+        )
+        self.assertIsNotNone(signed_offer)
+
+        normal_order = complete_signed_offer_pages([None, signed_offer])
+        reversed_order = complete_signed_offer_pages([signed_offer, None])
+
+        self.assertEqual([signed_offer, signed_offer], normal_order)
+        self.assertEqual([signed_offer, signed_offer], reversed_order)
+
+    def test_signed_offer_does_not_absorb_another_document_type(self) -> None:
+        signed_offer = DetectedDocument("AG", "5260615_UNTERS")
+        receipt = DetectedDocument("EM", "6260416")
+
+        self.assertEqual(
+            [signed_offer, None, receipt],
+            complete_signed_offer_pages([signed_offer, None, receipt]),
+        )
+
     def test_aufmassblatt(self) -> None:
         detected = detect_document_from_text("AUFMASSBLATT 3250672\nKunden-Nummer 11959", ["3250672"])
         self.assertIsNotNone(detected)
@@ -523,6 +666,115 @@ class RecognitionTests(unittest.TestCase):
         )
         self.assertIsNotNone(detected)
         self.assertEqual("LS-Pauli-82079358.pdf", detected.filename)
+
+    def test_pauli_measurement_attachments_are_not_document_starts(self) -> None:
+        for text in (
+            "Pauli + Sohn GmbH\nFlamea+\nAUFMASS zu Set-Nr. 12-101\n1 / 3",
+            "Pauli + Sohn GmbH\nGLASBESTELLUNG zu Set-Nr. 12-204\n3 / 4",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(is_pauli_measurement_attachment(text))
+                self.assertFalse(has_supported_document_signal(text))
+
+        delivery_note = (
+            "Pauli + Sohn GmbH\nLieferschein\nNummer/Datum: 82079358\n"
+            "Set-Nr. 12-101"
+        )
+        self.assertFalse(is_pauli_measurement_attachment(delivery_note))
+        self.assertTrue(has_supported_document_signal(delivery_note))
+
+    def test_embedded_pauli_measurement_attachment_skips_rendering(self) -> None:
+        class TextPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return "Pauli + Sohn GmbH\nAUFMASS zu Set-Nr. 12-301R"
+
+        recognizer = PageRecognizer(Settings())
+        with patch.object(
+            recognizer,
+            "_render",
+            side_effect=AssertionError("Pauli-Anlage darf nicht gerendert werden."),
+        ):
+            self.assertIsNone(recognizer.recognise(TextPage()))
+
+    def test_scanned_pauli_measurement_attachment_skips_full_page_ocr(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=(
+                    "Pauli + Sohn GmbH",
+                    "Flamea+ AUFMASS zu Set-Nr. 12-101",
+                ),
+            ) as read_ocr,
+        ):
+            self.assertIsNone(recognizer.recognise(ScanPage()))
+
+        self.assertEqual(2, read_ocr.call_count)
+
+    def test_bohle_delivery_note(self) -> None:
+        for text, expected_number in (
+            ("Bohle AG\nLieferschein Nummer: 34484", "34484"),
+            ("www.bohle.com\nLieferschein: 35224", "35224"),
+            ("Lieferschein\nNummer: 12349\nBohle AG", "12349"),
+        ):
+            with self.subTest(expected_number=expected_number):
+                detected = detect_document_from_text(text)
+                self.assertIsNotNone(detected)
+                self.assertEqual(f"LS-Bohle-{expected_number}.pdf", detected.filename)
+
+    def test_bohle_header_requires_supplier_identity(self) -> None:
+        self.assertTrue(is_bohle_header("Bohle AG Dieselstrasse 10"))
+        self.assertTrue(is_bohle_header("info@bohle.de www.bohle.com"))
+        self.assertIsNone(detect_document_from_text("Lieferschein Nummer: 34484"))
+
+    def test_bohle_fast_area_skips_large_ocr_regions(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Bohle AG", "Lieferschein Nummer: 35224"),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("LS-Bohle-35224.pdf", detected.filename)
+        self.assertEqual(2, read_ocr.call_count)
+        self.assertEqual(
+            ("Ausschnitt", (20, 21, 460, 182)),
+            read_ocr.call_args_list[1].args[0],
+        )
 
 
 if __name__ == "__main__":

@@ -370,9 +370,9 @@ class FolderWatcher:
     def _pdf_is_complete(path: Path) -> bool:
         """Only release a scan for processing once its PDF structure is readable."""
         try:
-            import fitz
+            import pymupdf
 
-            with fitz.open(path) as document:
+            with pymupdf.open(path) as document:
                 if document.page_count < 1:
                     return False
                 document.load_page(document.page_count - 1)

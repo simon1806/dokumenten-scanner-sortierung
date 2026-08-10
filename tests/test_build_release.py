@@ -122,6 +122,14 @@ class BuildReleaseTests(unittest.TestCase):
         self.assertIn("dependency_lock_sha256 = Get-Sha256 $LockFile", self.script)
         self.assertIn("native_runtime_version_output = @($NativeRuntimeVersionOutput)", self.script)
 
+    def test_runtime_uses_current_pymupdf_module_name(self) -> None:
+        runtime_source = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in (PROJECT_ROOT / "src" / "scanner_sorter").glob("*.py")
+        )
+        self.assertIn("import pymupdf", runtime_source)
+        self.assertNotIn("import fitz", runtime_source)
+
     def test_dependency_probe_is_compatible_with_windows_powershell_51(self) -> None:
         self.assertIn("foreach ($constraint in $constraintLines)", self.script)
         self.assertIn("$actualPackageVersion = Invoke-PythonCapture", self.script)
