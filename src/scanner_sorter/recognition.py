@@ -18,6 +18,8 @@ NUMBER = r"(\d{6,12})"
 NOWAK_NUMBER = r"(\d{7,12})"
 NOWAK_CONTACT_FRAGMENT = "60686"
 NOWAK_FAST_CROP = (0.39, 0.025, 0.75, 0.205)
+BOHLE_NUMBER = r"(\d{5,12})"
+BOHLE_NUMBER_FAST_CROP = (0.02, 0.015, 0.46, 0.13)
 MONTAGE_FAST_CROP = (0.0, 0.02, 1.0, 0.24)
 INTERNAL_BARCODE_FAST_CROP = (0.03, 0.02, 0.48, 0.18)
 CODE39_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%"
@@ -40,6 +42,7 @@ SUPPORTED_DOCUMENT_SIGNALS = (
     "MONTAGEINFO",
     "HEITZER",
     "PAULI",
+    "BOHLE",
     "GLAS-NOWAK",
     "GLAS NOWAK",
     "NOWAK",
@@ -114,6 +117,12 @@ def is_nowak_header(text: str) -> bool:
     )
     has_contact = "LIEFERSCHEIN" in text and NOWAK_CONTACT_FRAGMENT in text
     return has_name or has_contact
+
+
+def is_bohle_header(text: str) -> bool:
+    """Recognise the stable Bohle supplier header."""
+    normalised = normalise(text)
+    return "BOHLE AG" in normalised or "BOHLE.COM" in normalised
 
 
 def has_supported_document_signal(text: str) -> bool:
@@ -279,6 +288,14 @@ def detect_document_from_text(
         if number:
             return DetectedDocument("LS", number, "Pauli")
 
+    if is_bohle_header(normalised) and "LIEFERSCHEIN" in normalised:
+        match = re.search(
+            rf"(?:LIEFERSCHEIN|NUMMER)\s*:?\s*{BOHLE_NUMBER}",
+            normalised,
+        )
+        if match:
+            return DetectedDocument("LS", match.group(1), "Bohle")
+
     if "EMPFANGSSCHEIN" in normalised:
         number = extract_number(
             normalised,
@@ -417,6 +434,21 @@ class PageRecognizer:
             LOGGER.info("Nowak-Schnellerkennung verwendet; lieferschein=%s", detected.number)
             return detected
 
+        # Bohle druckt das Logo im bereits gelesenen rechten Kopfbereich und
+        # die Lieferscheinnummer oben links. Nach dem Lieferantenhinweis wird
+        # deshalb nur dieses kleine Nummernfeld statt des allgemeinen Kopfs
+        # gelesen.
+        if is_bohle_header(nowak_text):
+            bohle_number_text = self._read_ocr(self._bohle_number_crop(image))
+            detected = detect_document_from_text(
+                f"{nowak_text}\n{bohle_number_text}",
+                barcodes,
+                mi_scan_date,
+            )
+            if detected and detected.supplier == "Bohle":
+                LOGGER.info("Bohle-Schnellerkennung verwendet; lieferschein=%s", detected.number)
+                return detected
+
         # Montageberichte drucken ihre Auftragsnummer im selben kleinen Bereich
         # wie Nowak oben rechts. Sie erhalten nur bei diesem Hinweis einen
         # schmalen Formularstreifen statt des deutlich größeren Kopfbereichs.
@@ -524,6 +556,20 @@ class PageRecognizer:
         """Read the fixed Auftrag/Angebot field of an assignment declaration."""
         width, height = image.size
         left, top, right, bottom = ASSIGNMENT_NUMBER_CROP
+        return image.crop(
+            (
+                round(width * left),
+                round(height * top),
+                max(1, round(width * right)),
+                max(1, round(height * bottom)),
+            )
+        )
+
+    @staticmethod
+    def _bohle_number_crop(image: object):
+        """Read Bohle's delivery-note number from the small top-left field."""
+        width, height = image.size
+        left, top, right, bottom = BOHLE_NUMBER_FAST_CROP
         return image.crop(
             (
                 round(width * left),

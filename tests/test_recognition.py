@@ -18,6 +18,7 @@ from scanner_sorter.recognition import (
     detect_document_from_text,
     has_supported_document_signal,
     is_assignment_declaration,
+    is_bohle_header,
     is_neuma_order,
     is_nowak_header,
     is_signed_offer,
@@ -664,6 +665,55 @@ class RecognitionTests(unittest.TestCase):
         )
         self.assertIsNotNone(detected)
         self.assertEqual("LS-Pauli-82079358.pdf", detected.filename)
+
+    def test_bohle_delivery_note(self) -> None:
+        for text, expected_number in (
+            ("Bohle AG\nLieferschein Nummer: 34484", "34484"),
+            ("www.bohle.com\nLieferschein: 35224", "35224"),
+            ("Lieferschein\nNummer: 12349\nBohle AG", "12349"),
+        ):
+            with self.subTest(expected_number=expected_number):
+                detected = detect_document_from_text(text)
+                self.assertIsNotNone(detected)
+                self.assertEqual(f"LS-Bohle-{expected_number}.pdf", detected.filename)
+
+    def test_bohle_header_requires_supplier_identity(self) -> None:
+        self.assertTrue(is_bohle_header("Bohle AG Dieselstrasse 10"))
+        self.assertTrue(is_bohle_header("info@bohle.de www.bohle.com"))
+        self.assertIsNone(detect_document_from_text("Lieferschein Nummer: 34484"))
+
+    def test_bohle_fast_area_skips_large_ocr_regions(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Bohle AG", "Lieferschein Nummer: 35224"),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("LS-Bohle-35224.pdf", detected.filename)
+        self.assertEqual(2, read_ocr.call_count)
+        self.assertEqual(
+            ("Ausschnitt", (20, 21, 460, 182)),
+            read_ocr.call_args_list[1].args[0],
+        )
 
 
 if __name__ == "__main__":
