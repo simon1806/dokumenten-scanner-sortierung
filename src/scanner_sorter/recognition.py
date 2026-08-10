@@ -348,7 +348,7 @@ class PageRecognizer:
             self._processing_deadline = previous_deadline
 
     def _recognise_document_with_deadline(self, source: Path) -> list[DetectedDocument | None]:
-        import fitz
+        import pymupdf
 
         source_size = source.stat().st_size
         if source_size > MAX_PDF_BYTES:
@@ -357,7 +357,7 @@ class PageRecognizer:
                 f"von {MAX_PDF_BYTES // (1024 * 1024)} MB."
             )
 
-        with fitz.open(source) as document:
+        with pymupdf.open(source) as document:
             page_count = document.page_count
         if page_count == 0:
             return []
@@ -399,9 +399,9 @@ class PageRecognizer:
         return max(1, min(OCR_TIMEOUT_SECONDS, math.ceil(remaining)))
 
     def _recognise_file_page(self, source: Path, page_index: int) -> DetectedDocument | None:
-        import fitz
+        import pymupdf
 
-        with fitz.open(source) as document:
+        with pymupdf.open(source) as document:
             return self.recognise(document.load_page(page_index), scan_date_from_source(source))
 
     def recognise(self, page: object, mi_scan_date: str | None = None) -> DetectedDocument | None:
@@ -514,7 +514,7 @@ class PageRecognizer:
                 f"PDF-Seite wuerde {pixels:,} Pixel erzeugen und ueberschreitet das Render-Limit "
                 f"von {MAX_RENDER_PIXELS:,} Pixeln."
             )
-        pixmap = page.get_pixmap(matrix=__import__("fitz").Matrix(scale, scale), alpha=False)
+        pixmap = page.get_pixmap(matrix=__import__("pymupdf").Matrix(scale, scale), alpha=False)
         from PIL import Image
 
         return Image.open(io.BytesIO(pixmap.tobytes("png")))

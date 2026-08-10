@@ -13,8 +13,8 @@ PyInstaller==6.21.0 \
     --hash=sha256:7fae06c494ce0ebfe6bd3055c0e409def884f63af2e3705d06bd431ad9237fc7
 pyinstaller-hooks-contrib==2026.6 \
     --hash=sha256:fd13b8ac126b35361175edacd41a0d97080b75dd5f4b594ecefefff969509dd3
-PyMuPDF==1.28.0 \
-    --hash=sha256:e01e90fd86abfeb37ceb921eddb951f988a11d45ff6ce6b7664f2039849068ec
+PyMuPDF==1.28.2 \
+    --hash=sha256:ebd244918798502d7b4504c90410d1711a4d7675a32584ca30f1bab419ecbffe
 pypdf==6.14.2 \
     --hash=sha256:3f07891af76dc002657e04993ab9b4de81de29f9013b9761d0b7968bff12e946
 pystray==0.19.5 \

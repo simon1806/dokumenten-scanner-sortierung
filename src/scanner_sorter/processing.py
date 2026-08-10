@@ -464,7 +464,7 @@ class DocumentProcessor:
         source: Path,
     ) -> tuple[list[DocumentGroup], int, float]:
         try:
-            import fitz
+            import pymupdf
         except ImportError as error:  # pragma: no cover - dependency check at runtime
             raise ProcessingError("PyMuPDF ist nicht installiert.") from error
 
@@ -473,7 +473,7 @@ class DocumentProcessor:
         if callable(recognise_document):
             detections = recognise_document(source)
         else:
-            with fitz.open(source) as scan:
+            with pymupdf.open(source) as scan:
                 detections = [self.recognizer.recognise(page) for page in scan]
         groups = group_page_detections(detections)
         return groups, len(detections), time.perf_counter() - recognition_started
