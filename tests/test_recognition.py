@@ -21,6 +21,7 @@ from scanner_sorter.recognition import (
     is_bohle_header,
     is_neuma_order,
     is_nowak_header,
+    is_pauli_measurement_attachment,
     is_signed_offer,
     offer_number_from_text,
     scan_date_from_source,
@@ -665,6 +666,66 @@ class RecognitionTests(unittest.TestCase):
         )
         self.assertIsNotNone(detected)
         self.assertEqual("LS-Pauli-82079358.pdf", detected.filename)
+
+    def test_pauli_measurement_attachments_are_not_document_starts(self) -> None:
+        for text in (
+            "Pauli + Sohn GmbH\nFlamea+\nAUFMASS zu Set-Nr. 12-101\n1 / 3",
+            "Pauli + Sohn GmbH\nGLASBESTELLUNG zu Set-Nr. 12-204\n3 / 4",
+        ):
+            with self.subTest(text=text):
+                self.assertTrue(is_pauli_measurement_attachment(text))
+                self.assertFalse(has_supported_document_signal(text))
+
+        delivery_note = (
+            "Pauli + Sohn GmbH\nLieferschein\nNummer/Datum: 82079358\n"
+            "Set-Nr. 12-101"
+        )
+        self.assertFalse(is_pauli_measurement_attachment(delivery_note))
+        self.assertTrue(has_supported_document_signal(delivery_note))
+
+    def test_embedded_pauli_measurement_attachment_skips_rendering(self) -> None:
+        class TextPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return "Pauli + Sohn GmbH\nAUFMASS zu Set-Nr. 12-301R"
+
+        recognizer = PageRecognizer(Settings())
+        with patch.object(
+            recognizer,
+            "_render",
+            side_effect=AssertionError("Pauli-Anlage darf nicht gerendert werden."),
+        ):
+            self.assertIsNone(recognizer.recognise(TextPage()))
+
+    def test_scanned_pauli_measurement_attachment_skips_full_page_ocr(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=(
+                    "Pauli + Sohn GmbH",
+                    "Flamea+ AUFMASS zu Set-Nr. 12-101",
+                ),
+            ) as read_ocr,
+        ):
+            self.assertIsNone(recognizer.recognise(ScanPage()))
+
+        self.assertEqual(2, read_ocr.call_count)
 
     def test_bohle_delivery_note(self) -> None:
         for text, expected_number in (

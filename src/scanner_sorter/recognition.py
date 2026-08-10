@@ -41,7 +41,6 @@ SUPPORTED_DOCUMENT_SIGNALS = (
     "MONTAGEBERICHT",
     "MONTAGEINFO",
     "HEITZER",
-    "PAULI",
     "BOHLE",
     "GLAS-NOWAK",
     "GLAS NOWAK",
@@ -125,12 +124,39 @@ def is_bohle_header(text: str) -> bool:
     return "BOHLE AG" in normalised or "BOHLE.COM" in normalised
 
 
+def is_pauli_measurement_attachment(text: str) -> bool:
+    """Recognise Pauli measurement/order sheets that belong to a preceding AM.
+
+    These supplier pages do not carry a Glas-Hagen document number. Returning
+    no document start keeps them attached to the preceding Aufmassschein while
+    avoiding an unnecessary full-page OCR run. A real Pauli delivery note is
+    deliberately excluded.
+    """
+    normalised = normalise(text)
+    has_supplier = "PAULI" in normalised and (
+        "SOHN" in normalised or "FLAMEA" in normalised
+    )
+    has_set_number = bool(re.search(r"\bSET\s*[- ]?\s*NR\.?", normalised))
+    has_sheet_heading = "AUFMASS" in normalised or "GLASBESTELLUNG" in normalised
+    return (
+        has_supplier
+        and has_set_number
+        and has_sheet_heading
+        and "LIEFERSCHEIN" not in normalised
+    )
+
+
 def has_supported_document_signal(text: str) -> bool:
     """Return whether header OCR warrants the expensive full-page OCR fallback."""
     normalised = normalise(text)
     return (
         is_assignment_declaration(normalised)
         or is_montage_report(normalised)
+        or (
+            "PAULI" in normalised
+            and "SOHN" in normalised
+            and "LIEFERSCHEIN" in normalised
+        )
         or any(signal in normalised for signal in SUPPORTED_DOCUMENT_SIGNALS)
     )
 
@@ -416,6 +442,11 @@ class PageRecognizer:
             detected = detect_document_from_text(embedded_text, mi_scan_date=mi_scan_date)
             if detected and detected.document_type != "AG":
                 return detected
+            if is_pauli_measurement_attachment(embedded_text):
+                LOGGER.info(
+                    "Pauli-Aufmassanlage erkannt; Bildrendering und Ganzseiten-OCR uebersprungen."
+                )
+                return None
 
         image = self._render(page)
         barcodes = self._read_barcodes(image)
@@ -491,6 +522,12 @@ class PageRecognizer:
                 )
                 return detected
             LOGGER.info("Angebot ohne erkennbare Auftragsbestaetigung bleibt unberuecksichtigt.")
+            return None
+
+        if is_pauli_measurement_attachment(
+            f"{embedded_text}\n{nowak_text}\n{header_text}"
+        ):
+            LOGGER.info("Pauli-Aufmassanlage erkannt; Ganzseiten-OCR uebersprungen.")
             return None
 
         if not has_supported_document_signal(header_text):
