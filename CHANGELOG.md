@@ -5,6 +5,7 @@
 - Unterschriebene Glas-Hagen-Angebote werden anhand der Angebotsnummer und des Bestätigungsbereichs als `AG_<Angebotsnummer>_UNTERS.pdf` abgelegt. Alle Angebotsseiten bleiben auch bei umgekehrter Scanreihenfolge in einer Datei zusammen.
 - Lieferscheine von Bohle werden über zwei kleine Kopfbereiche erkannt und als `LS-Bohle-<Lieferscheinnummer>.pdf` abgelegt.
 - PyMuPDF und die zugrunde liegende MuPDF-Laufzeit wurden auf 1.28.2 aktualisiert. Die Anwendung verwendet nun den aktuellen Modulnamen `pymupdf` statt des abgekündigten Legacy-Imports `fitz`.
+- pypdf wurde auf 6.15.0 aktualisiert. Die neue Version begrenzt problematische Schriftinformationen beim Einlesen und behebt weitere PDF-Decoderfehler.
 
 ## 0.2.8 – 2026-07-30
 
