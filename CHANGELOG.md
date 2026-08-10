@@ -1,5 +1,9 @@
 # Änderungsprotokoll
 
+## Unveröffentlicht
+
+- Unterschriebene Glas-Hagen-Angebote werden anhand der Angebotsnummer und des Bestätigungsbereichs als `AG_<Angebotsnummer>_UNTERS.pdf` abgelegt. Alle Angebotsseiten bleiben auch bei umgekehrter Scanreihenfolge in einer Datei zusammen.
+
 ## 0.2.8 – 2026-07-30
 
 - Eigene Empfangsscheine werden auch bei numerischen Code-39-Prüfzeichen korrekt erkannt. Der verifizierte Mod-43-Prüfwert wird nicht mehr fälschlich als Teil der Auftragsnummer übernommen; ein gezielter Barcode-Ausschnitt im Kopfbereich verbessert schwache Scans ohne langsame Ganzseitenvergrößerung.

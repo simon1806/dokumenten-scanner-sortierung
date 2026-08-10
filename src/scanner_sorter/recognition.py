@@ -24,6 +24,12 @@ CODE39_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%"
 ASSIGNMENT_DECLARATION_SIGNAL = "ABTRETUNGSERKLARUNG"
 ASSIGNMENT_NUMBER_CROP = (0.08, 0.43, 0.78, 0.67)
 ASSIGNMENT_NUMBER = r"((?:32|52)\d{5})"
+SIGNED_OFFER_CONFIRMATION_CROP = (0.02, 0.42, 0.98, 0.92)
+SIGNED_OFFER_LINE_SEARCH = (0.22, 0.74, 0.78, 0.895)
+SIGNED_OFFER_INK_X_RANGE = (0.26, 0.78)
+SIGNED_OFFER_INK_ABOVE_LINE = (0.065, 0.004)
+SIGNED_OFFER_MIN_LINE_DARK_RATIO = 0.18
+SIGNED_OFFER_MIN_INK_RATIO = 0.003
 SCANNER_TIMESTAMP = re.compile(r"(?<!\d)(\d{2})(\d{2})(\d{2})\d{4,6}(?!\d)")
 NEUMA_ORDER = r"(?:I|1|\|)\s*[-–—]\s*(20\d{2})\s*[-–—]\s*(\d{6})"
 SUPPORTED_DOCUMENT_SIGNALS = (
@@ -169,6 +175,54 @@ def is_neuma_order(text: str) -> bool:
     return "NEUMA" in normalised and bool(re.search(rf"\bAUFTRAG\s+{NEUMA_ORDER}\b", normalised))
 
 
+def offer_number_from_text(text: str) -> str | None:
+    """Read the number printed in a Glas Hagen offer header."""
+    match = re.search(
+        rf"\bANGEBOT\s*(?:[-–—]\s*)?NR\.?\s*:?[ ]*{NUMBER}",
+        normalise(text),
+    )
+    return match.group(1) if match else None
+
+
+def is_signed_offer(text: str) -> bool:
+    """Recognise the acceptance block of a customer-signed Glas Hagen offer."""
+    normalised = normalise(text)
+    has_acceptance = bool(
+        re.search(
+            r"\bICH\s+ERTEILE\s+I(?:HN|NN)EN\s+DEN\s+AUFTRAG\s+ZUR\s+"
+            r"AUSF(?:U|UE)HRUNG\s+DER\s+ANGEBOTENEN\s+LEISTUNG\b",
+            normalised,
+        )
+    )
+    has_signature_field = bool(
+        re.search(r"\bDATUM\s*/\s*UNTERSCHR[A-Z]{2,8}\b", normalised)
+    )
+    return has_acceptance and has_signature_field
+
+
+def complete_signed_offer_pages(
+    detections: list[DetectedDocument | None],
+) -> list[DetectedDocument | None]:
+    """Attach all pages when one page identifies a single signed offer.
+
+    Customers sometimes return the offer with its pages scanned in reverse
+    order. Only the acceptance page identifies the document type, so the
+    remaining otherwise-unrecognised pages inherit that detection when no
+    other document type is present in the same scan.
+    """
+    recognised = [detection for detection in detections if detection is not None]
+    signed_offers = [
+        detection for detection in recognised if detection.document_type == "AG"
+    ]
+    if not signed_offers:
+        return detections
+
+    signed_offer = signed_offers[0]
+    if any(detection.key != signed_offer.key for detection in recognised):
+        return detections
+    return [detection or signed_offer for detection in detections]
+
+
 def detect_document_from_text(
     text: str,
     barcodes: Iterable[str] = (),
@@ -177,6 +231,10 @@ def detect_document_from_text(
     """Recognise the supported document headers from OCR text and barcode values."""
     normalised = normalise(text)
     barcode_values = tuple(barcodes)
+
+    offer_number = offer_number_from_text(normalised)
+    if offer_number and is_signed_offer(normalised):
+        return DetectedDocument("AG", f"{offer_number}_UNTERS")
 
     if is_assignment_declaration(normalised):
         match = re.search(
@@ -304,7 +362,8 @@ class PageRecognizer:
             # Read results in page order. If one page fails, queued pages are
             # cancelled instead of allowing a long PDF to continue spawning OCR
             # processes after the document has already been rejected.
-            return [future.result() for future in futures]
+            detections = [future.result() for future in futures]
+            return complete_signed_offer_pages(detections)
         except Exception:
             for future in futures:
                 future.cancel()
@@ -338,13 +397,13 @@ class PageRecognizer:
 
         if embedded_text:
             detected = detect_document_from_text(embedded_text, mi_scan_date=mi_scan_date)
-            if detected:
+            if detected and detected.document_type != "AG":
                 return detected
 
         image = self._render(page)
         barcodes = self._read_barcodes(image)
         detected = detect_document_from_text(embedded_text, barcodes, mi_scan_date)
-        if detected:
+        if detected and detected.document_type != "AG":
             return detected
 
         # Nowak druckt Lieferant, Belegart und Lieferscheinnummer stets in
@@ -379,6 +438,28 @@ class PageRecognizer:
             if detected:
                 LOGGER.info("Abtretungserklaerung-Schnellerkennung verwendet; auftrag=%s", detected.number)
                 return detected
+
+        if offer_number_from_text(header_text):
+            confirmation_text = self._read_ocr(self._signed_offer_confirmation_crop(image))
+            detected = detect_document_from_text(
+                f"{header_text}\n{confirmation_text}",
+                barcodes,
+                mi_scan_date,
+            )
+            if detected and detected.document_type == "AG":
+                if not self._has_signed_offer_mark(image):
+                    LOGGER.info(
+                        "Angebot ohne handschriftliche Eintragung im Unterschriftsbereich "
+                        "bleibt unberuecksichtigt."
+                    )
+                    return None
+                LOGGER.info(
+                    "Unterschriebenes Angebot erkannt; angebot=%s",
+                    detected.number.removesuffix("_UNTERS"),
+                )
+                return detected
+            LOGGER.info("Angebot ohne erkennbare Auftragsbestaetigung bleibt unberuecksichtigt.")
+            return None
 
         if not has_supported_document_signal(header_text):
             LOGGER.info(
@@ -451,6 +532,56 @@ class PageRecognizer:
                 max(1, round(height * bottom)),
             )
         )
+
+    @staticmethod
+    def _signed_offer_confirmation_crop(image: object):
+        """Read the lower acceptance and signature block of a Glas Hagen offer."""
+        width, height = image.size
+        left, top, right, bottom = SIGNED_OFFER_CONFIRMATION_CROP
+        return image.crop(
+            (
+                round(width * left),
+                round(height * top),
+                max(1, round(width * right)),
+                max(1, round(height * bottom)),
+            )
+        )
+
+    @staticmethod
+    def _has_signed_offer_mark(image: object) -> bool:
+        """Return whether handwriting is present above the printed signature line."""
+        grayscale = image.convert("L")
+        width, height = grayscale.size
+        left, top, right, bottom = SIGNED_OFFER_LINE_SEARCH
+        x_start = round(width * left)
+        x_end = max(x_start + 1, round(width * right))
+        y_start = round(height * top)
+        y_end = max(y_start + 1, round(height * bottom))
+
+        darkest_row_count = 0
+        signature_line_y = y_start
+        for y_position in range(y_start, y_end):
+            histogram = grayscale.crop((x_start, y_position, x_end, y_position + 1)).histogram()
+            dark_pixels = sum(histogram[:170])
+            if dark_pixels > darkest_row_count:
+                darkest_row_count = dark_pixels
+                signature_line_y = y_position
+
+        line_width = x_end - x_start
+        if darkest_row_count < line_width * SIGNED_OFFER_MIN_LINE_DARK_RATIO:
+            return False
+
+        ink_left, ink_right = SIGNED_OFFER_INK_X_RANGE
+        above_start, above_end = SIGNED_OFFER_INK_ABOVE_LINE
+        ink_box = (
+            round(width * ink_left),
+            max(0, signature_line_y - round(height * above_start)),
+            max(1, round(width * ink_right)),
+            max(1, signature_line_y - round(height * above_end)),
+        )
+        ink_area = grayscale.crop(ink_box)
+        dark_ink = sum(ink_area.histogram()[:170])
+        return dark_ink >= ink_area.width * ink_area.height * SIGNED_OFFER_MIN_INK_RATIO
 
     @staticmethod
     def _read_barcodes(image: object) -> tuple[str, ...]:
