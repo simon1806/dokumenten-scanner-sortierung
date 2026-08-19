@@ -159,6 +159,10 @@ class ProcessorIntegrationTests(unittest.TestCase):
             self.assertEqual(1, len(list(archive.rglob("unklar.pdf"))))
             self.assertEqual(2, len(result.created_files))
             summary = next(message for message in captured.output if "status=nicht_erkannt" in message)
+            self.assertIn("version=0.3.0", summary)
+            self.assertIn("grundcode=dokumenttyp_nicht_erkannt", summary)
+            self.assertIn("stufe=seitenerkennung", summary)
+            self.assertIn("seite=1", summary)
             self.assertIn("erkennung_s=", summary)
             self.assertIn("ausgabe_s=", summary)
 

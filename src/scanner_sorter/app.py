@@ -27,6 +27,7 @@ from .config import (
     load_settings,
     save_settings,
 )
+from .diagnostics import ALLOWED_REPORT_DAYS, DEFAULT_REPORT_DAYS, export_diagnostic_report
 from .models import ProcessResult
 from .processing import DocumentProcessor, ProcessingError
 from .version_info import VersionEntry, collect_version_information
@@ -643,6 +644,7 @@ class SettingsWindow:
         self._external_monitoring_active = False
         self._server_task_available = False
         self._worker_messages: queue.Queue[str] = queue.Queue()
+        self._diagnostic_results: queue.Queue[tuple[str, object]] = queue.Queue()
         self._worker_poll_after_id: str | None = None
         self._activity_log_poll_after_id: str | None = None
         self.tray_icon: object | None = None
@@ -1185,6 +1187,15 @@ class SettingsWindow:
             icon="folder-open",
         )
         open_log_button.pack(side="right")
+        self.diagnostic_button = self._button(
+            log_header,
+            "Diagnosebericht erstellen",
+            self.create_diagnostic_report,
+            "Wertet die lokalen Tagesprotokolle aus und erstellt ein ZIP mit HTML- und JSON-Bericht.",
+            "Quiet.TButton",
+            icon="device-floppy",
+        )
+        self.diagnostic_button.pack(side="right", padx=(0, 8))
         log_body.columnconfigure(0, weight=1)
         log_body.rowconfigure(0, weight=1)
         self.activity_log = self.tk.Text(
@@ -1210,6 +1221,7 @@ class SettingsWindow:
 
         self._messagebox = messagebox
         self._simpledialog = simpledialog
+        self._filedialog = filedialog
 
     def _choose_folder(self, field: str, filedialog: object) -> None:
         directory = filedialog.askdirectory(initialdir=self.fields[field].get() or None)
@@ -1284,6 +1296,133 @@ class SettingsWindow:
             os.startfile(str(self.log_path.parent))
         except Exception as error:
             self._messagebox.showerror("Protokollordner", f"Ordner konnte nicht geöffnet werden:\n{error}")
+
+    def _show_diagnostic_export_dialog(self) -> tuple[int, bool] | None:
+        """Fragt Zeitraum und die bewusste Freigabe von Dateinamen ab."""
+
+        window = self.tk.Toplevel(self.root)
+        window.title("Diagnosebericht erstellen")
+        window.transient(self.root)
+        window.resizable(False, False)
+        window.grab_set()
+
+        body = self.tk.Frame(window, background="#FFFFFF", padx=22, pady=18)
+        body.pack(fill="both", expand=True)
+        self.tk.Label(
+            body,
+            text="Berichtszeitraum",
+            background="#FFFFFF",
+            foreground="#17354B",
+            font=("Segoe UI Semibold", 11),
+        ).pack(anchor="w")
+        self.tk.Label(
+            body,
+            text="Ausgewertet werden ausschließlich die lokalen Tagesprotokolle.",
+            background="#FFFFFF",
+            foreground="#5C6B76",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", pady=(3, 10))
+
+        days_var = self.tk.IntVar(value=DEFAULT_REPORT_DAYS)
+        for days in ALLOWED_REPORT_DAYS:
+            self.ttk.Radiobutton(
+                body,
+                text=f"Letzte {days} Tage",
+                value=days,
+                variable=days_var,
+            ).pack(anchor="w", pady=2)
+
+        include_filenames_var = self.tk.BooleanVar(value=False)
+        self.ttk.Checkbutton(
+            body,
+            text="Dateinamen einschließen",
+            variable=include_filenames_var,
+        ).pack(anchor="w", pady=(14, 2))
+        self.tk.Label(
+            body,
+            text="Standardmäßig werden keine Dateinamen exportiert. Vollständige Pfade werden nie aufgenommen.",
+            background="#FFFFFF",
+            foreground="#5C6B76",
+            justify="left",
+            wraplength=430,
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", pady=(0, 14))
+
+        result: list[tuple[int, bool]] = []
+
+        def confirm() -> None:
+            result.append((days_var.get(), bool(include_filenames_var.get())))
+            window.destroy()
+
+        buttons = self.tk.Frame(body, background="#FFFFFF")
+        buttons.pack(fill="x")
+        self.ttk.Button(buttons, text="Abbrechen", command=window.destroy).pack(side="right")
+        self.ttk.Button(buttons, text="ZIP erstellen", command=confirm).pack(
+            side="right", padx=(0, 8)
+        )
+        window.protocol("WM_DELETE_WINDOW", window.destroy)
+        window.bind("<Escape>", lambda _event: window.destroy())
+        window.bind("<Return>", lambda _event: confirm())
+        window.update_idletasks()
+        x = self.root.winfo_rootx() + max(0, (self.root.winfo_width() - window.winfo_width()) // 2)
+        y = self.root.winfo_rooty() + max(0, (self.root.winfo_height() - window.winfo_height()) // 2)
+        window.geometry(f"+{x}+{y}")
+        window.wait_window()
+        return result[0] if result else None
+
+    def create_diagnostic_report(self) -> None:
+        """Startet den lokalen Diagnoseexport ohne die Überwachung anzuhalten."""
+
+        options = self._show_diagnostic_export_dialog()
+        if options is None:
+            return
+        days, include_filenames = options
+        destination = self._filedialog.asksaveasfilename(
+            title="Diagnosebericht speichern",
+            defaultextension=".zip",
+            filetypes=(("ZIP-Archiv", "*.zip"), ("Alle Dateien", "*.*")),
+            initialfile=f"diagnosebericht-{date.today().isoformat()}.zip",
+        )
+        if not destination:
+            return
+
+        self.diagnostic_button.configure(state="disabled")
+        message = f"Diagnosebericht für die letzten {days} Tage wird erstellt …"
+        self.status.set(message)
+        self._append_activity(message)
+        log_directory = log_file_path(self._activity_log_settings_path).parent
+
+        def export_in_background() -> None:
+            try:
+                result = export_diagnostic_report(
+                    log_directory,
+                    Path(destination),
+                    days=days,
+                    include_filenames=include_filenames,
+                )
+            except Exception as error:
+                self._diagnostic_results.put(("error", error))
+            else:
+                self._diagnostic_results.put(("success", result))
+
+        threading.Thread(
+            target=export_in_background,
+            name="diagnostic-export",
+            daemon=True,
+        ).start()
+
+    def _handle_diagnostic_result(self, kind: str, payload: object) -> None:
+        self.diagnostic_button.configure(state="normal")
+        if kind == "success":
+            message = f"Diagnosebericht wurde erstellt: {payload}"
+            self.status.set(message)
+            self._append_activity(message)
+            self._messagebox.showinfo("Diagnosebericht erstellt", message)
+            return
+        message = f"Diagnosebericht konnte nicht erstellt werden: {payload}"
+        self.status.set(message)
+        self._append_activity(message)
+        self._messagebox.showerror("Diagnosebericht fehlgeschlagen", message)
 
     def clear_archive_manually(self) -> None:
         """Reset only application-owned archive data after explicit operator consent."""
@@ -1878,6 +2017,14 @@ class SettingsWindow:
                 break
             self.status.set(message)
             self._append_activity(message)
+        diagnostic_results = getattr(self, "_diagnostic_results", None)
+        if diagnostic_results is not None:
+            while True:
+                try:
+                    kind, payload = diagnostic_results.get_nowait()
+                except queue.Empty:
+                    break
+                self._handle_diagnostic_result(kind, payload)
         self._schedule_worker_message_poll()
 
     def _cancel_worker_message_poll(self) -> None:
