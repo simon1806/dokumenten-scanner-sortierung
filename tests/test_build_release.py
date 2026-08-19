@@ -139,6 +139,9 @@ class BuildReleaseTests(unittest.TestCase):
     def test_windows_ci_uses_the_build_scripts_expected_virtual_environment(self) -> None:
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
 
+        self.assertIn("push:\n    branches:\n      - main", workflow)
+        self.assertIn("pull_request:\n    branches:\n      - main", workflow)
+        self.assertIn("workflow_dispatch:", workflow)
         self.assertEqual(workflow.count("python -m venv .venv"), 2)
         self.assertEqual(workflow.count('python-version: "3.12"'), 2)
         self.assertIn(r".\.venv\Scripts\python.exe -m unittest", workflow)
