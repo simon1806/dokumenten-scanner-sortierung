@@ -1,6 +1,11 @@
 # Änderungsprotokoll
 
-## Unveröffentlicht
+## 0.3.0 – 2026-08-19
+
+- Abschlussmeldungen enthalten nun die Anwendungsversion. Nicht erkannte Dokumente erhalten zusätzlich einen stabilen Grundcode, die Erkennungsstufe und gegebenenfalls die betroffene Seite; Freitextgründe werden einzeilig und delimiter-sicher protokolliert.
+- Im Aktivitätsprotokoll kann ein lokaler Diagnosebericht für die letzten 7, 30 oder 90 Tage erstellt werden. Das atomar veröffentlichte ZIP enthält eine skriptfreie HTML-Zusammenfassung und strukturierte JSON-Daten, aber keine Rohlogs, PDFs oder OCR-Volltexte.
+- Diagnoseberichte fassen Verarbeitungsergebnisse, Erkennungsquote, Laufzeiten, Dateigrößen, Warteschlangenstände, Ordnerfehler, Anwendungsstarts, Versionen, Dokumenttypen und Grundcodes zusammen. Ältere Einträge ohne Grundcode werden als `legacy_nicht_spezifiziert` ausgewiesen.
+- Dateinamen sind im Diagnoseexport standardmäßig deaktiviert und müssen bewusst freigegeben werden; vollständige Pfade werden nie exportiert. Bei aktivem SYSTEM-Betrieb wird das zentrale Protokoll ausgewertet, ohne die Überwachung anzuhalten.
 
 ## 0.2.9 – 2026-08-10
 

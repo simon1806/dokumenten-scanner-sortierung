@@ -15,6 +15,7 @@ from typing import Any, Callable, Iterable
 
 from pypdf import PdfReader, PdfWriter
 
+from . import __version__
 from .config import Settings
 from .models import DetectedDocument, DocumentGroup, ProcessResult
 from .recognition import PageRecognizer
@@ -32,6 +33,23 @@ _JOB_SCHEMA_VERSION = 2
 
 class ProcessingError(RuntimeError):
     pass
+
+
+class RecognitionGroupingError(ProcessingError):
+    """A permanent document-assignment failure with structured log metadata."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str,
+        stage: str = "seitenerkennung",
+        page_number: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.stage = stage
+        self.page_number = page_number
 
 
 class PendingJobError(ProcessingError):
@@ -55,7 +73,11 @@ def group_page_detections(detections: Iterable[DetectedDocument | None]) -> list
     for page_index, detection in enumerate(detections):
         if detection is None:
             if current is None:
-                raise ProcessingError(f"Seite {page_index + 1} konnte keinem Dokument zugeordnet werden.")
+                raise RecognitionGroupingError(
+                    f"Seite {page_index + 1} konnte keinem Dokument zugeordnet werden.",
+                    reason_code="dokumenttyp_nicht_erkannt",
+                    page_number=page_index + 1,
+                )
             current.page_indexes.append(page_index)
             continue
 
@@ -70,7 +92,11 @@ def group_page_detections(detections: Iterable[DetectedDocument | None]) -> list
         groups.append(current)
 
     if not groups:
-        raise ProcessingError("Es wurde kein unterstützter Dokumenttyp erkannt.")
+        raise RecognitionGroupingError(
+            "Das PDF enthält keine auswertbare Seite.",
+            reason_code="pdf_ohne_auswertbare_seite",
+            stage="pdf_pruefung",
+        )
     return groups
 
 
@@ -291,6 +317,10 @@ class DocumentProcessor:
         page_count = int(job.get("page_count", 0))
         document_types = tuple(str(value) for value in job.get("document_types", []))
         reason = str(job.get("reason", ""))
+        reason_code = self._safe_log_field(job.get("reason_code", "nicht_spezifiziert"))
+        recognition_stage = self._safe_log_field(job.get("recognition_stage", "unbekannt"))
+        page_number = self._safe_log_field(job.get("page_number") or "keine")
+        log_reason = self._safe_log_field(reason)
 
         self._remove_job_folder(job_file.parent)
         if outcome == "not_recognized":
@@ -299,10 +329,15 @@ class DocumentProcessor:
                 f"Prüfkopie: {created[-1].name} ({reason}); Dauer: {total_seconds:.2f} s."
             )
             LOGGER.warning(
-                "Vorgang abgeschlossen; id=%s; status=nicht_erkannt; datei=%s; groesse_bytes=%s; "
+                "Vorgang abgeschlossen; id=%s; status=nicht_erkannt; version=%s; "
+                "grundcode=%s; stufe=%s; seite=%s; datei=%s; groesse_bytes=%s; "
                 "archiv_s=%.3f; erkennung_s=%.3f; ausgabe_s=%.3f; gesamt_s=%.3f; "
                 "ziel=%s; pruefkopie=%s; grund=%s",
                 operation_id,
+                __version__,
+                reason_code,
+                recognition_stage,
+                page_number,
                 source_name,
                 source_size,
                 archive_seconds,
@@ -311,7 +346,7 @@ class DocumentProcessor:
                 total_seconds,
                 created[0],
                 created[-1],
-                reason,
+                log_reason,
             )
             return ProcessResult(source_name, False, message, tuple(str(path) for path in created))
 
@@ -320,10 +355,12 @@ class DocumentProcessor:
             f"Dauer: {total_seconds:.2f} s"
         )
         LOGGER.info(
-            "Vorgang abgeschlossen; id=%s; status=erfolgreich; datei=%s; groesse_bytes=%s; "
+            "Vorgang abgeschlossen; id=%s; status=erfolgreich; version=%s; "
+            "datei=%s; groesse_bytes=%s; "
             "seiten=%s; dokumente=%s; typen=%s; archiv_s=%.3f; erkennung_s=%.3f; "
             "ausgabe_s=%.3f; gesamt_s=%.3f; ausgaben=%s",
             operation_id,
+            __version__,
             source_name,
             source_size,
             page_count,
@@ -348,12 +385,18 @@ class DocumentProcessor:
         try:
             groups, page_count, recognition_seconds = self._recognise_groups(archive_path)
         except Exception as recognition_error:
+            reason_code, recognition_stage, page_number = self._recognition_failure_details(
+                recognition_error
+            )
             return self._prepare_original_forwarding(
                 job_file,
                 job,
                 staging,
                 archive_path,
                 reason=str(recognition_error),
+                reason_code=reason_code,
+                recognition_stage=recognition_stage,
+                page_number=page_number,
                 recognition_seconds=time.perf_counter() - recognition_started,
             )
 
@@ -385,6 +428,8 @@ class DocumentProcessor:
                 staging,
                 archive_path,
                 reason=f"Erkanntes Dokument konnte nicht sicher getrennt werden ({error})",
+                reason_code="ausgabevorbereitung_fehlgeschlagen",
+                recognition_stage="ausgabevorbereitung",
                 page_count=page_count,
                 recognition_seconds=recognition_seconds,
                 output_seconds=time.perf_counter() - output_started,
@@ -395,6 +440,9 @@ class DocumentProcessor:
                 "status": "ready",
                 "outcome": "recognized",
                 "reason": "",
+                "reason_code": "",
+                "recognition_stage": "",
+                "page_number": None,
                 "page_count": page_count,
                 "document_types": [
                     f"{group.detected.document_type}:{len(group.page_indexes)}S" for group in groups
@@ -418,6 +466,9 @@ class DocumentProcessor:
         archive_path: Path,
         *,
         reason: str,
+        reason_code: str,
+        recognition_stage: str,
+        page_number: int | None = None,
         page_count: int = 0,
         recognition_seconds: float = 0.0,
         output_seconds: float = 0.0,
@@ -442,6 +493,9 @@ class DocumentProcessor:
                     "status": "ready",
                     "outcome": "not_recognized",
                     "reason": reason,
+                    "reason_code": reason_code,
+                    "recognition_stage": recognition_stage,
+                    "page_number": page_number,
                     "page_count": page_count,
                     "document_types": [],
                     "recognition_seconds": recognition_seconds,
@@ -477,6 +531,31 @@ class DocumentProcessor:
                 detections = [self.recognizer.recognise(page) for page in scan]
         groups = group_page_detections(detections)
         return groups, len(detections), time.perf_counter() - recognition_started
+
+    @staticmethod
+    def _recognition_failure_details(error: Exception) -> tuple[str, str, int | None]:
+        """Map permanent recognition failures to stable, non-sensitive log fields."""
+        if isinstance(error, RecognitionGroupingError):
+            return error.reason_code, error.stage, error.page_number
+
+        message = str(error).casefold()
+        if "zeitlimit" in message or "timeout" in message:
+            return "ocr_zeitlimit", "ocr", None
+        if "tesseract" in message or "pytesseract" in message:
+            return "ocr_nicht_verfuegbar", "ocr", None
+        if (
+            "groesser als das erlaubte limit" in message
+            or "ueberschreitet das erlaubte limit" in message
+            or "render-limit" in message
+        ):
+            return "pdf_schutzgrenze_ueberschritten", "pdf_pruefung", None
+        return "erkennung_fehlgeschlagen", "seitenerkennung", None
+
+    @staticmethod
+    def _safe_log_field(value: object) -> str:
+        """Keep structured log values on one delimiter-safe line."""
+        sanitised = re.sub(r"[\r\n;]+", " ", str(value))
+        return re.sub(r"\s+", " ", sanitised).strip() or "keine"
 
     def _publish_job(self, job_file: Path, job: dict[str, Any]) -> list[Path]:
         self._validate_job(job_file, job, require_plan=True)
@@ -589,6 +668,9 @@ class DocumentProcessor:
             "status": "archived",
             "outcome": "",
             "reason": "",
+            "reason_code": "",
+            "recognition_stage": "",
+            "page_number": None,
             "page_count": 0,
             "document_types": [],
             "recognition_seconds": 0.0,

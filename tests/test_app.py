@@ -484,6 +484,53 @@ class AppTests(unittest.TestCase):
         window.root.after.assert_called_once_with(100, window._poll_worker_messages)
         self.assertEqual("poll-id", window._worker_poll_after_id)
 
+    def test_diagnostic_export_uses_selected_period_privacy_and_central_logs(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window._show_diagnostic_export_dialog = Mock(return_value=(90, True))
+        window._filedialog = Mock()
+        window._filedialog.asksaveasfilename.return_value = r"C:\Berichte\diagnose.zip"
+        window._activity_log_settings_path = Path(r"C:\ProgramData\Scanner\settings.json")
+        window.diagnostic_button = Mock()
+        window.status = Mock()
+        window._append_activity = Mock()
+        window._diagnostic_results = queue.Queue()
+        thread = Mock()
+
+        with patch("scanner_sorter.app.export_diagnostic_report") as export, patch(
+            "scanner_sorter.app.threading.Thread", return_value=thread
+        ) as thread_factory:
+            export.return_value = Path(r"C:\Berichte\diagnose.zip")
+            window.create_diagnostic_report()
+            thread_factory.call_args.kwargs["target"]()
+
+        export.assert_called_once_with(
+            Path(r"C:\ProgramData\Scanner\logs"),
+            Path(r"C:\Berichte\diagnose.zip"),
+            days=90,
+            include_filenames=True,
+        )
+        self.assertEqual(
+            ("success", Path(r"C:\Berichte\diagnose.zip")),
+            window._diagnostic_results.get_nowait(),
+        )
+        window.diagnostic_button.configure.assert_called_once_with(state="disabled")
+        thread.start.assert_called_once_with()
+
+    def test_diagnostic_success_and_error_messages_restore_button(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window.diagnostic_button = Mock()
+        window.status = Mock()
+        window._append_activity = Mock()
+        window._messagebox = Mock()
+
+        window._handle_diagnostic_result("success", Path("bericht.zip"))
+        window._handle_diagnostic_result("error", OSError("Datenträger voll"))
+
+        self.assertEqual(2, window.diagnostic_button.configure.call_count)
+        window._messagebox.showinfo.assert_called_once()
+        window._messagebox.showerror.assert_called_once()
+        self.assertIn("Datenträger voll", window._messagebox.showerror.call_args.args[1])
+
     def test_autostart_starts_monitoring_and_hides_only_when_tray_is_available(self) -> None:
         window = object.__new__(SettingsWindow)
         window.start = Mock()
