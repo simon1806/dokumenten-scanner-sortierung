@@ -1,5 +1,9 @@
 # Änderungsprotokoll
 
+## 0.3.2 – 2026-08-27
+
+- Die PDF-, Barcode-, Paketierungs- und Qualitätswerkzeuge wurden auf pypdf 6.16.2, zxing-cpp 3.1.1, PyInstaller 6.22.2, pyinstaller-hooks-contrib 2026.7, setuptools 84.0.0, packaging 26.3 und ruff 0.16.4 aktualisiert. Die QR-Code-Erkennung profitiert dabei von den Korrekturen in zxing-cpp 3.1.1; der Release-Build verwendet die zugehörigen geprüften Windows-x64-Wheels.
+
 ## 0.3.1 – 2026-08-27
 
 - Zentrale Betriebs-, Verarbeitungs- und Ordnerereignisse verwenden ein stabiles Ereignisschema mit Schema-, Ereignis- und Sitzungskennung. Dynamische Werte bleiben einzeilig und können keine zusätzlichen Felder einschleusen.

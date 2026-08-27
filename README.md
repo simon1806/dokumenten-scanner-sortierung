@@ -145,11 +145,11 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Version 0.3.1 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2 und pypdf 6.15.0. Sie überarbeitet die strukturierte Logerzeugung und den vollständig lokalen Diagnosebericht, ohne die Dokumenterkennung zu verändern. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak- und Bohle-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
+Version 0.3.2 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, pypdf 6.16.2 und zxing-cpp 3.1.1. Sie enthält die strukturierte Logerzeugung und den vollständig lokalen Diagnosebericht aus 0.3.1 sowie aktualisierte PDF-, Barcode- und Paketierungsbibliotheken. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak- und Bohle-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.3.1 enthält:
+Release 0.3.2 enthält:
 
 - Tesseract OCR 5.5.3
 - Leptonica 1.87.0
@@ -220,11 +220,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.3.1 bauen:
+OCR-Paket vorbereiten und Release 0.3.2 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.3.1
+.\scripts\build-release.ps1 -Version 0.3.2
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.

@@ -13,7 +13,7 @@ class BuildReleaseTests(unittest.TestCase):
         cls.script = (PROJECT_ROOT / "scripts" / "build-release.ps1").read_text(encoding="utf-8-sig")
 
     def test_build_is_versioned_fail_closed_and_checks_native_commands(self) -> None:
-        self.assertIn('[string]$Version = "0.3.1"', self.script)
+        self.assertIn('[string]$Version = "0.3.2"', self.script)
         self.assertIn("function Invoke-PythonCommand", self.script)
         self.assertEqual(3, self.script.count('Invoke-PythonCommand $'))
         self.assertIn('Join-Path $ReleaseRoot $Version', self.script)
@@ -115,8 +115,8 @@ class BuildReleaseTests(unittest.TestCase):
                 self.assertIn("==", stripped)
                 packages.append(stripped)
                 self.assertIn(f"{stripped} \\", lock)
-        self.assertIn("PyInstaller==6.21.0", constraints)
-        self.assertIn("ruff==0.15.21", constraints)
+        self.assertIn("PyInstaller==6.22.2", constraints)
+        self.assertIn("ruff==0.16.4", constraints)
         self.assertEqual(len(packages), lock.count("--hash=sha256:"))
         self.assertIn("$LockFile", self.script)
         self.assertIn("dependency_lock_sha256 = Get-Sha256 $LockFile", self.script)
@@ -146,7 +146,7 @@ class BuildReleaseTests(unittest.TestCase):
         self.assertEqual(workflow.count('python-version: "3.12"'), 2)
         self.assertIn(r".\.venv\Scripts\python.exe -m unittest", workflow)
         self.assertIn(r".\.venv\Scripts\ruff.exe check", workflow)
-        self.assertIn(r".\scripts\build-release.ps1 -Version 0.3.1", workflow)
+        self.assertIn(r".\scripts\build-release.ps1 -Version 0.3.2", workflow)
         self.assertEqual(workflow.count("--require-hashes"), 2)
         self.assertEqual(
             workflow.count("actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"),
