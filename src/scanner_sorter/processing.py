@@ -540,13 +540,29 @@ class DocumentProcessor:
             raise ProcessingError("PyMuPDF ist nicht installiert.") from error
 
         recognition_started = time.perf_counter()
+        source_indexes: list[int]
+        recognise_document_pages = getattr(
+            self.recognizer, "recognise_document_pages", None
+        )
         recognise_document = getattr(self.recognizer, "recognise_document", None)
-        if callable(recognise_document):
+        if callable(recognise_document_pages):
+            recognised_pages = recognise_document_pages(source)
+            source_indexes = [page_index for page_index, _detection in recognised_pages]
+            detections = [detection for _page_index, detection in recognised_pages]
+            if sorted(source_indexes) != list(range(len(detections))):
+                raise ProcessingError(
+                    "Die erkannte Seitenreihenfolge ist unvollständig oder enthält Duplikate."
+                )
+        elif callable(recognise_document):
             detections = recognise_document(source)
+            source_indexes = list(range(len(detections)))
         else:
             with pymupdf.open(source) as scan:
                 detections = [self.recognizer.recognise(page) for page in scan]
+            source_indexes = list(range(len(detections)))
         groups = group_page_detections(detections)
+        for group in groups:
+            group.page_indexes = [source_indexes[index] for index in group.page_indexes]
         return groups, len(detections), time.perf_counter() - recognition_started
 
     @staticmethod

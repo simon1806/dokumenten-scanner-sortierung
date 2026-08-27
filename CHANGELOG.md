@@ -1,5 +1,11 @@
 # Änderungsprotokoll
 
+## 0.3.3 – 2026-08-27
+
+- Empfangsscheine und andere unterstützte Dokumente mit tiefer liegender Belegzeile werden durch den erweiterten Kopfbereich zuverlässig erkannt.
+- Mehrseitige Heitzer-Lieferscheine werden über Lieferant und Lieferscheinnummer erkannt. Eine vollständig lesbare, eindeutige Angabe `Seite X von Y` korrigiert eine falsche Scanreihenfolge; bei Lücken, Dubletten oder widersprüchlichen Angaben bleibt die Quellreihenfolge unverändert.
+- Zeidler-Ausführungsbestätigungen werden anhand ihrer Dokumentüberschrift, eines Zeidler-Merkmals und der Auftragsnummer erkannt und als `Ausführung-Zeidler-<Auftragsnummer>.pdf` abgelegt. Generische Ausführungsbestätigungen ohne Zeidler-Nachweis bleiben unberücksichtigt.
+
 ## 0.3.2 – 2026-08-27
 
 - Die PDF-, Barcode-, Paketierungs- und Qualitätswerkzeuge wurden auf pypdf 6.16.2, zxing-cpp 3.1.1, PyInstaller 6.22.2, pyinstaller-hooks-contrib 2026.7, setuptools 84.0.0, packaging 26.3 und ruff 0.16.4 aktualisiert. Die QR-Code-Erkennung profitiert dabei von den Korrekturen in zxing-cpp 3.1.1; der Release-Build verwendet die zugehörigen geprüften Windows-x64-Wheels.

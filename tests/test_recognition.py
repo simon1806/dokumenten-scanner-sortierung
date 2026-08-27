@@ -17,18 +17,119 @@ from scanner_sorter.recognition import (
     complete_signed_offer_pages,
     detect_document_from_text,
     has_supported_document_signal,
+    heitzer_page_reference,
     is_assignment_declaration,
     is_bohle_header,
     is_neuma_order,
     is_nowak_header,
     is_pauli_measurement_attachment,
     is_signed_offer,
+    is_zeidler_execution_confirmation,
     offer_number_from_text,
     scan_date_from_source,
 )
 
 
 class RecognitionTests(unittest.TestCase):
+    def test_heitzer_page_reference_reads_number_and_complete_page_marker(self) -> None:
+        self.assertEqual(
+            ("26071771", 2, 3),
+            heitzer_page_reference(
+                "LIEFERSCHEIN 26071771 vom 29.07.2026\nSeite 2 von 3"
+            ),
+        )
+        self.assertIsNone(
+            heitzer_page_reference(
+                "LIEFERSCHEIN 26071771 vom 29.07.2026\nSeite 4 von 3"
+            )
+        )
+
+    def test_heitzer_pages_are_completed_and_sorted_by_printed_page_number(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        delivery_note = DetectedDocument("LS", "26071771", "Heitzer")
+        with (
+            patch.object(
+                recognizer,
+                "_recognise_document_with_deadline",
+                return_value=[None, None, delivery_note],
+            ),
+            patch.object(
+                recognizer,
+                "_read_heitzer_page_reference",
+                side_effect=(
+                    ("26071771", 2, 3),
+                    ("26071771", 3, 3),
+                    ("26071771", 1, 3),
+                ),
+            ),
+            self.assertLogs("scanner_sorter.recognition", level="INFO") as captured,
+        ):
+            pages = recognizer.recognise_document_pages(Path("scan.pdf"))
+
+        self.assertEqual(
+            [(2, delivery_note), (0, delivery_note), (1, delivery_note)],
+            pages,
+        )
+        self.assertIn("quellseiten=3,1,2", "\n".join(captured.output))
+
+    def test_heitzer_pages_remain_unchanged_when_page_markers_are_ambiguous(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        delivery_note = DetectedDocument("LS", "26071771", "Heitzer")
+        detections = [None, None, delivery_note]
+        with (
+            patch.object(
+                recognizer,
+                "_recognise_document_with_deadline",
+                return_value=detections,
+            ),
+            patch.object(
+                recognizer,
+                "_read_heitzer_page_reference",
+                side_effect=(
+                    ("26071771", 2, 3),
+                    ("26071771", 2, 3),
+                    ("26071771", 1, 3),
+                ),
+            ),
+        ):
+            pages = recognizer.recognise_document_pages(Path("scan.pdf"))
+
+        self.assertEqual(list(enumerate(detections)), pages)
+
+    def test_heitzer_page_sorting_never_absorbs_another_document(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        heitzer = DetectedDocument("LS", "26071771", "Heitzer")
+        nowak = DetectedDocument("LS", "4783804", "Nowak")
+        with patch.object(
+            recognizer,
+            "_read_heitzer_page_reference",
+            side_effect=AssertionError("Gemischter Scan darf nicht umsortiert werden."),
+        ):
+            pages = recognizer._order_heitzer_delivery_pages(
+                Path("scan.pdf"), [heitzer, nowak]
+            )
+
+        self.assertEqual([(0, heitzer), (1, nowak)], pages)
+
+    def test_heitzer_page_sorting_falls_back_after_reference_ocr_error(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        delivery_note = DetectedDocument("LS", "26071771", "Heitzer")
+        detections = [delivery_note, None]
+        with (
+            patch.object(
+                recognizer,
+                "_read_heitzer_page_reference",
+                side_effect=RuntimeError("OCR-Zeitlimit"),
+            ),
+            self.assertLogs("scanner_sorter.recognition", level="INFO") as captured,
+        ):
+            pages = recognizer._order_heitzer_delivery_pages(
+                Path("scan.pdf"), detections
+            )
+
+        self.assertEqual(list(enumerate(detections)), pages)
+        self.assertIn("Quellreihenfolge bleibt erhalten", "\n".join(captured.output))
+
     @patch("pytesseract.image_to_string", return_value="Montagebericht Auftrag: 3260551")
     @patch("scanner_sorter.recognition.find_tesseract_executable", return_value=None)
     def test_ocr_uses_server_timeout(self, _mock_find: object, image_to_string: object) -> None:
@@ -172,8 +273,41 @@ class RecognitionTests(unittest.TestCase):
 
         self.assertIsNotNone(detected)
         self.assertEqual("MI_3260635.pdf", detected.filename)
-        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 490)], crop_boxes)
+        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 630)], crop_boxes)
         self.assertEqual(("Kopfbereich",), read_ocr.call_args_list[1].args)
+
+    def test_header_crop_reaches_lower_empfangsschein_title(self) -> None:
+        crop_boxes: list[tuple[int, int, int, int]] = []
+
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                crop_boxes.append(box)
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Unbekannter Lieferant", "Empfangsschein-Nr. 6260453"),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("EM_6260453.pdf", detected.filename)
+        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 630)], crop_boxes)
+        self.assertEqual(2, read_ocr.call_count)
 
     def test_montage_fast_area_skips_large_header_ocr(self) -> None:
         crop_boxes: list[tuple[int, int, int, int]] = []
@@ -341,7 +475,7 @@ class RecognitionTests(unittest.TestCase):
 
         self.assertIsNotNone(detected)
         self.assertEqual("ABTRET_3260569.pdf", detected.filename)
-        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 490), (80, 602, 780, 938)], crop_boxes)
+        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 630), (80, 602, 780, 938)], crop_boxes)
         self.assertEqual(3, read_ocr.call_count)
 
     def test_signed_offer_reads_targeted_confirmation_area(self) -> None:
@@ -381,7 +515,7 @@ class RecognitionTests(unittest.TestCase):
         self.assertIsNotNone(detected)
         self.assertEqual("AG_5260661_UNTERS.pdf", detected.filename)
         self.assertEqual(
-            [(390, 35, 750, 287), (0, 0, 1000, 490), (20, 588, 980, 1288)],
+            [(390, 35, 750, 287), (0, 0, 1000, 630), (20, 588, 980, 1288)],
             crop_boxes,
         )
         self.assertEqual(3, read_ocr.call_count)
@@ -584,6 +718,31 @@ class RecognitionTests(unittest.TestCase):
 
     def test_neuma_order_requires_customer_signature(self) -> None:
         self.assertIsNone(detect_document_from_text("Auftrag I-2026-003443 vom 05.06.2026"))
+
+    def test_zeidler_execution_confirmation_uses_order_number(self) -> None:
+        detected = detect_document_from_text(
+            "ZEIDLER\nAusführungsbestätigung\nAuftrags-Nr.: 1318814"
+        )
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("Ausführung-Zeidler-1318814.pdf", detected.filename)
+
+    def test_zeidler_confirmation_tolerates_unreadable_logo(self) -> None:
+        text = (
+            "Ausführungsbestätigung\nRückfax an: 034202 / 387 24\n"
+            "Auftrags-Nr.: 1317543"
+        )
+
+        self.assertTrue(is_zeidler_execution_confirmation(text))
+        detected = detect_document_from_text(text)
+        self.assertIsNotNone(detected)
+        self.assertEqual("Ausführung-Zeidler-1317543.pdf", detected.filename)
+
+    def test_generic_execution_confirmation_is_not_assigned_to_zeidler(self) -> None:
+        text = "Ausführungsbestätigung\nAuftrags-Nr.: 1317543"
+
+        self.assertFalse(is_zeidler_execution_confirmation(text))
+        self.assertIsNone(detect_document_from_text(text))
 
     def test_nowak_delivery_note_keeps_complete_number(self) -> None:
         detected = detect_document_from_text("NOWAK GLAS\nLIEFERSCHEIN 4783804")

@@ -22,6 +22,9 @@ BOHLE_NUMBER = r"(\d{5,12})"
 BOHLE_NUMBER_FAST_CROP = (0.02, 0.015, 0.46, 0.13)
 MONTAGE_FAST_CROP = (0.0, 0.02, 1.0, 0.24)
 INTERNAL_BARCODE_FAST_CROP = (0.03, 0.02, 0.48, 0.18)
+GENERAL_HEADER_BOTTOM = 0.45
+HEITZER_PAGE_TITLE_BOTTOM = 0.14
+HEITZER_PAGE_FOOTER_TOP = 0.82
 CODE39_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%"
 ASSIGNMENT_DECLARATION_SIGNAL = "ABTRETUNGSERKLARUNG"
 ASSIGNMENT_NUMBER_CROP = (0.08, 0.43, 0.78, 0.67)
@@ -34,6 +37,8 @@ SIGNED_OFFER_MIN_LINE_DARK_RATIO = 0.18
 SIGNED_OFFER_MIN_INK_RATIO = 0.003
 SCANNER_TIMESTAMP = re.compile(r"(?<!\d)(\d{2})(\d{2})(\d{2})\d{4,6}(?!\d)")
 NEUMA_ORDER = r"(?:I|1|\|)\s*[-–—]\s*(20\d{2})\s*[-–—]\s*(\d{6})"
+ZEIDLER_EXECUTION_SIGNAL = "AUSFUHRUNGSBESTATIGUNG"
+ZEIDLER_FAX_DIGITS = "03420238724"
 SUPPORTED_DOCUMENT_SIGNALS = (
     "AUFMASSBLATT",
     "AUFMASS SCHEIN",
@@ -47,6 +52,7 @@ SUPPORTED_DOCUMENT_SIGNALS = (
     "NOWAK",
     ASSIGNMENT_DECLARATION_SIGNAL,
     "NEUMA",
+    ZEIDLER_EXECUTION_SIGNAL,
 )
 LOGGER = logging.getLogger(__name__)
 
@@ -161,6 +167,19 @@ def has_supported_document_signal(text: str) -> bool:
     )
 
 
+def heitzer_page_reference(text: str) -> tuple[str, int, int] | None:
+    """Read a Heitzer delivery-note number and its printed page reference."""
+    normalised = normalise(text)
+    number_match = re.search(rf"\bLIEFERSCHEIN\s+{NUMBER}\b", normalised)
+    page_match = re.search(r"\bSEITE\s+(\d{1,3})\s+VON\s+(\d{1,3})\b", normalised)
+    if not number_match or not page_match:
+        return None
+    page_number, page_count = (int(value) for value in page_match.groups())
+    if page_count < 1 or page_number < 1 or page_number > page_count:
+        return None
+    return number_match.group(1), page_number, page_count
+
+
 def is_assignment_declaration(text: str) -> bool:
     """Return whether the page is a Glas Hagen assignment declaration."""
     # Scanner-OCR occasionally reads the "la" in "Erklaerung" as "ld".
@@ -208,6 +227,24 @@ def is_neuma_order(text: str) -> bool:
     """Return whether OCR text contains a Neue Marler Baugesellschaft order."""
     normalised = normalise(text)
     return "NEUMA" in normalised and bool(re.search(rf"\bAUFTRAG\s+{NEUMA_ORDER}\b", normalised))
+
+
+def is_zeidler_execution_confirmation(text: str) -> bool:
+    """Recognise the stable Zeidler execution-confirmation form header.
+
+    Some scans lose the Zeidler logo during OCR. The printed fax number and
+    slogan are therefore accepted as supplier signals, but only together with
+    the specific document heading. This keeps generic confirmations from being
+    assigned to Zeidler accidentally.
+    """
+    normalised = normalise(text)
+    digits = re.sub(r"\D", "", normalised)
+    has_supplier_signal = (
+        "ZEIDLER" in normalised
+        or ZEIDLER_FAX_DIGITS in digits
+        or ("WIR MACHEN" in normalised and "EINFACH" in normalised)
+    )
+    return ZEIDLER_EXECUTION_SIGNAL in normalised and has_supplier_signal
 
 
 def offer_number_from_text(text: str) -> str | None:
@@ -284,6 +321,14 @@ def detect_document_from_text(
         if match:
             year, sequence = match.groups()
             return DetectedDocument("EM", f"I-{year}-{sequence}", "NEUMA")
+
+    if is_zeidler_execution_confirmation(normalised):
+        match = re.search(
+            rf"\bAUFTRAGS?\s*[-–—]?\s*NR\.?\s*:?\s*{NUMBER}",
+            normalised,
+        )
+        if match:
+            return DetectedDocument("Ausführung", match.group(1), "Zeidler")
 
     if is_nowak_header(normalised):
         number = extract_number(
@@ -373,6 +418,19 @@ class PageRecognizer:
         finally:
             self._processing_deadline = previous_deadline
 
+    def recognise_document_pages(
+        self,
+        source: Path,
+    ) -> list[tuple[int, DetectedDocument | None]]:
+        """Recognise pages and expose a validated logical-to-source page order."""
+        previous_deadline = self._processing_deadline
+        self._processing_deadline = time.monotonic() + self.settings.processing_timeout_seconds
+        try:
+            detections = self._recognise_document_with_deadline(source)
+            return self._order_heitzer_delivery_pages(source, detections)
+        finally:
+            self._processing_deadline = previous_deadline
+
     def _recognise_document_with_deadline(self, source: Path) -> list[DetectedDocument | None]:
         import pymupdf
 
@@ -423,6 +481,82 @@ class PageRecognizer:
                 f"OCR-Gesamtzeitlimit von {self.settings.processing_timeout_seconds} Sekunden überschritten."
             )
         return max(1, min(OCR_TIMEOUT_SECONDS, math.ceil(remaining)))
+
+    def _order_heitzer_delivery_pages(
+        self,
+        source: Path,
+        detections: list[DetectedDocument | None],
+    ) -> list[tuple[int, DetectedDocument | None]]:
+        source_order = list(enumerate(detections))
+        recognised = [detection for detection in detections if detection is not None]
+        if len(detections) < 2 or not recognised:
+            return source_order
+
+        document = recognised[0]
+        if document.supplier != "Heitzer" or any(
+            detection.key != document.key for detection in recognised
+        ):
+            return source_order
+
+        references: list[tuple[str, int, int]] = []
+        for page_index in range(len(detections)):
+            try:
+                reference = self._read_heitzer_page_reference(source, page_index)
+            except Exception as error:
+                LOGGER.info(
+                    "Heitzer-Seitenfolge konnte nicht sicher gelesen werden; "
+                    "Quellreihenfolge bleibt erhalten (%s).",
+                    type(error).__name__,
+                )
+                return source_order
+            if reference is None or reference[0] != document.number:
+                return source_order
+            references.append(reference)
+
+        page_counts = {reference[2] for reference in references}
+        page_numbers = {reference[1] for reference in references}
+        expected_count = len(detections)
+        if page_counts != {expected_count} or page_numbers != set(
+            range(1, expected_count + 1)
+        ):
+            return source_order
+
+        ordered_indexes = sorted(
+            range(expected_count), key=lambda page_index: references[page_index][1]
+        )
+        if ordered_indexes != list(range(expected_count)):
+            LOGGER.info(
+                "Heitzer-Seitenfolge korrigiert; lieferschein=%s; quellseiten=%s",
+                document.number,
+                ",".join(str(index + 1) for index in ordered_indexes),
+            )
+        return [(page_index, document) for page_index in ordered_indexes]
+
+    def _read_heitzer_page_reference(
+        self,
+        source: Path,
+        page_index: int,
+    ) -> tuple[str, int, int] | None:
+        import pymupdf
+        from PIL import Image
+
+        with pymupdf.open(source) as document:
+            image = self._render(document.load_page(page_index))
+        width, height = image.size
+        title = image.crop(
+            (0, 0, width, max(1, round(height * HEITZER_PAGE_TITLE_BOTTOM)))
+        )
+        footer = image.crop(
+            (0, round(height * HEITZER_PAGE_FOOTER_TOP), width, height)
+        )
+        combined = Image.new(
+            "RGB",
+            (max(title.width, footer.width), title.height + footer.height),
+            "white",
+        )
+        combined.paste(title, (0, 0))
+        combined.paste(footer, (0, title.height))
+        return heitzer_page_reference(self._read_ocr(combined))
 
     def _recognise_file_page(self, source: Path, page_index: int) -> DetectedDocument | None:
         import pymupdf
@@ -559,7 +693,13 @@ class PageRecognizer:
     @staticmethod
     def _header_crop(image: object):
         width, height = image.size
-        return image.crop((0, 0, width, max(1, round(height * 0.35))))
+        # Mehrseitige Empfangsscheine koennen auf der ersten Seite einen
+        # grossen Adressblock ueber der Belegzeile enthalten. Die bisherige
+        # 35-Prozent-Grenze schnitt diese Zeile ab und verhinderte dadurch die
+        # ansonsten eindeutige Erkennung ueber Nummer und Dokumenttyp.
+        return image.crop(
+            (0, 0, width, max(1, round(height * GENERAL_HEADER_BOTTOM)))
+        )
 
     @staticmethod
     def _nowak_header_crop(image: object):
