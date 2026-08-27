@@ -17,6 +17,7 @@ from scanner_sorter.recognition import (
     complete_signed_offer_pages,
     detect_document_from_text,
     has_supported_document_signal,
+    heitzer_page_reference,
     is_assignment_declaration,
     is_bohle_header,
     is_neuma_order,
@@ -29,6 +30,105 @@ from scanner_sorter.recognition import (
 
 
 class RecognitionTests(unittest.TestCase):
+    def test_heitzer_page_reference_reads_number_and_complete_page_marker(self) -> None:
+        self.assertEqual(
+            ("26071771", 2, 3),
+            heitzer_page_reference(
+                "LIEFERSCHEIN 26071771 vom 29.07.2026\nSeite 2 von 3"
+            ),
+        )
+        self.assertIsNone(
+            heitzer_page_reference(
+                "LIEFERSCHEIN 26071771 vom 29.07.2026\nSeite 4 von 3"
+            )
+        )
+
+    def test_heitzer_pages_are_completed_and_sorted_by_printed_page_number(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        delivery_note = DetectedDocument("LS", "26071771", "Heitzer")
+        with (
+            patch.object(
+                recognizer,
+                "_recognise_document_with_deadline",
+                return_value=[None, None, delivery_note],
+            ),
+            patch.object(
+                recognizer,
+                "_read_heitzer_page_reference",
+                side_effect=(
+                    ("26071771", 2, 3),
+                    ("26071771", 3, 3),
+                    ("26071771", 1, 3),
+                ),
+            ),
+            self.assertLogs("scanner_sorter.recognition", level="INFO") as captured,
+        ):
+            pages = recognizer.recognise_document_pages(Path("scan.pdf"))
+
+        self.assertEqual(
+            [(2, delivery_note), (0, delivery_note), (1, delivery_note)],
+            pages,
+        )
+        self.assertIn("quellseiten=3,1,2", "\n".join(captured.output))
+
+    def test_heitzer_pages_remain_unchanged_when_page_markers_are_ambiguous(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        delivery_note = DetectedDocument("LS", "26071771", "Heitzer")
+        detections = [None, None, delivery_note]
+        with (
+            patch.object(
+                recognizer,
+                "_recognise_document_with_deadline",
+                return_value=detections,
+            ),
+            patch.object(
+                recognizer,
+                "_read_heitzer_page_reference",
+                side_effect=(
+                    ("26071771", 2, 3),
+                    ("26071771", 2, 3),
+                    ("26071771", 1, 3),
+                ),
+            ),
+        ):
+            pages = recognizer.recognise_document_pages(Path("scan.pdf"))
+
+        self.assertEqual(list(enumerate(detections)), pages)
+
+    def test_heitzer_page_sorting_never_absorbs_another_document(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        heitzer = DetectedDocument("LS", "26071771", "Heitzer")
+        nowak = DetectedDocument("LS", "4783804", "Nowak")
+        with patch.object(
+            recognizer,
+            "_read_heitzer_page_reference",
+            side_effect=AssertionError("Gemischter Scan darf nicht umsortiert werden."),
+        ):
+            pages = recognizer._order_heitzer_delivery_pages(
+                Path("scan.pdf"), [heitzer, nowak]
+            )
+
+        self.assertEqual([(0, heitzer), (1, nowak)], pages)
+
+    def test_heitzer_page_sorting_falls_back_after_reference_ocr_error(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        delivery_note = DetectedDocument("LS", "26071771", "Heitzer")
+        detections = [delivery_note, None]
+        with (
+            patch.object(
+                recognizer,
+                "_read_heitzer_page_reference",
+                side_effect=RuntimeError("OCR-Zeitlimit"),
+            ),
+            self.assertLogs("scanner_sorter.recognition", level="INFO") as captured,
+        ):
+            pages = recognizer._order_heitzer_delivery_pages(
+                Path("scan.pdf"), detections
+            )
+
+        self.assertEqual(list(enumerate(detections)), pages)
+        self.assertIn("Quellreihenfolge bleibt erhalten", "\n".join(captured.output))
+
     @patch("pytesseract.image_to_string", return_value="Montagebericht Auftrag: 3260551")
     @patch("scanner_sorter.recognition.find_tesseract_executable", return_value=None)
     def test_ocr_uses_server_timeout(self, _mock_find: object, image_to_string: object) -> None:

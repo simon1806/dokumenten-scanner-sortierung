@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from pypdf import PdfWriter
+from pypdf import PdfReader, PdfWriter
 
 from scanner_sorter.config import Settings
 from scanner_sorter.models import DetectedDocument, ProcessResult
@@ -23,6 +23,17 @@ class StubRecognizer:
 
     def recognise(self, _page: object) -> DetectedDocument | None:
         return next(self.detections)
+
+
+class OrderedDocumentRecognizer:
+    def __init__(self, pages: list[tuple[int, DetectedDocument | None]]):
+        self.pages = pages
+
+    def recognise_document_pages(
+        self,
+        _source: Path,
+    ) -> list[tuple[int, DetectedDocument | None]]:
+        return self.pages
 
 
 class ProcessorIntegrationTests(unittest.TestCase):
@@ -109,6 +120,39 @@ class ProcessorIntegrationTests(unittest.TestCase):
             self.assertIn("ausgabe_s=", summary)
             self.assertIn("gesamt_s=", summary)
             self.assertIn("Dauer:", result.message)
+
+    def test_publishes_pages_in_validated_logical_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming = root / "eingang"
+            output = root / "ziel"
+            archive = root / "archiv"
+            incoming.mkdir()
+            source = incoming / "scan.pdf"
+            writer = PdfWriter()
+            for width in (500, 600, 700):
+                writer.add_blank_page(width=width, height=842)
+            with source.open("wb") as stream:
+                writer.write(stream)
+
+            delivery_note = DetectedDocument("LS", "26071771", "Heitzer")
+            processor = DocumentProcessor(
+                Settings(str(incoming), str(output), str(archive))
+            )
+            processor.recognizer = OrderedDocumentRecognizer(
+                [(2, delivery_note), (0, delivery_note), (1, delivery_note)]
+            )
+
+            result = processor.process(source)
+
+            self.assertTrue(result.success)
+            published = output / "LS-Heitzer-26071771.pdf"
+            self.assertTrue(published.is_file())
+            reader = PdfReader(published)
+            self.assertEqual(
+                [700.0, 500.0, 600.0],
+                [float(page.mediabox.width) for page in reader.pages],
+            )
 
     def test_keeps_each_montageinfo_separate_for_the_same_order(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
