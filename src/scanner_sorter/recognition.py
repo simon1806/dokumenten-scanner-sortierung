@@ -22,6 +22,7 @@ BOHLE_NUMBER = r"(\d{5,12})"
 BOHLE_NUMBER_FAST_CROP = (0.02, 0.015, 0.46, 0.13)
 MONTAGE_FAST_CROP = (0.0, 0.02, 1.0, 0.24)
 INTERNAL_BARCODE_FAST_CROP = (0.03, 0.02, 0.48, 0.18)
+GENERAL_HEADER_BOTTOM = 0.45
 CODE39_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%"
 ASSIGNMENT_DECLARATION_SIGNAL = "ABTRETUNGSERKLARUNG"
 ASSIGNMENT_NUMBER_CROP = (0.08, 0.43, 0.78, 0.67)
@@ -559,7 +560,13 @@ class PageRecognizer:
     @staticmethod
     def _header_crop(image: object):
         width, height = image.size
-        return image.crop((0, 0, width, max(1, round(height * 0.35))))
+        # Mehrseitige Empfangsscheine koennen auf der ersten Seite einen
+        # grossen Adressblock ueber der Belegzeile enthalten. Die bisherige
+        # 35-Prozent-Grenze schnitt diese Zeile ab und verhinderte dadurch die
+        # ansonsten eindeutige Erkennung ueber Nummer und Dokumenttyp.
+        return image.crop(
+            (0, 0, width, max(1, round(height * GENERAL_HEADER_BOTTOM)))
+        )
 
     @staticmethod
     def _nowak_header_crop(image: object):

@@ -172,8 +172,41 @@ class RecognitionTests(unittest.TestCase):
 
         self.assertIsNotNone(detected)
         self.assertEqual("MI_3260635.pdf", detected.filename)
-        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 490)], crop_boxes)
+        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 630)], crop_boxes)
         self.assertEqual(("Kopfbereich",), read_ocr.call_args_list[1].args)
+
+    def test_header_crop_reaches_lower_empfangsschein_title(self) -> None:
+        crop_boxes: list[tuple[int, int, int, int]] = []
+
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                crop_boxes.append(box)
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Unbekannter Lieferant", "Empfangsschein-Nr. 6260453"),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("EM_6260453.pdf", detected.filename)
+        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 630)], crop_boxes)
+        self.assertEqual(2, read_ocr.call_count)
 
     def test_montage_fast_area_skips_large_header_ocr(self) -> None:
         crop_boxes: list[tuple[int, int, int, int]] = []
@@ -341,7 +374,7 @@ class RecognitionTests(unittest.TestCase):
 
         self.assertIsNotNone(detected)
         self.assertEqual("ABTRET_3260569.pdf", detected.filename)
-        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 490), (80, 602, 780, 938)], crop_boxes)
+        self.assertEqual([(390, 35, 750, 287), (0, 0, 1000, 630), (80, 602, 780, 938)], crop_boxes)
         self.assertEqual(3, read_ocr.call_count)
 
     def test_signed_offer_reads_targeted_confirmation_area(self) -> None:
@@ -381,7 +414,7 @@ class RecognitionTests(unittest.TestCase):
         self.assertIsNotNone(detected)
         self.assertEqual("AG_5260661_UNTERS.pdf", detected.filename)
         self.assertEqual(
-            [(390, 35, 750, 287), (0, 0, 1000, 490), (20, 588, 980, 1288)],
+            [(390, 35, 750, 287), (0, 0, 1000, 630), (20, 588, 980, 1288)],
             crop_boxes,
         )
         self.assertEqual(3, read_ocr.call_count)
