@@ -28,6 +28,7 @@ from .config import (
     save_settings,
 )
 from .diagnostics import ALLOWED_REPORT_DAYS, DEFAULT_REPORT_DAYS, export_diagnostic_report
+from .event_logging import process_uptime_seconds, structured_event
 from .models import ProcessResult
 from .processing import DocumentProcessor, ProcessingError
 from .version_info import VersionEntry, collect_version_information
@@ -468,7 +469,7 @@ class DailyFileHandler(logging.Handler):
             self.handleError(record)
 
 
-def configure_logging(settings_path: Path) -> Path:
+def configure_logging(settings_path: Path, *, runtime_mode: str = "Benutzeroberfläche") -> Path:
     log_path = log_file_path(settings_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     handlers: list[logging.Handler] = [DailyFileHandler(log_path.parent)]
@@ -496,16 +497,19 @@ def configure_logging(settings_path: Path) -> Path:
     report = collect_version_information(configured_tesseract_path)
     ocr_versions = {entry.name: entry.version for entry in report.ocr}
     logging.info(
-        "Anwendung gestartet; version=%s; python=%s; tesseract=%s; leptonica=%s; "
-        "system=%s; architektur=%s; prozess_id=%s; protokoll=%s",
-        __version__,
-        platform.python_version(),
-        ocr_versions.get("Tesseract OCR", "Unbekannt"),
-        ocr_versions.get("Leptonica", "Unbekannt"),
-        platform.platform(),
-        platform.machine(),
-        os.getpid(),
-        log_path,
+        structured_event(
+            "Anwendung gestartet",
+            "application_started",
+            version=__version__,
+            modus=runtime_mode,
+            python=platform.python_version(),
+            tesseract=ocr_versions.get("Tesseract OCR", "Unbekannt"),
+            leptonica=ocr_versions.get("Leptonica", "Unbekannt"),
+            system=platform.platform(),
+            architektur=platform.machine(),
+            prozess_id=os.getpid(),
+            protokoll=log_path,
+        )
     )
     return log_path
 
@@ -2072,15 +2076,22 @@ class SettingsWindow:
                 self.tray_icon = None
 
 
-def run_headless(settings_path: Path) -> int:
+def run_headless(
+    settings_path: Path,
+    *,
+    on_shutdown_reason: Callable[[str], None] | None = None,
+) -> int:
+    report_shutdown_reason = on_shutdown_reason or (lambda _reason: None)
     try:
         settings = load_settings(settings_path)
     except ConfigurationError as error:
+        report_shutdown_reason("konfigurationsfehler")
         logging.error("Einstellungen konnten nicht geladen werden: %s", error)
         print(str(error), file=sys.stderr)
         return 2
     errors = settings.validate()
     if errors:
+        report_shutdown_reason("ungueltige_einstellungen")
         print("Ungültige Einstellungen:\n- " + "\n- ".join(errors), file=sys.stderr)
         return 2
 
@@ -2090,6 +2101,7 @@ def run_headless(settings_path: Path) -> int:
     try:
         stale_request_removed = consume_server_stop_request(settings_path)
     except OSError as error:
+        report_shutdown_reason("stoppsignal_bereinigung_fehlgeschlagen")
         message = f"Veraltetes Server-Stoppsignal konnte nicht entfernt werden: {error}"
         logging.error(message)
         print(message, file=sys.stderr)
@@ -2100,11 +2112,13 @@ def run_headless(settings_path: Path) -> int:
     try:
         acquired, monitor_instance = acquire_single_instance(settings_path, settings.input_folder)
     except OSError as error:
+        report_shutdown_reason("eingangssperre_fehlgeschlagen")
         message = f"Der Eingangsordner kann nicht sicher gesperrt werden: {error}"
         logging.error(message)
         print(message, file=sys.stderr)
         return 3
     if not acquired:
+        report_shutdown_reason("eingang_bereits_ueberwacht")
         message = "Der konfigurierte Eingangsordner wird bereits von einer anderen Serversitzung überwacht."
         logging.error(message)
         print(message, file=sys.stderr)
@@ -2119,6 +2133,7 @@ def run_headless(settings_path: Path) -> int:
     )
 
     def stop(_signal: int, _frame: object) -> None:
+        report_shutdown_reason(f"betriebssystem_signal_{_signal}")
         finished.set()
 
     signal.signal(signal.SIGINT, stop)
@@ -2132,6 +2147,7 @@ def run_headless(settings_path: Path) -> int:
                 logging.warning("Server-Stoppsignal konnte nicht gelesen werden: %s", error)
                 continue
             if stop_requested:
+                report_shutdown_reason("server_stoppsignal")
                 logging.info(
                     "Kontrolliertes Server-Stoppsignal empfangen; laufender Vorgang wird sicher abgeschlossen."
                 )
@@ -2170,27 +2186,49 @@ def main(argv: list[str] | None = None) -> int:
         notify_already_running()
         return 0
 
+    runtime_mode = (
+        "SYSTEM/Headless"
+        if args.run
+        else ("Benutzeroberfläche/Autostart" if args.autostart else "Benutzeroberfläche")
+    )
+    exit_code = 1
+    exit_reason = "unerwartet"
     try:
-        configure_logging(args.settings)
-        logging.info(
-            "Startmodus; modus=%s; einstellungen=%s",
-            "Dienst/Headless" if args.run else "Benutzeroberfläche",
-            args.settings,
-        )
+        configure_logging(args.settings, runtime_mode=runtime_mode)
 
         try:
             if args.run:
-                return run_headless(args.settings)
+                headless_reason = ["kontrolliert"]
+                exit_code = run_headless(
+                    args.settings,
+                    on_shutdown_reason=lambda reason: headless_reason.__setitem__(0, reason),
+                )
+                exit_reason = headless_reason[0] if exit_code == 0 else f"headless_{headless_reason[0]}"
+                return exit_code
 
             window = SettingsWindow(args.settings, start_monitoring=args.autostart)
             window.run()
+            exit_code = 0
+            exit_reason = "kontrolliert"
             return 0
         except ConfigurationError as error:
             logging.error("Einstellungen konnten nicht geladen werden: %s", error)
             notify_configuration_error(error)
+            exit_code = 2
+            exit_reason = "konfigurationsfehler"
             return 2
     finally:
-        logging.info("Anwendung beendet; version=%s", __version__)
+        logging.info(
+            structured_event(
+                "Anwendung beendet",
+                "application_stopped",
+                version=__version__,
+                modus=runtime_mode,
+                grund=exit_reason,
+                exit_code=exit_code,
+                laufzeit_s=process_uptime_seconds(),
+            )
+        )
         release_single_instance(instance)
 
 

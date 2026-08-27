@@ -18,7 +18,7 @@ from typing import Any, Iterable
 from . import __version__
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 DEFAULT_REPORT_DAYS = 30
 ALLOWED_REPORT_DAYS = (7, 30, 90)
 LEGACY_REASON_CODE = "legacy_nicht_spezifiziert"
@@ -33,6 +33,106 @@ _FIELD_RE = re.compile(
     r"(?:^|;\s*)(?P<key>[a-z][a-z0-9_]*)="
     r"(?P<value>.*?)(?=;\s*[a-z][a-z0-9_]*=|$)"
 )
+
+_EVENT_KIND_BY_CODE = {
+    "processing_started": "processing_started",
+    "processing_completed": "processing",
+    "processing_failed": "processing",
+    "processing_deferred": "processing",
+    "monitor_heartbeat": "heartbeat",
+    "monitor_started": "monitor_start",
+    "monitor_stopped": "monitor_stop",
+    "application_started": "start",
+    "application_stopped": "stop",
+    "folder_error": "folder_error",
+    "folder_error_continues": "folder_error_continues",
+    "folder_recovered": "folder_recovery",
+}
+
+_COMMON_EVENT_FIELDS = {"schema", "ereignis", "sitzung", "version"}
+_KNOWN_FIELDS_BY_KIND = {
+    "processing_started": {"id", "datei", "groesse_bytes", "quelle"},
+    "processing": {
+        "id",
+        "status",
+        "grundcode",
+        "stufe",
+        "phase",
+        "seite",
+        "datei",
+        "groesse_bytes",
+        "seiten",
+        "dokumente",
+        "typen",
+        "archiv_s",
+        "erkennung_s",
+        "ausgabe_s",
+        "gesamt_s",
+        "ausgaben",
+        "ziel",
+        "pruefkopie",
+        "grund",
+        "fehlerklasse",
+    },
+    "heartbeat": {
+        "anwendung",
+        "ueberwachung",
+        "prozess_id",
+        "tesseract",
+        "leptonica",
+        "modus",
+        "intervall_s",
+        "laufzeit_s",
+        "verarbeitung",
+        "wartende_pdfs",
+        "eingang",
+        "ziel",
+        "archiv",
+        "pruefordner",
+        "fortlaufende_ordnerfehler",
+        "letzter_vorgang",
+        "letzter_status",
+        "letzte_datei",
+    },
+    "monitor_start": {
+        "modus",
+        "eingang",
+        "ziel",
+        "archiv",
+        "pruefordner",
+        "archiv_tage",
+        "dateistabilitaet_s",
+        "defekt_timeout_s",
+        "abfrage_s",
+        "stapel_grenze",
+        "stapel_pause_s",
+        "verarbeitungs_limit_s",
+        "ocr_sprachen",
+        "tesseract",
+    },
+    "monitor_stop": {"modus", "laufzeit_s"},
+    "start": {
+        "modus",
+        "python",
+        "tesseract",
+        "leptonica",
+        "system",
+        "architektur",
+        "prozess_id",
+        "protokoll",
+    },
+    "stop": {"modus", "grund", "exit_code", "laufzeit_s"},
+    "folder_error": {"versuch", "erneut_in_s", "fehlerklasse", "fehler"},
+    "folder_error_continues": {
+        "versuche",
+        "erster_fehler",
+        "dauer_s",
+        "erneut_in_s",
+        "fehlerklasse",
+        "fehler",
+    },
+    "folder_recovery": {"fehlerdauer_s", "versuche"},
+}
 
 
 def _utc_now() -> datetime:
@@ -145,7 +245,7 @@ def _log_files(log_directory: Path, start_date: date, end_date: date) -> list[Pa
     return [path for _, path in sorted(files)]
 
 
-def _parse_log_line(line: str) -> tuple[datetime, str] | None:
+def _parse_log_line(line: str) -> tuple[datetime, str, str, str] | None:
     match = _LOG_LINE_RE.match(line.rstrip("\r\n"))
     if not match:
         return None
@@ -156,18 +256,25 @@ def _parse_log_line(line: str) -> tuple[datetime, str] | None:
         )
     except ValueError:
         return None
-    return timestamp, match.group("message")
+    return timestamp, match.group("level"), match.group("logger"), match.group("message")
 
 
-def _event_kind(message: str) -> str | None:
+def _event_kind(message: str, fields: dict[str, str]) -> str | None:
+    event_code = fields.get("ereignis")
+    if event_code:
+        return _EVENT_KIND_BY_CODE.get(event_code)
     for prefix, kind in (
+        ("Vorgang gestartet", "processing_started"),
         ("Vorgang abgeschlossen", "processing"),
         ("Vorgang fehlgeschlagen", "processing"),
         ("Vorgang zurückgestellt", "processing"),
         ("Betriebsstatus", "heartbeat"),
+        ("Überwachung gestartet", "monitor_start"),
+        ("Überwachung beendet", "monitor_stop"),
         ("Anwendung gestartet", "start"),
+        ("Anwendung beendet", "stop"),
         ("Fehler bei der Ordnerüberwachung", "folder_error"),
-        ("Ordnerfehler besteht fort", "folder_error"),
+        ("Ordnerfehler besteht fort", "folder_error_continues"),
         ("Ordnerüberwachung wiederhergestellt", "folder_recovery"),
     ):
         if message.startswith(prefix):
@@ -203,7 +310,7 @@ def build_diagnostic_report(
     report_start = report_end - timedelta(days=days - 1)
     files = _log_files(Path(log_directory), report_start, report_end)
 
-    parser = {
+    parser: dict[str, Any] = {
         "log_files_found": len(files),
         "log_files_read": 0,
         "log_files_unreadable": 0,
@@ -213,27 +320,29 @@ def build_diagnostic_report(
         "ignored_lines": 0,
         "malformed_lines": 0,
         "legacy_records": 0,
+        "records_with_unknown_fields": 0,
         "unknown_fields_ignored": 0,
     }
     processing_events: list[dict[str, Any]] = []
     queue_values: list[int] = []
+    heartbeat_events: list[dict[str, Any]] = []
     starts = 0
+    stops = 0
+    monitor_starts = 0
+    monitor_stops = 0
     folder_errors = 0
+    folder_error_continues = 0
     folder_recoveries = 0
     active_version = "unbekannt"
-
-    known_fields = {
-        "status",
-        "version",
-        "grundcode",
-        "stufe",
-        "seite",
-        "gesamt_s",
-        "groesse_bytes",
-        "typen",
-        "datei",
-        "wartende_pdfs",
-    }
+    level_counts: Counter[str] = Counter()
+    unclassified_by_level: Counter[str] = Counter()
+    unclassified_by_logger: Counter[str] = Counter()
+    unknown_fields: Counter[str] = Counter()
+    starts_by_day: Counter[str] = Counter()
+    stops_by_day: Counter[str] = Counter()
+    shutdown_reasons: Counter[str] = Counter()
+    started_sessions: set[str] = set()
+    stopped_sessions: set[str] = set()
 
     for path in files:
         try:
@@ -250,56 +359,110 @@ def build_diagnostic_report(
                     parser["malformed_lines"] += 1
                     continue
                 parser["parsed_log_lines"] += 1
-                timestamp, message = parsed
-                kind = _event_kind(message)
+                timestamp, level, logger_name, message = parsed
+                level_counts[level] += 1
+                fields = _parse_fields(message)
+                kind = _event_kind(message, fields)
                 if kind is None:
                     parser["ignored_lines"] += 1
+                    unclassified_by_level[level] += 1
+                    unclassified_by_logger[logger_name] += 1
                     continue
                 parser["recognized_events"] += 1
-                fields = _parse_fields(message)
-                parser["unknown_fields_ignored"] += sum(
-                    1 for key in fields if key not in known_fields
-                )
+                allowed_fields = _COMMON_EVENT_FIELDS | _KNOWN_FIELDS_BY_KIND.get(kind, set())
+                event_unknown_fields = [key for key in fields if key not in allowed_fields]
+                if event_unknown_fields:
+                    parser["records_with_unknown_fields"] += 1
+                    unknown_fields.update(event_unknown_fields)
 
                 if fields.get("version"):
                     active_version = fields["version"]
                 if kind == "start":
                     starts += 1
+                    starts_by_day[timestamp.date().isoformat()] += 1
+                    if fields.get("sitzung"):
+                        started_sessions.add(fields["sitzung"])
+                    continue
+                if kind == "stop":
+                    stops += 1
+                    stops_by_day[timestamp.date().isoformat()] += 1
+                    shutdown_reasons[fields.get("grund") or LEGACY_REASON_CODE] += 1
+                    if fields.get("sitzung"):
+                        stopped_sessions.add(fields["sitzung"])
                     continue
                 if kind == "heartbeat":
                     queued = _safe_int(fields.get("wartende_pdfs"))
                     if queued is not None and queued >= 0:
                         queue_values.append(queued)
+                    heartbeat_events.append(
+                        {
+                            "timestamp": timestamp,
+                            "session_id": fields.get("sitzung"),
+                            "interval_seconds": _safe_float(fields.get("intervall_s")) or 600.0,
+                        }
+                    )
+                    continue
+                if kind == "monitor_start":
+                    monitor_starts += 1
+                    continue
+                if kind == "monitor_stop":
+                    monitor_stops += 1
+                    continue
+                if kind == "processing_started":
                     continue
                 if kind == "folder_error":
                     folder_errors += 1
+                    continue
+                if kind == "folder_error_continues":
+                    folder_error_continues += 1
                     continue
                 if kind == "folder_recovery":
                     folder_recoveries += 1
                     continue
 
                 status = fields.get("status", "unbekannt")
-                reason_code = fields.get("grundcode")
+                if status == "unbekannt":
+                    if message.startswith("Vorgang fehlgeschlagen"):
+                        status = "fehler"
+                    elif message.startswith("Vorgang zurückgestellt"):
+                        status = "offen"
+                reason_code: str | None = fields.get("grundcode")
                 if status == "nicht_erkannt" and not reason_code:
                     reason_code = LEGACY_REASON_CODE
                     parser["legacy_records"] += 1
-                elif not reason_code:
+                elif status != "erfolgreich" and not reason_code:
                     reason_code = "nicht_angegeben"
+                elif status == "erfolgreich":
+                    reason_code = None
                 filename = Path(fields.get("datei", "")).name or None
                 processing_events.append(
                     {
                         "timestamp": timestamp,
                         "status": status,
+                        "level": level,
+                        "logger": logger_name,
+                        "operation_id": fields.get("id") or None,
+                        "session_id": fields.get("sitzung") or None,
                         "version": fields.get("version") or active_version,
                         "reason_code": reason_code,
-                        "stage": fields.get("stufe") or None,
+                        "stage": fields.get("stufe") or fields.get("phase") or None,
                         "page": _safe_int(fields.get("seite")),
+                        "page_count": _safe_int(fields.get("seiten")),
                         "duration_seconds": _safe_float(fields.get("gesamt_s")),
+                        "archive_seconds": _safe_float(fields.get("archiv_s")),
+                        "recognition_seconds": _safe_float(fields.get("erkennung_s")),
+                        "output_seconds": _safe_float(fields.get("ausgabe_s")),
                         "size_bytes": _safe_int(fields.get("groesse_bytes")),
                         "document_types": _document_types(fields.get("typen")),
                         "filename": filename,
                     }
                 )
+
+    parser["unknown_fields_ignored"] = sum(unknown_fields.values())
+    parser["unknown_field_names"] = dict(sorted(unknown_fields.items()))
+    parser["lines_by_level"] = dict(sorted(level_counts.items()))
+    parser["unclassified_lines_by_level"] = dict(sorted(unclassified_by_level.items()))
+    parser["unclassified_lines_by_logger"] = dict(sorted(unclassified_by_logger.items()))
 
     overall = _new_result_bucket()
     by_day: defaultdict[str, dict[str, int]] = defaultdict(_new_result_bucket)
@@ -307,34 +470,60 @@ def build_diagnostic_report(
     by_reason: Counter[str] = Counter()
     by_document_type: Counter[str] = Counter()
     durations: list[float] = []
+    archive_durations: list[float] = []
+    recognition_durations: list[float] = []
+    output_durations: list[float] = []
     sizes: list[float] = []
     problem_cases: list[dict[str, Any]] = []
+
+    def public_case(event: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {
+            "timestamp": event["timestamp"].isoformat(timespec="milliseconds"),
+            "status": event["status"],
+            "reason_code": event["reason_code"],
+            "stage": event["stage"],
+            "page": event["page"],
+            "page_count": event["page_count"],
+            "duration_seconds": event["duration_seconds"],
+            "archive_seconds": event["archive_seconds"],
+            "recognition_seconds": event["recognition_seconds"],
+            "output_seconds": event["output_seconds"],
+            "size_bytes": event["size_bytes"],
+        }
+        if include_filenames:
+            result["filename"] = event["filename"]
+        return result
 
     for event in processing_events:
         status = event["status"]
         _update_bucket(overall, status)
         _update_bucket(by_day[event["timestamp"].date().isoformat()], status)
         _update_bucket(by_version[event["version"]], status)
-        by_reason[event["reason_code"]] += 1
+        if event["reason_code"]:
+            by_reason[event["reason_code"]] += 1
         for document_type in event["document_types"]:
             by_document_type[document_type] += 1
         if event["duration_seconds"] is not None:
             durations.append(event["duration_seconds"])
+        if event["archive_seconds"] is not None:
+            archive_durations.append(event["archive_seconds"])
+        if event["recognition_seconds"] is not None:
+            recognition_durations.append(event["recognition_seconds"])
+        if event["output_seconds"] is not None:
+            output_durations.append(event["output_seconds"])
         if event["size_bytes"] is not None and event["size_bytes"] >= 0:
             sizes.append(float(event["size_bytes"]))
         if status != "erfolgreich":
-            problem: dict[str, Any] = {
-                "timestamp": event["timestamp"].isoformat(timespec="milliseconds"),
-                "status": status,
-                "reason_code": event["reason_code"],
-                "stage": event["stage"],
-                "page": event["page"],
-                "duration_seconds": event["duration_seconds"],
-                "size_bytes": event["size_bytes"],
-            }
-            if include_filenames:
-                problem["filename"] = event["filename"]
-            problem_cases.append(problem)
+            problem_cases.append(public_case(event))
+
+    slowest_cases = [
+        public_case(event)
+        for event in sorted(
+            (event for event in processing_events if event["duration_seconds"] is not None),
+            key=lambda event: event["duration_seconds"],
+            reverse=True,
+        )[:10]
+    ]
 
     all_days: dict[str, dict[str, int | float | None]] = {}
     current_day = report_start
@@ -349,6 +538,36 @@ def build_diagnostic_report(
         size_statistics["median"] = int(round(float(size_statistics["median"])))
         size_statistics["p95"] = int(round(float(size_statistics["p95"])))
         size_statistics["maximum"] = int(round(float(size_statistics["maximum"])))
+
+    heartbeats_by_session: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    for heartbeat in heartbeat_events:
+        if heartbeat["session_id"]:
+            heartbeats_by_session[heartbeat["session_id"]].append(heartbeat)
+    heartbeat_gaps: list[float] = []
+    interruption_count = 0
+    for session_heartbeats in heartbeats_by_session.values():
+        ordered = sorted(session_heartbeats, key=lambda item: item["timestamp"])
+        for previous, current in zip(ordered, ordered[1:]):
+            gap = (current["timestamp"] - previous["timestamp"]).total_seconds()
+            heartbeat_gaps.append(gap)
+            expected = max(previous["interval_seconds"], current["interval_seconds"])
+            if gap > expected * 2.5:
+                interruption_count += 1
+
+    application_by_day: dict[str, dict[str, int]] = {}
+    current_day = report_start
+    while current_day <= report_end:
+        day_key = current_day.isoformat()
+        application_by_day[day_key] = {
+            "starts": starts_by_day[day_key],
+            "controlled_stops": stops_by_day[day_key],
+        }
+        current_day += timedelta(days=1)
+
+    unclassified_warning_count = unclassified_by_level["WARNING"]
+    unclassified_error_count = (
+        unclassified_by_level["ERROR"] + unclassified_by_level["CRITICAL"]
+    )
 
     return {
         "schema_version": SCHEMA_VERSION,
@@ -370,6 +589,11 @@ def build_diagnostic_report(
         "summary": {
             "processing_results": _finish_bucket(overall),
             "duration_seconds": _statistics(durations),
+            "phase_duration_seconds": {
+                "archive": _statistics(archive_durations),
+                "recognition": _statistics(recognition_durations),
+                "output": _statistics(output_durations),
+            },
             "file_size_bytes": size_statistics,
             "queue": {
                 "measurements": len(queue_values),
@@ -382,17 +606,47 @@ def build_diagnostic_report(
             },
             "folder_monitoring": {
                 "errors": folder_errors,
+                "continuing_error_messages": folder_error_continues,
                 "recoveries": folder_recoveries,
             },
             "application_starts": starts,
+            "application_lifecycle": {
+                "starts": starts,
+                "controlled_stops": stops,
+                "identified_sessions_started": len(started_sessions),
+                "identified_sessions_stopped": len(stopped_sessions),
+                "sessions_without_stop": len(started_sessions - stopped_sessions),
+                "stops_without_start": len(stopped_sessions - started_sessions),
+                "shutdown_reasons": dict(sorted(shutdown_reasons.items())),
+            },
+            "monitoring_lifecycle": {
+                "starts": monitor_starts,
+                "controlled_stops": monitor_stops,
+            },
+            "heartbeat_continuity": {
+                "session_aware_measurements": sum(len(items) for items in heartbeats_by_session.values()),
+                "identified_sessions": len(heartbeats_by_session),
+                "gaps_evaluated": len(heartbeat_gaps),
+                "suspected_interruptions": interruption_count,
+                "maximum_gap_seconds": round(max(heartbeat_gaps), 3) if heartbeat_gaps else None,
+            },
+            "log_health": {
+                "warning_lines": level_counts["WARNING"],
+                "error_lines": level_counts["ERROR"],
+                "critical_lines": level_counts["CRITICAL"],
+                "unclassified_warning_lines": unclassified_warning_count,
+                "unclassified_error_or_critical_lines": unclassified_error_count,
+            },
         },
         "grouped_by_day": all_days,
+        "application_lifecycle_by_day": application_by_day,
         "grouped_by_version": {
             key: _finish_bucket(value) for key, value in sorted(by_version.items())
         },
         "grouped_by_document_type": dict(sorted(by_document_type.items())),
         "grouped_by_reason_code": dict(sorted(by_reason.items())),
         "problem_cases": problem_cases,
+        "slowest_cases": slowest_cases,
     }
 
 
@@ -419,6 +673,9 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
     summary = report["summary"]
     results = summary["processing_results"]
     durations = summary["duration_seconds"]
+    phases = summary["phase_duration_seconds"]
+    lifecycle = summary["application_lifecycle"]
+    log_health = summary["log_health"]
     privacy = report["privacy"]
 
     day_rows = "".join(
@@ -446,6 +703,29 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
         f"<tr><td>{esc(document_type)}</td><td>{count}</td></tr>"
         for document_type, count in report["grouped_by_document_type"].items()
     ) or '<tr><td colspan="2">Keine Dokumenttypen vorhanden.</td></tr>'
+    phase_rows = "".join(
+        "<tr>"
+        f"<td>{esc(label)}</td><td>{values['count']}</td>"
+        f"<td>{esc(_format_number(values['average'], 3))}</td>"
+        f"<td>{esc(_format_number(values['median'], 3))}</td>"
+        f"<td>{esc(_format_number(values['p95'], 3))}</td>"
+        f"<td>{esc(_format_number(values['maximum'], 3))}</td>"
+        "</tr>"
+        for key, label in (
+            ("archive", "Archivierung"),
+            ("recognition", "Erkennung"),
+            ("output", "Ausgabe"),
+        )
+        for values in (phases[key],)
+    )
+    unknown_field_rows = "".join(
+        f"<tr><td>{esc(field)}</td><td>{count}</td></tr>"
+        for field, count in report["parser_statistics"]["unknown_field_names"].items()
+    ) or '<tr><td colspan="2">Keine unbekannten Felder.</td></tr>'
+    shutdown_reason_rows = "".join(
+        f"<tr><td>{esc(reason)}</td><td>{count}</td></tr>"
+        for reason, count in lifecycle["shutdown_reasons"].items()
+    ) or '<tr><td colspan="2">Keine Stop-Ereignisse vorhanden.</td></tr>'
 
     filename_header = "<th>Dateiname</th>" if privacy["filenames_included"] else ""
     problem_rows_parts: list[str] = []
@@ -458,15 +738,38 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
         problem_rows_parts.append(
             "<tr>"
             f"<td>{esc(case['timestamp'])}</td><td>{esc(case['status'])}</td>"
-            f"<td>{esc(case['reason_code'])}</td><td>{esc(case.get('stage') or '–')}</td>"
+            f"<td>{esc(case.get('reason_code') or '–')}</td>"
+            f"<td>{esc(case.get('stage') or '–')}</td>"
             f"<td>{esc(_format_number(case.get('page'), 0))}</td>"
+            f"<td>{esc(_format_number(case.get('page_count'), 0))}</td>"
             f"<td>{esc(_format_number(case.get('duration_seconds'), 2))}</td>"
             f"<td>{esc(_format_number(case.get('size_bytes'), 0))}</td>"
             f"{filename_cell}</tr>"
         )
     problem_rows = "".join(problem_rows_parts) or (
-        f'<tr><td colspan="{8 if privacy["filenames_included"] else 7}">'
+        f'<tr><td colspan="{9 if privacy["filenames_included"] else 8}">'
         "Keine Problemfälle vorhanden.</td></tr>"
+    )
+
+    slowest_rows_parts: list[str] = []
+    for case in report["slowest_cases"]:
+        filename_cell = (
+            f"<td>{esc(case.get('filename') or '–')}</td>"
+            if privacy["filenames_included"]
+            else ""
+        )
+        slowest_rows_parts.append(
+            "<tr>"
+            f"<td>{esc(case['timestamp'])}</td><td>{esc(case['status'])}</td>"
+            f"<td>{esc(_format_number(case.get('duration_seconds'), 2))}</td>"
+            f"<td>{esc(_format_number(case.get('archive_seconds'), 2))}</td>"
+            f"<td>{esc(_format_number(case.get('recognition_seconds'), 2))}</td>"
+            f"<td>{esc(_format_number(case.get('output_seconds'), 2))}</td>"
+            f"{filename_cell}</tr>"
+        )
+    slowest_rows = "".join(slowest_rows_parts) or (
+        f'<tr><td colspan="{7 if privacy["filenames_included"] else 6}">'
+        "Keine Laufzeitdaten vorhanden.</td></tr>"
     )
 
     return f"""<!doctype html>
@@ -503,6 +806,7 @@ Vollständige Pfade, Rohlogs, PDFs und OCR-Volltexte sind nicht Bestandteil des 
 <div class="card">Ø Laufzeit<div class="value">{esc(_format_number(durations['average'], 2))} s</div></div>
 <div class="card">95. Perzentil<div class="value">{esc(_format_number(durations['p95'], 2))} s</div></div>
 <div class="card">Max. Warteschlange<div class="value">{esc(_format_number(summary['queue']['maximum_waiting_pdfs'], 0))}</div></div>
+<div class="card">Unklassifizierte Fehler<div class="value">{log_health['unclassified_error_or_critical_lines']}</div></div>
 </div>
 <section><h2>Tagesverlauf</h2><table><thead><tr><th>Tag</th><th>Gesamt</th><th>Erfolgreich</th>
 <th>Nicht erkannt</th><th>Technische Fehler</th><th>Erkennungsquote</th></tr></thead><tbody>{day_rows}</tbody></table></section>
@@ -510,12 +814,28 @@ Vollständige Pfade, Rohlogs, PDFs und OCR-Volltexte sind nicht Bestandteil des 
 <th>Nicht erkannt</th><th>Erkennungsquote</th></tr></thead><tbody>{version_rows}</tbody></table></section>
 <section><h2>Grundcodes</h2><table><thead><tr><th>Grundcode</th><th>Anzahl</th></tr></thead><tbody>{reason_rows}</tbody></table></section>
 <section><h2>Dokumenttypen</h2><table><thead><tr><th>Typ</th><th>Anzahl</th></tr></thead><tbody>{type_rows}</tbody></table></section>
+<section><h2>Phasenlaufzeiten</h2><table><thead><tr><th>Phase</th><th>Messungen</th><th>Durchschnitt (s)</th>
+<th>Median (s)</th><th>95. Perzentil (s)</th><th>Maximum (s)</th></tr></thead><tbody>{phase_rows}</tbody></table></section>
 <section><h2>Problemfälle</h2><table><thead><tr><th>Zeitpunkt</th><th>Status</th><th>Grundcode</th>
-<th>Stufe</th><th>Seite</th><th>Dauer (s)</th><th>Größe (Bytes)</th>{filename_header}</tr></thead>
+<th>Stufe</th><th>Fehlerseite</th><th>Seiten gesamt</th><th>Dauer (s)</th><th>Größe (Bytes)</th>{filename_header}</tr></thead>
 <tbody>{problem_rows}</tbody></table></section>
-<section><h2>Parser</h2><p>{report['parser_statistics']['log_files_read']} Protokolldateien,
+<section><h2>Langsamste Vorgänge</h2><table><thead><tr><th>Zeitpunkt</th><th>Status</th><th>Gesamt (s)</th>
+<th>Archiv (s)</th><th>Erkennung (s)</th><th>Ausgabe (s)</th>{filename_header}</tr></thead><tbody>{slowest_rows}</tbody></table></section>
+<section><h2>Anwendungslebenszyklus</h2>
+<p>Starts: {lifecycle['starts']} · kontrollierte Stopps: {lifecycle['controlled_stops']} ·
+Sitzungen ohne Stop-Ereignis: {lifecycle['sessions_without_stop']}.</p>
+<p class="note">Eine Sitzung ohne Stop-Ereignis kann noch aktiv sein oder unerwartet beendet worden sein.</p>
+<table><thead><tr><th>Stoppgrund</th><th>Anzahl</th></tr></thead><tbody>{shutdown_reason_rows}</tbody></table></section>
+<section><h2>Logqualität</h2>
+<p>Warnungen: {log_health['warning_lines']} · Fehler: {log_health['error_lines']} ·
+kritische Fehler: {log_health['critical_lines']} · unklassifizierte Warnungen:
+{log_health['unclassified_warning_lines']} · unklassifizierte Fehler:
+{log_health['unclassified_error_or_critical_lines']}.</p>
+<p>{report['parser_statistics']['log_files_read']} Protokolldateien,
 {report['parser_statistics']['lines_read']} Zeilen, {report['parser_statistics']['recognized_events']} erkannte Ereignisse,
-{report['parser_statistics']['malformed_lines']} unvollständige oder unbekannte Zeilen.</p></section>
+{report['parser_statistics']['ignored_lines']} sonstige Zeilen und
+{report['parser_statistics']['malformed_lines']} unvollständige Zeilen.</p>
+<table><thead><tr><th>Unbekanntes Feld</th><th>Vorkommen</th></tr></thead><tbody>{unknown_field_rows}</tbody></table></section>
 </body>
 </html>
 """

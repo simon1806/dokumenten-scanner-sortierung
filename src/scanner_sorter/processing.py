@@ -17,6 +17,7 @@ from pypdf import PdfReader, PdfWriter
 
 from . import __version__
 from .config import Settings
+from .event_logging import structured_event
 from .models import DetectedDocument, DocumentGroup, ProcessResult
 from .recognition import PageRecognizer
 
@@ -136,11 +137,14 @@ class DocumentProcessor:
             source_size = -1
             initial_signature = None
         LOGGER.info(
-            "Vorgang gestartet; id=%s; datei=%s; groesse_bytes=%s; quelle=%s",
-            operation_id,
-            source_name,
-            source_size,
-            source,
+            structured_event(
+                "Vorgang gestartet",
+                "processing_started",
+                id=operation_id,
+                version=__version__,
+                datei=source_name,
+                groesse_bytes=source_size,
+            )
         )
 
         # A crash can occur after the job was persisted but before the input was
@@ -199,13 +203,21 @@ class DocumentProcessor:
                         archive_path,
                     )
             duration = time.perf_counter() - started
-            LOGGER.exception(
-                "Vorgang fehlgeschlagen; id=%s; status=fehler; phase=archivieren; "
-                "datei=%s; groesse_bytes=%s; gesamt_s=%.3f",
-                operation_id,
-                source_name,
-                source_size,
-                duration,
+            LOGGER.error(
+                structured_event(
+                    "Vorgang fehlgeschlagen",
+                    "processing_failed",
+                    id=operation_id,
+                    status="fehler",
+                    version=__version__,
+                    grundcode="archivierung_fehlgeschlagen",
+                    stufe="archivieren",
+                    datei=source_name,
+                    groesse_bytes=source_size,
+                    gesamt_s=f"{duration:.3f}",
+                    fehlerklasse=type(error).__name__,
+                ),
+                exc_info=True,
             )
             return ProcessResult(
                 source_name,
@@ -329,24 +341,28 @@ class DocumentProcessor:
                 f"Prüfkopie: {created[-1].name} ({reason}); Dauer: {total_seconds:.2f} s."
             )
             LOGGER.warning(
-                "Vorgang abgeschlossen; id=%s; status=nicht_erkannt; version=%s; "
-                "grundcode=%s; stufe=%s; seite=%s; datei=%s; groesse_bytes=%s; "
-                "archiv_s=%.3f; erkennung_s=%.3f; ausgabe_s=%.3f; gesamt_s=%.3f; "
-                "ziel=%s; pruefkopie=%s; grund=%s",
-                operation_id,
-                __version__,
-                reason_code,
-                recognition_stage,
-                page_number,
-                source_name,
-                source_size,
-                archive_seconds,
-                recognition_seconds,
-                output_seconds,
-                total_seconds,
-                created[0],
-                created[-1],
-                log_reason,
+                structured_event(
+                    "Vorgang abgeschlossen",
+                    "processing_completed",
+                    id=operation_id,
+                    status="nicht_erkannt",
+                    version=__version__,
+                    grundcode=reason_code,
+                    stufe=recognition_stage,
+                    seite=page_number,
+                    datei=source_name,
+                    groesse_bytes=source_size,
+                    seiten=page_count or "unbekannt",
+                    dokumente=0,
+                    typen="keine",
+                    archiv_s=f"{archive_seconds:.3f}",
+                    erkennung_s=f"{recognition_seconds:.3f}",
+                    ausgabe_s=f"{output_seconds:.3f}",
+                    gesamt_s=f"{total_seconds:.3f}",
+                    ziel=created[0].name,
+                    pruefkopie=created[-1].name,
+                    grund=log_reason,
+                )
             )
             return ProcessResult(source_name, False, message, tuple(str(path) for path in created))
 
@@ -355,22 +371,23 @@ class DocumentProcessor:
             f"Dauer: {total_seconds:.2f} s"
         )
         LOGGER.info(
-            "Vorgang abgeschlossen; id=%s; status=erfolgreich; version=%s; "
-            "datei=%s; groesse_bytes=%s; "
-            "seiten=%s; dokumente=%s; typen=%s; archiv_s=%.3f; erkennung_s=%.3f; "
-            "ausgabe_s=%.3f; gesamt_s=%.3f; ausgaben=%s",
-            operation_id,
-            __version__,
-            source_name,
-            source_size,
-            page_count,
-            len(created),
-            ",".join(document_types),
-            archive_seconds,
-            recognition_seconds,
-            output_seconds,
-            total_seconds,
-            ", ".join(path.name for path in created),
+            structured_event(
+                "Vorgang abgeschlossen",
+                "processing_completed",
+                id=operation_id,
+                status="erfolgreich",
+                version=__version__,
+                datei=source_name,
+                groesse_bytes=source_size,
+                seiten=page_count,
+                dokumente=len(created),
+                typen=",".join(document_types),
+                archiv_s=f"{archive_seconds:.3f}",
+                erkennung_s=f"{recognition_seconds:.3f}",
+                ausgabe_s=f"{output_seconds:.3f}",
+                gesamt_s=f"{total_seconds:.3f}",
+                ausgaben=", ".join(path.name for path in created),
+            )
         )
         return ProcessResult(source_name, True, message, tuple(str(path) for path in created))
 
@@ -1343,11 +1360,18 @@ class DocumentProcessor:
     ) -> ProcessResult:
         duration = time.perf_counter() - started
         LOGGER.error(
-            "Vorgang zurückgestellt; id=%s; status=offen; datei=%s; gesamt_s=%.3f; grund=%s",
-            operation_id,
-            source_name,
-            duration,
-            reason,
+            structured_event(
+                "Vorgang zurückgestellt",
+                "processing_deferred",
+                id=operation_id,
+                status="offen",
+                version=__version__,
+                grundcode="vorgang_zurueckgestellt",
+                stufe="pending",
+                datei=source_name,
+                gesamt_s=f"{duration:.3f}",
+                grund=reason,
+            )
         )
         return ProcessResult(
             source_name,
