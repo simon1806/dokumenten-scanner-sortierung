@@ -60,7 +60,7 @@ class AppTests(unittest.TestCase):
         self.assertIn("schema=2", start_message)
         self.assertIn("ereignis=application_started", start_message)
         self.assertRegex(start_message, r"sitzung=[0-9a-f]{32}")
-        self.assertIn("version=0.3.2", start_message)
+        self.assertIn("version=0.3.3", start_message)
         self.assertIn("modus=SYSTEM/Headless", start_message)
 
     def test_access_denied_mutex_is_recognized_as_cross_session_monitor(self) -> None:

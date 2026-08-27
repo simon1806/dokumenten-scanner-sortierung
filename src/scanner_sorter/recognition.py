@@ -37,6 +37,8 @@ SIGNED_OFFER_MIN_LINE_DARK_RATIO = 0.18
 SIGNED_OFFER_MIN_INK_RATIO = 0.003
 SCANNER_TIMESTAMP = re.compile(r"(?<!\d)(\d{2})(\d{2})(\d{2})\d{4,6}(?!\d)")
 NEUMA_ORDER = r"(?:I|1|\|)\s*[-–—]\s*(20\d{2})\s*[-–—]\s*(\d{6})"
+ZEIDLER_EXECUTION_SIGNAL = "AUSFUHRUNGSBESTATIGUNG"
+ZEIDLER_FAX_DIGITS = "03420238724"
 SUPPORTED_DOCUMENT_SIGNALS = (
     "AUFMASSBLATT",
     "AUFMASS SCHEIN",
@@ -50,6 +52,7 @@ SUPPORTED_DOCUMENT_SIGNALS = (
     "NOWAK",
     ASSIGNMENT_DECLARATION_SIGNAL,
     "NEUMA",
+    ZEIDLER_EXECUTION_SIGNAL,
 )
 LOGGER = logging.getLogger(__name__)
 
@@ -226,6 +229,24 @@ def is_neuma_order(text: str) -> bool:
     return "NEUMA" in normalised and bool(re.search(rf"\bAUFTRAG\s+{NEUMA_ORDER}\b", normalised))
 
 
+def is_zeidler_execution_confirmation(text: str) -> bool:
+    """Recognise the stable Zeidler execution-confirmation form header.
+
+    Some scans lose the Zeidler logo during OCR. The printed fax number and
+    slogan are therefore accepted as supplier signals, but only together with
+    the specific document heading. This keeps generic confirmations from being
+    assigned to Zeidler accidentally.
+    """
+    normalised = normalise(text)
+    digits = re.sub(r"\D", "", normalised)
+    has_supplier_signal = (
+        "ZEIDLER" in normalised
+        or ZEIDLER_FAX_DIGITS in digits
+        or ("WIR MACHEN" in normalised and "EINFACH" in normalised)
+    )
+    return ZEIDLER_EXECUTION_SIGNAL in normalised and has_supplier_signal
+
+
 def offer_number_from_text(text: str) -> str | None:
     """Read the number printed in a Glas Hagen offer header."""
     match = re.search(
@@ -300,6 +321,14 @@ def detect_document_from_text(
         if match:
             year, sequence = match.groups()
             return DetectedDocument("EM", f"I-{year}-{sequence}", "NEUMA")
+
+    if is_zeidler_execution_confirmation(normalised):
+        match = re.search(
+            rf"\bAUFTRAGS?\s*[-–—]?\s*NR\.?\s*:?\s*{NUMBER}",
+            normalised,
+        )
+        if match:
+            return DetectedDocument("Ausführung", match.group(1), "Zeidler")
 
     if is_nowak_header(normalised):
         number = extract_number(

@@ -24,6 +24,7 @@ from scanner_sorter.recognition import (
     is_nowak_header,
     is_pauli_measurement_attachment,
     is_signed_offer,
+    is_zeidler_execution_confirmation,
     offer_number_from_text,
     scan_date_from_source,
 )
@@ -717,6 +718,31 @@ class RecognitionTests(unittest.TestCase):
 
     def test_neuma_order_requires_customer_signature(self) -> None:
         self.assertIsNone(detect_document_from_text("Auftrag I-2026-003443 vom 05.06.2026"))
+
+    def test_zeidler_execution_confirmation_uses_order_number(self) -> None:
+        detected = detect_document_from_text(
+            "ZEIDLER\nAusführungsbestätigung\nAuftrags-Nr.: 1318814"
+        )
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("Ausführung-Zeidler-1318814.pdf", detected.filename)
+
+    def test_zeidler_confirmation_tolerates_unreadable_logo(self) -> None:
+        text = (
+            "Ausführungsbestätigung\nRückfax an: 034202 / 387 24\n"
+            "Auftrags-Nr.: 1317543"
+        )
+
+        self.assertTrue(is_zeidler_execution_confirmation(text))
+        detected = detect_document_from_text(text)
+        self.assertIsNotNone(detected)
+        self.assertEqual("Ausführung-Zeidler-1317543.pdf", detected.filename)
+
+    def test_generic_execution_confirmation_is_not_assigned_to_zeidler(self) -> None:
+        text = "Ausführungsbestätigung\nAuftrags-Nr.: 1317543"
+
+        self.assertFalse(is_zeidler_execution_confirmation(text))
+        self.assertIsNone(detect_document_from_text(text))
 
     def test_nowak_delivery_note_keeps_complete_number(self) -> None:
         detected = detect_document_from_text("NOWAK GLAS\nLIEFERSCHEIN 4783804")

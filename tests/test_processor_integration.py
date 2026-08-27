@@ -206,7 +206,7 @@ class ProcessorIntegrationTests(unittest.TestCase):
             self.assertIn("schema=2", summary)
             self.assertIn("ereignis=processing_completed", summary)
             self.assertRegex(summary, r"sitzung=[0-9a-f]{32}")
-            self.assertIn("version=0.3.2", summary)
+            self.assertIn("version=0.3.3", summary)
             self.assertIn("grundcode=dokumenttyp_nicht_erkannt", summary)
             self.assertIn("stufe=seitenerkennung", summary)
             self.assertIn("seite=1", summary)
