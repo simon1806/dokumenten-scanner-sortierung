@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from .config import Settings
+from .event_logging import structured_event
 from .models import ProcessResult
 from .processing import DocumentProcessor
 from .version_info import collect_version_information
@@ -140,22 +141,25 @@ class FolderWatcher:
             self._thread = threading.Thread(target=self._run, name="dokumentensortierer", daemon=False)
             self._thread.start()
         LOGGER.info(
-            "Überwachung gestartet; eingang=%s; ziel=%s; archiv=%s; pruefordner=%s; "
-            "archiv_tage=%s; dateistabilitaet_s=%s; defekt_timeout_s=%s; abfrage_s=%s; "
-            "stapel_grenze=%s; stapel_pause_s=%s; verarbeitungs_limit_s=%s; ocr_sprachen=%s; tesseract=%s",
-            self.settings.input_folder,
-            self.settings.output_folder,
-            self.settings.archive_folder,
-            self.settings.review_folder_path,
-            self.settings.archive_retention_days,
-            self.settings.settle_seconds,
-            self.settings.invalid_pdf_timeout_seconds,
-            self.settings.poll_interval_seconds,
-            self.settings.backlog_threshold,
-            self.settings.backlog_pause_seconds,
-            self.settings.processing_timeout_seconds,
-            self.settings.ocr_languages,
-            self.settings.tesseract_path or "automatisch/mitgeliefert",
+            structured_event(
+                "Überwachung gestartet",
+                "monitor_started",
+                version=self._application_version,
+                modus=self.runtime_mode,
+                eingang=self.settings.input_folder,
+                ziel=self.settings.output_folder,
+                archiv=self.settings.archive_folder,
+                pruefordner=self.settings.review_folder_path,
+                archiv_tage=self.settings.archive_retention_days,
+                dateistabilitaet_s=self.settings.settle_seconds,
+                defekt_timeout_s=self.settings.invalid_pdf_timeout_seconds,
+                abfrage_s=self.settings.poll_interval_seconds,
+                stapel_grenze=self.settings.backlog_threshold,
+                stapel_pause_s=self.settings.backlog_pause_seconds,
+                verarbeitungs_limit_s=self.settings.processing_timeout_seconds,
+                ocr_sprachen=self.settings.ocr_languages,
+                tesseract=self.settings.tesseract_path or "automatisch/mitgeliefert",
+            )
         )
         self._notify_status("Überwachung gestartet.")
 
@@ -242,7 +246,15 @@ class FolderWatcher:
                 self._stop_event.wait(self.settings.poll_interval_seconds)
         finally:
             self._end_operation()
-            LOGGER.info("Überwachung beendet.")
+            LOGGER.info(
+                structured_event(
+                    "Überwachung beendet",
+                    "monitor_stopped",
+                    version=self._application_version,
+                    modus=self.runtime_mode,
+                    laufzeit_s=max(0, round(time.monotonic() - self._started_monotonic)),
+                )
+            )
             self._notify_status("Überwachung beendet.")
 
     def _log_folder_error(
@@ -262,11 +274,17 @@ class FolderWatcher:
             self._folder_error_started_at = current
             self._folder_error_started_wallclock = wallclock or datetime.now().astimezone()
             self._last_folder_error_log = current
-            LOGGER.exception(
-                "Fehler bei der Ordnerüberwachung; versuch=%s; erneut_in_s=%.1f; fehler=%s",
-                failure_count,
-                delay,
-                error,
+            LOGGER.error(
+                structured_event(
+                    "Fehler bei der Ordnerüberwachung",
+                    "folder_error",
+                    version=self._application_version,
+                    versuch=failure_count,
+                    erneut_in_s=f"{delay:.1f}",
+                    fehlerklasse=type(error).__name__,
+                    fehler=error,
+                ),
+                exc_info=True,
             )
             return "vollstaendig"
 
@@ -276,13 +294,19 @@ class FolderWatcher:
         self._last_folder_error_log = current
         first_error = self._folder_error_started_wallclock
         LOGGER.warning(
-            "Ordnerfehler besteht fort; versuche=%s; erster_fehler=%s; dauer_s=%s; "
-            "erneut_in_s=%.1f; fehler=%s",
-            failure_count,
-            first_error.isoformat(timespec="seconds") if first_error else "unbekannt",
-            max(0, round(current - self._folder_error_started_at)),
-            delay,
-            error,
+            structured_event(
+                "Ordnerfehler besteht fort",
+                "folder_error_continues",
+                version=self._application_version,
+                versuche=failure_count,
+                erster_fehler=(
+                    first_error.isoformat(timespec="seconds") if first_error else "unbekannt"
+                ),
+                dauer_s=max(0, round(current - self._folder_error_started_at)),
+                erneut_in_s=f"{delay:.1f}",
+                fehlerklasse=type(error).__name__,
+                fehler=error,
+            )
         )
         return "kompakt"
 
@@ -290,9 +314,13 @@ class FolderWatcher:
         current = time.monotonic() if now is None else now
         duration = max(0, round(current - self._folder_error_started_at))
         LOGGER.info(
-            "Ordnerüberwachung wiederhergestellt; fehlerdauer_s=%s; versuche=%s.",
-            duration,
-            failure_count,
+            structured_event(
+                "Ordnerüberwachung wiederhergestellt",
+                "folder_recovered",
+                version=self._application_version,
+                fehlerdauer_s=duration,
+                versuche=failure_count,
+            )
         )
         self._folder_error_signature = None
         self._folder_error_started_at = 0.0
@@ -429,27 +457,27 @@ class FolderWatcher:
             last_status = "erfolgreich" if self._last_result_success else "nicht_erkannt_oder_fehler"
             last_source = self._last_result_source
         LOGGER.info(
-            "Betriebsstatus; anwendung=aktiv; ueberwachung=aktiv; version=%s; prozess_id=%s; "
-            "tesseract=%s; leptonica=%s; modus=%s; laufzeit_s=%s; "
-            "verarbeitung=%s; wartende_pdfs=%s; eingang=%s; ziel=%s; archiv=%s; "
-            "pruefordner=%s; fortlaufende_ordnerfehler=%s; letzter_vorgang=%s; "
-            "letzter_status=%s; letzte_datei=%s",
-            self._application_version,
-            os.getpid(),
-            self._tesseract_version,
-            self._leptonica_version,
-            self.runtime_mode,
-            uptime_seconds,
-            "ja" if self.processing else "nein",
-            self._waiting_pdf_count(),
-            self._directory_state(Path(self.settings.input_folder)),
-            self._directory_state(Path(self.settings.output_folder)),
-            self._directory_state(Path(self.settings.archive_folder)),
-            self._directory_state(self.settings.review_folder_path),
-            failure_count,
-            last_result,
-            last_status,
-            last_source,
+            structured_event(
+                "Betriebsstatus",
+                "monitor_heartbeat",
+                version=self._application_version,
+                prozess_id=os.getpid(),
+                tesseract=self._tesseract_version,
+                leptonica=self._leptonica_version,
+                modus=self.runtime_mode,
+                intervall_s=self.HEARTBEAT_INTERVAL_SECONDS,
+                laufzeit_s=uptime_seconds,
+                verarbeitung=self.processing,
+                wartende_pdfs=self._waiting_pdf_count(),
+                eingang=self._directory_state(Path(self.settings.input_folder)),
+                ziel=self._directory_state(Path(self.settings.output_folder)),
+                archiv=self._directory_state(Path(self.settings.archive_folder)),
+                pruefordner=self._directory_state(self.settings.review_folder_path),
+                fortlaufende_ordnerfehler=failure_count,
+                letzter_vorgang=last_result,
+                letzter_status=last_status,
+                letzte_datei=last_source,
+            )
         )
         return True
 

@@ -1,5 +1,13 @@
 # Änderungsprotokoll
 
+## 0.3.1 – 2026-08-27
+
+- Zentrale Betriebs-, Verarbeitungs- und Ordnerereignisse verwenden ein stabiles Ereignisschema mit Schema-, Ereignis- und Sitzungskennung. Dynamische Werte bleiben einzeilig und können keine zusätzlichen Felder einschleusen.
+- Der Diagnosebericht zählt Grundcodes nur noch für Problemfälle und behandelt die regulären Heartbeat-Felder korrekt. Logstufen, unklassifizierte Warnungen und Fehler sowie tatsächlich unbekannte Feldnamen bleiben sichtbar.
+- Bereits protokollierte Archivierungs-, Erkennungs- und Ausgabelaufzeiten werden mit Durchschnitt, Median, 95. Perzentil und Maximum ausgewertet. Die langsamsten Vorgänge und die Gesamtseitenzahl von Problemfällen werden gesondert ausgewiesen.
+- Anwendungsstarts und kontrollierte Stopps werden über Sitzungskennungen verknüpft. Stoppgrund, Exit-Code, Laufzeit und Heartbeat-Unterbrechungen erleichtern die Unterscheidung von Wartung und unerwartetem Prozessende.
+- Diagnose-JSON verwendet Schema 2. Alte Tageslogs bleiben weiterhin auswertbar; die Dokumenterkennung ist gegenüber 0.3.0 unverändert.
+
 ## 0.3.0 – 2026-08-19
 
 - Abschlussmeldungen enthalten nun die Anwendungsversion. Nicht erkannte Dokumente erhalten zusätzlich einen stabilen Grundcode, die Erkennungsstufe und gegebenenfalls die betroffene Seite; Freitextgründe werden einzeilig und delimiter-sicher protokolliert.

@@ -18,6 +18,7 @@ from scanner_sorter.app import (
     app_asset_path,
     canonicalize_windows_network_path,
     cleanup_old_logs,
+    configure_logging,
     consume_server_stop_request,
     initial_window_geometry,
     is_single_instance_access_denied,
@@ -37,6 +38,31 @@ from scanner_sorter.window_launcher import main as open_launcher_main
 
 
 class AppTests(unittest.TestCase):
+    def test_logging_start_event_contains_schema_session_and_runtime_mode(self) -> None:
+        settings_path = Path("settings.json")
+        version_report = SimpleNamespace(ocr=[])
+        with (
+            patch("scanner_sorter.app.logging.basicConfig"),
+            patch("scanner_sorter.app.cleanup_old_logs", return_value=0),
+            patch(
+                "scanner_sorter.app.load_settings",
+                return_value=SimpleNamespace(tesseract_path=""),
+            ),
+            patch(
+                "scanner_sorter.app.collect_version_information",
+                return_value=version_report,
+            ),
+            patch("scanner_sorter.app.logging.info") as log_info,
+        ):
+            configure_logging(settings_path, runtime_mode="SYSTEM/Headless")
+
+        start_message = log_info.call_args.args[0]
+        self.assertIn("schema=2", start_message)
+        self.assertIn("ereignis=application_started", start_message)
+        self.assertRegex(start_message, r"sitzung=[0-9a-f]{32}")
+        self.assertIn("version=0.3.1", start_message)
+        self.assertIn("modus=SYSTEM/Headless", start_message)
+
     def test_access_denied_mutex_is_recognized_as_cross_session_monitor(self) -> None:
         self.assertTrue(is_single_instance_access_denied(OSError(5, "Zugriff verweigert")))
         self.assertFalse(is_single_instance_access_denied(OSError(3, "Pfad nicht gefunden")))
@@ -80,6 +106,7 @@ class AppTests(unittest.TestCase):
         settings = SimpleNamespace(validate=lambda: [], input_folder="eingang")
         monitor_instance = object()
         watcher = Mock()
+        shutdown_reason = Mock()
         with (
             patch("scanner_sorter.app.load_settings", return_value=settings),
             patch("scanner_sorter.app.consume_server_stop_request", side_effect=[False, True]),
@@ -89,11 +116,12 @@ class AppTests(unittest.TestCase):
             patch("scanner_sorter.app.signal.signal"),
             patch("scanner_sorter.app.release_single_instance") as release,
         ):
-            result = run_headless(settings_path)
+            result = run_headless(settings_path, on_shutdown_reason=shutdown_reason)
 
         self.assertEqual(0, result)
         watcher.start.assert_called_once_with()
         watcher.stop.assert_called_once_with()
+        shutdown_reason.assert_called_once_with("server_stoppsignal")
         release.assert_called_once_with(monitor_instance)
 
     def test_default_window_is_large_and_centered_on_full_hd_screen(self) -> None:
@@ -572,15 +600,23 @@ class AppTests(unittest.TestCase):
         instance = object()
         with (
             patch("scanner_sorter.app.acquire_single_instance", return_value=(True, instance)),
-            patch("scanner_sorter.app.configure_logging"),
+            patch("scanner_sorter.app.configure_logging") as configure,
+            patch("scanner_sorter.app.logging.info") as log_info,
             patch("scanner_sorter.app.release_single_instance") as release,
             patch("scanner_sorter.app.SettingsWindow") as window_type,
         ):
             result = main(["--autostart", "--settings", str(settings_path)])
 
         self.assertEqual(0, result)
+        configure.assert_called_once_with(
+            settings_path, runtime_mode="Benutzeroberfläche/Autostart"
+        )
         window_type.assert_called_once_with(settings_path, start_monitoring=True)
         window_type.return_value.run.assert_called_once_with()
+        stop_message = log_info.call_args.args[0]
+        self.assertIn("ereignis=application_stopped", stop_message)
+        self.assertIn("grund=kontrolliert", stop_message)
+        self.assertIn("exit_code=0", stop_message)
         release.assert_called_once_with(instance)
 
     def test_self_test_runs_before_mutex_and_settings_access(self) -> None:

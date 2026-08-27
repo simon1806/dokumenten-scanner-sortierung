@@ -50,6 +50,7 @@ class DiagnosticReportTests(unittest.TestCase):
             self.assertEqual(0.5, results["recognition_rate"])
             self.assertEqual(1, report["parser_statistics"]["legacy_records"])
             self.assertEqual(1, report["grouped_by_reason_code"][LEGACY_REASON_CODE])
+            self.assertNotIn("nicht_angegeben", report["grouped_by_reason_code"])
             self.assertEqual(1, report["grouped_by_document_type"]["AM"])
             self.assertEqual(2, report["summary"]["application_starts"] + 1)
             self.assertIn("0.3.0", report["grouped_by_version"])
@@ -71,6 +72,10 @@ class DiagnosticReportTests(unittest.TestCase):
             self.assertEqual(1, report["summary"]["processing_results"]["total"])
             self.assertEqual(1, report["parser_statistics"]["malformed_lines"])
             self.assertEqual(1, report["parser_statistics"]["unknown_fields_ignored"])
+            self.assertEqual(1, report["parser_statistics"]["records_with_unknown_fields"])
+            self.assertEqual(
+                {"zukunftsfeld": 1}, report["parser_statistics"]["unknown_field_names"]
+            )
 
     def test_queue_folder_errors_and_starts_are_aggregated(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -94,6 +99,100 @@ class DiagnosticReportTests(unittest.TestCase):
             self.assertEqual(7, report["summary"]["queue"]["maximum_waiting_pdfs"])
             self.assertEqual(1, report["summary"]["folder_monitoring"]["errors"])
             self.assertEqual(1, report["summary"]["folder_monitoring"]["recoveries"])
+
+    def test_current_heartbeat_fields_are_known_and_session_gaps_are_evaluated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_log(
+                directory,
+                "2026-08-19 06:00:00,000 INFO scanner_sorter.app [MainThread]: "
+                "Anwendung gestartet; schema=2; ereignis=application_started; sitzung=abc; "
+                "version=0.3.0; modus=SYSTEM/Headless; prozess_id=10\n"
+                "2026-08-19 06:10:00,000 INFO scanner_sorter.watcher [worker]: "
+                "Betriebsstatus; schema=2; ereignis=monitor_heartbeat; sitzung=abc; "
+                "version=0.3.0; intervall_s=600; laufzeit_s=600; wartende_pdfs=0; "
+                "eingang=erreichbar; ziel=erreichbar; archiv=erreichbar; "
+                "pruefordner=erreichbar; fortlaufende_ordnerfehler=0\n"
+                "2026-08-19 06:20:00,000 INFO scanner_sorter.watcher [worker]: "
+                "Betriebsstatus; schema=2; ereignis=monitor_heartbeat; sitzung=abc; "
+                "version=0.3.0; intervall_s=600; wartende_pdfs=1\n"
+                "2026-08-19 06:21:00,000 INFO scanner_sorter.app [MainThread]: "
+                "Anwendung beendet; schema=2; ereignis=application_stopped; sitzung=abc; "
+                "version=0.3.0; modus=SYSTEM/Headless; grund=kontrolliert; exit_code=0; "
+                "laufzeit_s=1260\n",
+            )
+
+            report = build_diagnostic_report(directory, days=7, end_date=self.report_day)
+
+            self.assertEqual({}, report["parser_statistics"]["unknown_field_names"])
+            self.assertEqual(1, report["summary"]["queue"]["maximum_waiting_pdfs"])
+            lifecycle = report["summary"]["application_lifecycle"]
+            self.assertEqual(1, lifecycle["identified_sessions_started"])
+            self.assertEqual(1, lifecycle["identified_sessions_stopped"])
+            self.assertEqual(0, lifecycle["sessions_without_stop"])
+            self.assertEqual({"kontrolliert": 1}, lifecycle["shutdown_reasons"])
+            continuity = report["summary"]["heartbeat_continuity"]
+            self.assertEqual(1, continuity["gaps_evaluated"])
+            self.assertEqual(0, continuity["suspected_interruptions"])
+            self.assertEqual(600.0, continuity["maximum_gap_seconds"])
+
+    def test_unclassified_warning_and_error_levels_remain_visible(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_log(
+                directory,
+                "2026-08-19 07:00:00,000 WARNING scanner_sorter.recognition [worker]: "
+                "Barcode-Erkennung fehlgeschlagen\n"
+                "2026-08-19 07:01:00,000 ERROR scanner_sorter.processing [worker]: "
+                "Unerwartete interne Meldung\n",
+            )
+
+            report = build_diagnostic_report(directory, days=7, end_date=self.report_day)
+
+            health = report["summary"]["log_health"]
+            self.assertEqual(1, health["unclassified_warning_lines"])
+            self.assertEqual(1, health["unclassified_error_or_critical_lines"])
+            self.assertEqual(
+                {"ERROR": 1, "WARNING": 1},
+                report["parser_statistics"]["unclassified_lines_by_level"],
+            )
+
+    def test_structured_technical_error_is_classified_with_reason_and_stage(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_log(
+                directory,
+                "2026-08-19 07:00:00,000 ERROR scanner_sorter.processing [worker]: "
+                "Vorgang fehlgeschlagen; schema=2; ereignis=processing_failed; sitzung=abc; "
+                "id=123; status=fehler; version=0.3.1; "
+                "grundcode=archivierung_fehlgeschlagen; stufe=archivieren; "
+                "datei=scan.pdf; groesse_bytes=50; gesamt_s=0.5; fehlerklasse=OSError\n",
+            )
+
+            report = build_diagnostic_report(directory, days=7, end_date=self.report_day)
+
+            results = report["summary"]["processing_results"]
+            self.assertEqual(1, results["technical_errors"])
+            self.assertEqual(1, report["grouped_by_reason_code"]["archivierung_fehlgeschlagen"])
+            self.assertEqual("archivieren", report["problem_cases"][0]["stage"])
+            self.assertEqual(0, report["summary"]["log_health"]["unclassified_error_or_critical_lines"])
+
+    def test_phase_statistics_and_slowest_cases_use_existing_log_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_log(
+                directory,
+                "2026-08-19 08:00:00,000 INFO scanner_sorter.processing [worker]: "
+                "Vorgang abgeschlossen; status=erfolgreich; version=0.3.0; datei=schnell.pdf; "
+                "archiv_s=1; erkennung_s=2; ausgabe_s=3; gesamt_s=6\n"
+                "2026-08-19 08:01:00,000 INFO scanner_sorter.processing [worker]: "
+                "Vorgang abgeschlossen; status=erfolgreich; version=0.3.0; datei=langsam.pdf; "
+                "archiv_s=2; erkennung_s=8; ausgabe_s=4; gesamt_s=14\n",
+            )
+
+            report = build_diagnostic_report(directory, days=7, end_date=self.report_day)
+
+            phases = report["summary"]["phase_duration_seconds"]
+            self.assertEqual(5.0, phases["recognition"]["average"])
+            self.assertEqual(4.0, phases["output"]["maximum"])
+            self.assertEqual(14.0, report["slowest_cases"][0]["duration_seconds"])
+            self.assertNotIn("filename", report["slowest_cases"][0])
 
     def test_statistics_cover_empty_single_median_p95_and_maximum(self) -> None:
         self.assertEqual(0, _statistics([])["count"])
@@ -180,7 +279,7 @@ class DiagnosticReportTests(unittest.TestCase):
                     set(archive.namelist()),
                 )
                 report = json.loads(archive.read("diagnosebericht.json"))
-                self.assertEqual(1, report["schema_version"])
+                self.assertEqual(2, report["schema_version"])
                 self.assertEqual(7, report["report_period"]["days"])
                 self.assertIn("<!doctype html>", archive.read("diagnosebericht.html").decode())
 
