@@ -191,8 +191,40 @@ class DiagnosticReportTests(unittest.TestCase):
             phases = report["summary"]["phase_duration_seconds"]
             self.assertEqual(5.0, phases["recognition"]["average"])
             self.assertEqual(4.0, phases["output"]["maximum"])
+            self.assertEqual(
+                10.0,
+                report["grouped_by_version"]["0.3.0"]["duration_seconds"]["average"],
+            )
             self.assertEqual(14.0, report["slowest_cases"][0]["duration_seconds"])
             self.assertNotIn("filename", report["slowest_cases"][0])
+
+    def test_recognition_metrics_and_runtime_sources_are_aggregated(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_log(
+                directory,
+                "2026-08-19 08:00:00,000 INFO scanner_sorter.processing [worker]: "
+                "Vorgang abgeschlossen; schema=2; ereignis=processing_completed; "
+                "status=erfolgreich; version=0.3.4; gesamt_s=8; erkennung_s=7; "
+                "render_s=1; barcode_s=0.5; ocr_s=5; ocr_aufrufe=2; "
+                "ocr_pixel=1200000; ocr_max_s=3; "
+                "erkennungspfade=barcode:1,lieferantenkopf_klein:1,neuma_kopf:1; "
+                "tesseract_quelle=anwendungsverzeichnis\n",
+            )
+
+            report = build_diagnostic_report(directory, days=7, end_date=self.report_day)
+
+            metrics = report["summary"]["recognition_diagnostics"]
+            self.assertEqual(1.0, metrics["render_seconds"]["average"])
+            self.assertEqual(2.0, metrics["ocr_calls"]["average"])
+            self.assertEqual(1_200_000.0, metrics["ocr_pixels"]["maximum"])
+            self.assertEqual(1, metrics["recognition_path_usage"]["neuma_kopf"])
+            source = report["grouped_by_tesseract_source"]["anwendungsverzeichnis"]
+            self.assertEqual(5.0, source["ocr_seconds"]["average"])
+            self.assertEqual(2.0, source["ocr_calls"]["average"])
+            self.assertEqual({}, report["parser_statistics"]["unknown_field_names"])
+            html = render_diagnostic_html(report)
+            self.assertIn("Ø Laufzeit (s)", html)
+            self.assertIn("OCR-Laufzeitquellen", html)
 
     def test_statistics_cover_empty_single_median_p95_and_maximum(self) -> None:
         self.assertEqual(0, _statistics([])["count"])
@@ -220,7 +252,9 @@ class DiagnosticReportTests(unittest.TestCase):
                 "2026-08-19 08:00:00,000 WARNING scanner_sorter.processing [worker]: "
                 "Vorgang abgeschlossen; status=nicht_erkannt; version=0.3.0; "
                 "grundcode=kein_text; stufe=ocr; seite=1; "
-                "datei=C:\\Geheim\\kunde.pdf; gesamt_s=3.0\n",
+                "datei=C:\\Geheim\\kunde.pdf; gesamt_s=3.0; "
+                "tesseract_quelle=C:\\Geheim\\tesseract.exe; "
+                "erkennungspfade=C:\\Geheim:1\n",
             )
 
             report = build_diagnostic_report(
@@ -230,6 +264,7 @@ class DiagnosticReportTests(unittest.TestCase):
 
             self.assertNotIn("kunde.pdf", serialized)
             self.assertNotIn("Geheim", serialized)
+            self.assertIn('"tesseract_source": "unbekannt"', serialized)
             self.assertNotIn("filename", report["problem_cases"][0])
             self.assertFalse(report["privacy"]["filenames_included"])
             self.assertFalse(report["privacy"]["full_paths_included"])
@@ -279,7 +314,7 @@ class DiagnosticReportTests(unittest.TestCase):
                     set(archive.namelist()),
                 )
                 report = json.loads(archive.read("diagnosebericht.json"))
-                self.assertEqual(2, report["schema_version"])
+                self.assertEqual(3, report["schema_version"])
                 self.assertEqual(7, report["report_period"]["days"])
                 self.assertIn("<!doctype html>", archive.read("diagnosebericht.html").decode())
 

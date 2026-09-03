@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-from .config import Settings
+from .config import Settings, tesseract_runtime_source
 from .event_logging import structured_event
 from .models import ProcessResult
 from .processing import DocumentProcessor
@@ -67,6 +67,7 @@ class FolderWatcher:
         self._application_version = "unbekannt"
         self._tesseract_version = "unbekannt"
         self._leptonica_version = "unbekannt"
+        self._tesseract_source = tesseract_runtime_source(self.settings.tesseract_path)
         self._collect_runtime_versions()
 
     @staticmethod
@@ -159,6 +160,7 @@ class FolderWatcher:
                 verarbeitungs_limit_s=self.settings.processing_timeout_seconds,
                 ocr_sprachen=self.settings.ocr_languages,
                 tesseract=self.settings.tesseract_path or "automatisch/mitgeliefert",
+                tesseract_quelle=self._tesseract_source,
             )
         )
         self._notify_status("Überwachung gestartet.")

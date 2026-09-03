@@ -69,7 +69,7 @@ Die Oberfläche verwaltet:
 - Archivordner für Originalscans und offene Vorgänge
 - Prüfordner für nicht erkannte oder beschädigte Scans
 - Archiv-Aufbewahrung in Tagen, Standard 30
-- Dateistabilität nach der letzten Änderung, Standard 2 Sekunden
+- Dateistabilität nach der letzten Änderung, Standard 1 Sekunde
 - Wartezeit für unvollständige PDFs, Standard 60 Sekunden
 - Stapelgrenze und Stapelpause für einen kontrollierten Wiederanlauf nach Rückstau, Standard 3 PDFs und 10 Sekunden
 - OCR-Gesamtlimit pro Scan, Standard 90 Sekunden
@@ -115,7 +115,7 @@ dokumentensortierer-2026-07-15.log
 
 Tagesprotokolle werden 90 Tage aufbewahrt. Andere Dateien im Protokollordner werden von der Bereinigung nicht gelöscht.
 
-Jeder Vorgang erhält eine ID. Protokolliert werden unter anderem Ergebnisstatus, Anwendungsversion, Dateiname und Größe, Seiten- und Dokumentanzahl, erkannte Typen, Ausgabedateien sowie Zeiten für Archivierung, Erkennung, Ausgabe und Gesamtverarbeitung. Nicht erkannte Dokumente erhalten einen stabilen `grundcode`, die betroffene `stufe` und gegebenenfalls eine `seite`; der ergänzende Freitextgrund bleibt einzeilig. Startmeldungen enthalten Anwendung, Python, Tesseract, Leptonica, System, Prozess-ID und die wesentlichen Betriebseinstellungen. Vollständiger OCR-Text wird bewusst nicht gespeichert.
+Jeder Vorgang erhält eine ID. Protokolliert werden unter anderem Ergebnisstatus, Anwendungsversion, Dateiname und Größe, Seiten- und Dokumentanzahl, erkannte Typen, Ausgabedateien sowie Zeiten für Archivierung, Erkennung, Ausgabe und Gesamtverarbeitung. Die Erkennungsphase weist zusätzlich PDF-Rendering, Barcode-Erkennung, OCR-Gesamtzeit, langsamsten OCR-Einzelaufruf, OCR-Aufrufzahl, verarbeitete OCR-Pixel, verwendete Erkennungspfade und die pfadfreie Tesseract-Laufzeitquelle aus. Nicht erkannte Dokumente erhalten einen stabilen `grundcode`, die betroffene `stufe` und gegebenenfalls eine `seite`; der ergänzende Freitextgrund bleibt einzeilig. Startmeldungen enthalten Anwendung, Python, Tesseract, Leptonica, System, Prozess-ID und die wesentlichen Betriebseinstellungen. Vollständiger OCR-Text wird bewusst nicht gespeichert.
 
 ## Installation und Update
 
@@ -145,11 +145,11 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Version 0.3.3 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, pypdf 6.16.2 und zxing-cpp 3.1.1. Sie ergänzt die Erkennung tiefer liegender Belegzeilen, mehrseitiger Heitzer-Lieferscheine mit abgesicherter Seitensortierung sowie Zeidler-Ausführungsbestätigungen. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-, Bohle-, Pauli- und Heitzer-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung, Zeidler-Ausführungsbestätigung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
+Version 0.3.4 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, pypdf 6.16.2 und zxing-cpp 3.1.1. Sie ergänzt eine kleinere NEUMA-Kopferkennung, detaillierte OCR-Laufzeitmessungen und die Durchschnittslaufzeit je Anwendungsversion. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-, Bohle-, Pauli- und Heitzer-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung, Zeidler-Ausführungsbestätigung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.3.3 enthält:
+Release 0.3.4 enthält:
 
 - Tesseract OCR 5.5.3
 - Leptonica 1.87.0
@@ -157,7 +157,7 @@ Release 0.3.3 enthält:
 
 Die Versionen werden beim Build geprüft und im Infofenster sowie im Release-Manifest ausgewiesen. Weitere verwendete Bibliotheken und ihre Lizenzhinweise stehen in `THIRD_PARTY_NOTICES.md`. Insbesondere PyMuPDF ist dual unter AGPL und kommerzieller Lizenz verfügbar; der Betreiber muss vor einer Weitergabe oder Bereitstellung die passende Lizenzgrundlage festlegen.
 
-Ein Tesseract-Pfad muss im normalen Betrieb nicht eingestellt werden: Die geprüfte OCR-Laufzeit ist im Paket enthalten. Bereits vorhandene technische Pfadüberschreibungen in der Einstellungsdatei werden weiterhin berücksichtigt, sind aber bewusst nicht Teil der normalen Bedienoberfläche.
+Ein Tesseract-Pfad muss im normalen Betrieb nicht eingestellt werden: Die geprüfte OCR-Laufzeit ist im Paket enthalten. Eine geprüfte Laufzeit im Anwendungsverzeichnis wird vor der temporär entpackten Paketlaufzeit verwendet; eine technische Pfadüberschreibung in der Einstellungsdatei hat weiterhin Vorrang. Der Diagnosebericht gruppiert Laufzeiten nach dieser pfadfreien Quelle, damit ein Serververgleich ohne Export vollständiger Installationspfade möglich ist. Technische Pfadüberschreibungen bleiben bewusst außerhalb der normalen Bedienoberfläche.
 
 ## Automatischer Betrieb auf Windows Server 2025
 
@@ -193,7 +193,7 @@ Wird die normale Benutzeroberfläche geöffnet, während diese SYSTEM-Aufgabe de
 
 Das Aktivitätsprotokoll in der Oberfläche zeigt bei eingerichtetem Serverautostart automatisch das zentrale Tagesprotokoll aus `C:\ProgramData\DokumentenScannerSortierung\logs`. Die Benutzeroberfläche schreibt weiterhin ihr eigenes Diagnoseprotokoll unter `%APPDATA%`; dadurch lesen beide Betriebsarten gemeinsam sichtbar aus einer zentralen Quelle, ohne gleichzeitig dieselbe Datei zu verändern.
 
-Über **Diagnosebericht erstellen** kann dieses lokale Protokoll für die letzten 7, 30 oder 90 Tage ausgewertet werden; voreingestellt sind 30 Tage. Das erzeugte ZIP enthält ausschließlich `diagnosebericht.html` und `diagnosebericht.json`. Schema 2 des JSON-Berichts enthält zusätzlich Logstufen, tatsächlich unbekannte Felder, Phasenlaufzeiten, langsame Vorgänge, Sitzungslebenszyklen und Heartbeat-Unterbrechungen. Dateinamen sind standardmäßig deaktiviert und müssen bewusst freigegeben werden, vollständige Pfade werden nie aufgenommen. Rohlogs, PDFs und OCR-Volltexte verlassen den Rechner nicht und sind nicht Teil des Berichts. Die laufende Überwachung muss für den Export nicht beendet werden.
+Über **Diagnosebericht erstellen** kann dieses lokale Protokoll für die letzten 7, 30 oder 90 Tage ausgewertet werden; voreingestellt sind 30 Tage. Das erzeugte ZIP enthält ausschließlich `diagnosebericht.html` und `diagnosebericht.json`. Schema 3 des JSON-Berichts enthält zusätzlich die Durchschnittslaufzeit je Anwendungsversion, Render-, Barcode- und OCR-Statistiken, OCR-Aufruf- und Pixelzahlen, Erkennungspfade sowie einen Vergleich nach pfadfreier Tesseract-Laufzeitquelle. Ältere Logs bleiben auswertbar und erscheinen bei den neuen Messwerten als nicht verfügbar beziehungsweise `legacy_nicht_spezifiziert`. Dateinamen sind standardmäßig deaktiviert und müssen bewusst freigegeben werden, vollständige Pfade werden nie aufgenommen. Rohlogs, PDFs und OCR-Volltexte verlassen den Rechner nicht und sind nicht Teil des Berichts. Die laufende Überwachung muss für den Export nicht beendet werden.
 
 Für Netzwerkfreigaben sind UNC-Pfade wie `\\server\freigabe\scanner\eingang` robuster als benutzerabhängige Laufwerksbuchstaben. Das Dienstkonto benötigt Lesen/Ändern/Löschen im Eingang sowie Lesen/Schreiben/Ändern in Ziel, Archiv, Prüfordner und am Ordner der zentralen `settings.json`.
 
@@ -220,11 +220,11 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.3.3 bauen:
+OCR-Paket vorbereiten und Release 0.3.4 bauen:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.3.3
+.\scripts\build-release.ps1 -Version 0.3.4
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.

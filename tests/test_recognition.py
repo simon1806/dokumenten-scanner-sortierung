@@ -152,6 +152,25 @@ class RecognitionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "OCR-Gesamtzeitlimit"):
                 recognizer._remaining_ocr_seconds()
 
+    @patch("pytesseract.image_to_string", return_value="NEUMA")
+    @patch("scanner_sorter.recognition.find_tesseract_executable", return_value=None)
+    def test_ocr_metrics_count_process_calls_and_pixels(
+        self,
+        _mock_find: object,
+        _image_to_string: object,
+    ) -> None:
+        recognizer = PageRecognizer(Settings())
+        recognizer._start_metrics()
+        recognizer._record_path("neuma_kopf")
+        recognizer._read_ocr(Image.new("RGB", (20, 30), "white"))
+        recognizer._finish_metrics()
+
+        metrics = recognizer.last_metrics
+        self.assertEqual(1, metrics["ocr_calls"])
+        self.assertEqual(600, metrics["ocr_pixels"])
+        self.assertGreaterEqual(metrics["ocr_seconds"], 0.0)
+        self.assertEqual({"neuma_kopf": 1}, metrics["recognition_paths"])
+
     def test_render_rejects_unusually_large_page(self) -> None:
         class Rect:
             width = MAX_RENDER_PIXELS
@@ -813,6 +832,39 @@ class RecognitionTests(unittest.TestCase):
         self.assertIsNotNone(detected)
         self.assertEqual("LS-Nowak-4883804.pdf", detected.filename)
         read_ocr.assert_called_once_with(("Ausschnitt", (390, 35, 750, 287)))
+
+    def test_neuma_fast_area_uses_smaller_header_and_skips_general_header(self) -> None:
+        class ScanPage:
+            @staticmethod
+            def get_text(_mode: str) -> str:
+                return ""
+
+        class ScanImage:
+            size = (1000, 1400)
+
+            @staticmethod
+            def crop(box: tuple[int, int, int, int]) -> object:
+                return ("Ausschnitt", box)
+
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=ScanImage()),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("NEUMA", "NEUMA Auftrag I-2026-005114"),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(ScanPage())
+
+        self.assertIsNotNone(detected)
+        self.assertEqual("EM-NEUMA-I-2026-005114.pdf", detected.filename)
+        self.assertEqual(2, read_ocr.call_count)
+        self.assertEqual(
+            ("Ausschnitt", (0, 0, 1000, 490)),
+            read_ocr.call_args_list[1].args[0],
+        )
 
     def test_heitzer_delivery_note(self) -> None:
         detected = detect_document_from_text("Heitzer AG\nLIEFERSCHEIN 26060887 vom 16.06.2026")

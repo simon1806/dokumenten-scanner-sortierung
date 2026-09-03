@@ -30,6 +30,19 @@ _ARCHIVE_MARKER_CONTENT = "DokumentenScannerSortierung archive v1\n"
 _ARCHIVE_METADATA_SUFFIX = ".dokumentensortierer-archiv.json"
 _DATE_FOLDER_PATTERN = re.compile(r"\d{4}-\d{2}-\d{2}")
 _JOB_SCHEMA_VERSION = 2
+_RECOGNITION_PATHS = {
+    "eingebetteter_text",
+    "barcode",
+    "lieferantenkopf_klein",
+    "neuma_kopf",
+    "bohle_nummer",
+    "montage_kopf",
+    "allgemeiner_kopf",
+    "abtretung_nummer",
+    "angebot_bestaetigung",
+    "ganzseite",
+    "heitzer_seitenreferenz",
+}
 
 
 class ProcessingError(RuntimeError):
@@ -325,6 +338,13 @@ class DocumentProcessor:
         archive_path = Path(str(job["archive_path"]))
         recognition_seconds = float(job.get("recognition_seconds", 0.0))
         output_seconds = float(job.get("output_seconds", 0.0))
+        recognition_metrics = self._normalise_recognition_metrics(
+            job.get("recognition_metrics")
+        )
+        recognition_paths = ",".join(
+            f"{name}:{count}"
+            for name, count in recognition_metrics["recognition_paths"].items()
+        ) or "keine"
         outcome = str(job["outcome"])
         page_count = int(job.get("page_count", 0))
         document_types = tuple(str(value) for value in job.get("document_types", []))
@@ -357,6 +377,14 @@ class DocumentProcessor:
                     typen="keine",
                     archiv_s=f"{archive_seconds:.3f}",
                     erkennung_s=f"{recognition_seconds:.3f}",
+                    render_s=f"{recognition_metrics['render_seconds']:.3f}",
+                    barcode_s=f"{recognition_metrics['barcode_seconds']:.3f}",
+                    ocr_s=f"{recognition_metrics['ocr_seconds']:.3f}",
+                    ocr_aufrufe=recognition_metrics["ocr_calls"],
+                    ocr_pixel=recognition_metrics["ocr_pixels"],
+                    ocr_max_s=f"{recognition_metrics['ocr_max_seconds']:.3f}",
+                    erkennungspfade=recognition_paths,
+                    tesseract_quelle=recognition_metrics["tesseract_source"],
                     ausgabe_s=f"{output_seconds:.3f}",
                     gesamt_s=f"{total_seconds:.3f}",
                     ziel=created[0].name,
@@ -384,6 +412,14 @@ class DocumentProcessor:
                 typen=",".join(document_types),
                 archiv_s=f"{archive_seconds:.3f}",
                 erkennung_s=f"{recognition_seconds:.3f}",
+                render_s=f"{recognition_metrics['render_seconds']:.3f}",
+                barcode_s=f"{recognition_metrics['barcode_seconds']:.3f}",
+                ocr_s=f"{recognition_metrics['ocr_seconds']:.3f}",
+                ocr_aufrufe=recognition_metrics["ocr_calls"],
+                ocr_pixel=recognition_metrics["ocr_pixels"],
+                ocr_max_s=f"{recognition_metrics['ocr_max_seconds']:.3f}",
+                erkennungspfade=recognition_paths,
+                tesseract_quelle=recognition_metrics["tesseract_source"],
                 ausgabe_s=f"{output_seconds:.3f}",
                 gesamt_s=f"{total_seconds:.3f}",
                 ausgaben=", ".join(path.name for path in created),
@@ -400,7 +436,9 @@ class DocumentProcessor:
 
         recognition_started = time.perf_counter()
         try:
-            groups, page_count, recognition_seconds = self._recognise_groups(archive_path)
+            groups, page_count, recognition_seconds, recognition_metrics = self._recognise_groups(
+                archive_path
+            )
         except Exception as recognition_error:
             reason_code, recognition_stage, page_number = self._recognition_failure_details(
                 recognition_error
@@ -415,6 +453,7 @@ class DocumentProcessor:
                 recognition_stage=recognition_stage,
                 page_number=page_number,
                 recognition_seconds=time.perf_counter() - recognition_started,
+                recognition_metrics=self._recognizer_metrics(),
             )
 
         output_started = time.perf_counter()
@@ -449,6 +488,7 @@ class DocumentProcessor:
                 recognition_stage="ausgabevorbereitung",
                 page_count=page_count,
                 recognition_seconds=recognition_seconds,
+                recognition_metrics=recognition_metrics,
                 output_seconds=time.perf_counter() - output_started,
             )
 
@@ -465,6 +505,7 @@ class DocumentProcessor:
                     f"{group.detected.document_type}:{len(group.page_indexes)}S" for group in groups
                 ],
                 "recognition_seconds": recognition_seconds,
+                "recognition_metrics": recognition_metrics,
                 "output_seconds": time.perf_counter() - output_started,
                 "plan": plan,
             }
@@ -488,6 +529,7 @@ class DocumentProcessor:
         page_number: int | None = None,
         page_count: int = 0,
         recognition_seconds: float = 0.0,
+        recognition_metrics: dict[str, object] | None = None,
         output_seconds: float = 0.0,
     ) -> dict[str, Any]:
         """Stage the unchanged original for target and review after a permanent PDF error."""
@@ -516,6 +558,9 @@ class DocumentProcessor:
                     "page_count": page_count,
                     "document_types": [],
                     "recognition_seconds": recognition_seconds,
+                    "recognition_metrics": self._normalise_recognition_metrics(
+                        recognition_metrics
+                    ),
                     "output_seconds": output_seconds,
                     "plan": [
                         self._plan_item(job_file.parent, stage, output),
@@ -533,7 +578,7 @@ class DocumentProcessor:
     def _recognise_groups(
         self,
         source: Path,
-    ) -> tuple[list[DocumentGroup], int, float]:
+    ) -> tuple[list[DocumentGroup], int, float, dict[str, object]]:
         try:
             import pymupdf
         except ImportError as error:  # pragma: no cover - dependency check at runtime
@@ -563,7 +608,12 @@ class DocumentProcessor:
         groups = group_page_detections(detections)
         for group in groups:
             group.page_indexes = [source_indexes[index] for index in group.page_indexes]
-        return groups, len(detections), time.perf_counter() - recognition_started
+        return (
+            groups,
+            len(detections),
+            time.perf_counter() - recognition_started,
+            self._recognizer_metrics(),
+        )
 
     @staticmethod
     def _recognition_failure_details(error: Exception) -> tuple[str, str, int | None]:
@@ -589,6 +639,57 @@ class DocumentProcessor:
         """Keep structured log values on one delimiter-safe line."""
         sanitised = re.sub(r"[\r\n;]+", " ", str(value))
         return re.sub(r"\s+", " ", sanitised).strip() or "keine"
+
+    def _recognizer_metrics(self) -> dict[str, object]:
+        return self._normalise_recognition_metrics(
+            getattr(self.recognizer, "last_metrics", None)
+        )
+
+    @staticmethod
+    def _normalise_recognition_metrics(value: object) -> dict[str, object]:
+        source = value if isinstance(value, dict) else {}
+
+        def nonnegative_float(name: str) -> float:
+            try:
+                return max(0.0, float(source.get(name, 0.0)))
+            except (TypeError, ValueError):
+                return 0.0
+
+        def nonnegative_int(name: str) -> int:
+            try:
+                return max(0, int(source.get(name, 0)))
+            except (TypeError, ValueError):
+                return 0
+
+        raw_paths = source.get("recognition_paths", {})
+        if not isinstance(raw_paths, dict):
+            raw_paths = {}
+        paths = {
+            str(name): max(0, int(count))
+            for name, count in raw_paths.items()
+            if str(name) in _RECOGNITION_PATHS and isinstance(count, (int, float))
+        }
+        tesseract_source = str(source.get("tesseract_source", "unbekannt"))
+        if tesseract_source not in {
+            "anwendungsverzeichnis",
+            "mitgeliefert_temporaer",
+            "systeminstallation",
+            "konfiguriert",
+            "konfiguriert_nicht_gefunden",
+            "nicht_gefunden",
+            "unbekannt",
+        }:
+            tesseract_source = "unbekannt"
+        return {
+            "render_seconds": nonnegative_float("render_seconds"),
+            "barcode_seconds": nonnegative_float("barcode_seconds"),
+            "ocr_seconds": nonnegative_float("ocr_seconds"),
+            "ocr_calls": nonnegative_int("ocr_calls"),
+            "ocr_pixels": nonnegative_int("ocr_pixels"),
+            "ocr_max_seconds": nonnegative_float("ocr_max_seconds"),
+            "recognition_paths": dict(sorted(paths.items())),
+            "tesseract_source": tesseract_source,
+        }
 
     def _publish_job(self, job_file: Path, job: dict[str, Any]) -> list[Path]:
         self._validate_job(job_file, job, require_plan=True)
@@ -707,6 +808,7 @@ class DocumentProcessor:
             "page_count": 0,
             "document_types": [],
             "recognition_seconds": 0.0,
+            "recognition_metrics": self._normalise_recognition_metrics(None),
             "output_seconds": 0.0,
             "plan": [],
         }
