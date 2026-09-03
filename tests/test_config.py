@@ -7,10 +7,26 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from scanner_sorter.config import ConfigurationError, Settings, load_settings, save_settings
+from scanner_sorter.config import (
+    ConfigurationError,
+    Settings,
+    load_settings,
+    save_settings,
+    tesseract_runtime_source,
+)
 
 
 class SettingsTests(unittest.TestCase):
+    def test_new_installations_wait_one_second_for_file_stability(self) -> None:
+        self.assertEqual(1, Settings().settle_seconds)
+
+    def test_tesseract_source_never_contains_a_path(self) -> None:
+        with patch(
+            "scanner_sorter.config.find_tesseract_executable",
+            return_value=Path(r"C:\OCR\tesseract.exe"),
+        ):
+            self.assertEqual("konfiguriert", tesseract_runtime_source(r"C:\OCR\tesseract.exe"))
+
     def test_review_folder_defaults_to_subfolder_of_output(self) -> None:
         settings = Settings(input_folder="eingang", output_folder="ziel", archive_folder="archiv")
 

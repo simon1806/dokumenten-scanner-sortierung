@@ -1,5 +1,13 @@
 # Änderungsprotokoll
 
+## 0.3.4 – 2026-09-03
+
+- Verarbeitungslogs messen PDF-Rendering, Barcode-Erkennung, OCR-Gesamtzeit, langsamsten OCR-Einzelaufruf, OCR-Aufrufzahl, OCR-Pixel, Erkennungspfade und die pfadfreie Tesseract-Laufzeitquelle. OCR-Inhalte und vollständige Installationspfade werden weiterhin nicht protokolliert oder exportiert.
+- Diagnose-JSON Schema 3 und der lokale HTML-Bericht zeigen die Durchschnittslaufzeit je Anwendungsversion sowie detaillierte Erkennungsstatistiken und gruppieren Laufzeiten nach Tesseract-Laufzeitquelle. Ältere Logs bleiben kompatibel.
+- NEUMA-Aufträge verwenden nach dem eindeutigen Lieferantensignal einen kleineren Kopfbereich. Ein Regressionstest mit allen 286 bereitgestellten PDFs bestätigt unveränderte Dokumenttypen, Nummern, Lieferanten und Seitenfolgen.
+- Neuinstallationen warten standardmäßig eine statt zwei Sekunden auf Dateistabilität. Bereits gespeicherte Einstellungen bleiben bei Updates unverändert.
+- Eine Tesseract-Laufzeit im stabilen Anwendungsverzeichnis wird vor der temporär entpackten Paketlaufzeit verwendet; technische Pfadüberschreibungen behalten Vorrang.
+
 ## 0.3.3 – 2026-08-27
 
 - Empfangsscheine und andere unterstützte Dokumente mit tiefer liegender Belegzeile werden durch den erweiterten Kopfbereich zuverlässig erkannt.

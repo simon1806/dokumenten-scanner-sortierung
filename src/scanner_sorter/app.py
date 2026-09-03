@@ -26,6 +26,7 @@ from .config import (
     find_tesseract_executable,
     load_settings,
     save_settings,
+    tesseract_runtime_source,
 )
 from .diagnostics import ALLOWED_REPORT_DAYS, DEFAULT_REPORT_DAYS, export_diagnostic_report
 from .event_logging import process_uptime_seconds, structured_event
@@ -504,6 +505,7 @@ def configure_logging(settings_path: Path, *, runtime_mode: str = "Benutzeroberf
             modus=runtime_mode,
             python=platform.python_version(),
             tesseract=ocr_versions.get("Tesseract OCR", "Unbekannt"),
+            tesseract_quelle=tesseract_runtime_source(configured_tesseract_path),
             leptonica=ocr_versions.get("Leptonica", "Unbekannt"),
             system=platform.platform(),
             architektur=platform.machine(),

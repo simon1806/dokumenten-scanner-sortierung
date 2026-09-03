@@ -18,10 +18,32 @@ from typing import Any, Iterable
 from . import __version__
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 DEFAULT_REPORT_DAYS = 30
 ALLOWED_REPORT_DAYS = (7, 30, 90)
 LEGACY_REASON_CODE = "legacy_nicht_spezifiziert"
+_TESSERACT_SOURCES = {
+    "anwendungsverzeichnis",
+    "mitgeliefert_temporaer",
+    "systeminstallation",
+    "konfiguriert",
+    "konfiguriert_nicht_gefunden",
+    "nicht_gefunden",
+    "unbekannt",
+}
+_RECOGNITION_PATHS = {
+    "eingebetteter_text",
+    "barcode",
+    "lieferantenkopf_klein",
+    "neuma_kopf",
+    "bohle_nummer",
+    "montage_kopf",
+    "allgemeiner_kopf",
+    "abtretung_nummer",
+    "angebot_bestaetigung",
+    "ganzseite",
+    "heitzer_seitenreferenz",
+}
 
 _LOG_FILE_RE = re.compile(r"^dokumentensortierer-(\d{4}-\d{2}-\d{2})\.log$")
 _LOG_LINE_RE = re.compile(
@@ -66,6 +88,14 @@ _KNOWN_FIELDS_BY_KIND = {
         "typen",
         "archiv_s",
         "erkennung_s",
+        "render_s",
+        "barcode_s",
+        "ocr_s",
+        "ocr_aufrufe",
+        "ocr_pixel",
+        "ocr_max_s",
+        "erkennungspfade",
+        "tesseract_quelle",
         "ausgabe_s",
         "gesamt_s",
         "ausgaben",
@@ -79,6 +109,7 @@ _KNOWN_FIELDS_BY_KIND = {
         "ueberwachung",
         "prozess_id",
         "tesseract",
+        "tesseract_quelle",
         "leptonica",
         "modus",
         "intervall_s",
@@ -109,6 +140,7 @@ _KNOWN_FIELDS_BY_KIND = {
         "verarbeitungs_limit_s",
         "ocr_sprachen",
         "tesseract",
+        "tesseract_quelle",
     },
     "monitor_stop": {"modus", "laufzeit_s"},
     "start": {
@@ -120,6 +152,7 @@ _KNOWN_FIELDS_BY_KIND = {
         "architektur",
         "prozess_id",
         "protokoll",
+        "tesseract_quelle",
     },
     "stop": {"modus", "grund", "exit_code", "laufzeit_s"},
     "folder_error": {"versuch", "erneut_in_s", "fehlerklasse", "fehler"},
@@ -293,6 +326,25 @@ def _document_types(raw_value: str | None) -> list[str]:
     return result
 
 
+def _counted_values(raw_value: str | None) -> dict[str, int]:
+    result: dict[str, int] = {}
+    if not raw_value or raw_value.casefold() in {"keine", "none"}:
+        return result
+    for item in raw_value.split(","):
+        name, separator, raw_count = item.strip().rpartition(":")
+        count = _safe_int(raw_count) if separator else 1
+        key = name if separator else item.strip()
+        if key in _RECOGNITION_PATHS and count is not None and count > 0:
+            result[key] = result.get(key, 0) + count
+    return result
+
+
+def _tesseract_source(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+    return raw_value if raw_value in _TESSERACT_SOURCES else "unbekannt"
+
+
 def build_diagnostic_report(
     log_directory: str | Path,
     *,
@@ -451,6 +503,14 @@ def build_diagnostic_report(
                         "duration_seconds": _safe_float(fields.get("gesamt_s")),
                         "archive_seconds": _safe_float(fields.get("archiv_s")),
                         "recognition_seconds": _safe_float(fields.get("erkennung_s")),
+                        "render_seconds": _safe_float(fields.get("render_s")),
+                        "barcode_seconds": _safe_float(fields.get("barcode_s")),
+                        "ocr_seconds": _safe_float(fields.get("ocr_s")),
+                        "ocr_calls": _safe_int(fields.get("ocr_aufrufe")),
+                        "ocr_pixels": _safe_int(fields.get("ocr_pixel")),
+                        "ocr_max_seconds": _safe_float(fields.get("ocr_max_s")),
+                        "recognition_paths": _counted_values(fields.get("erkennungspfade")),
+                        "tesseract_source": _tesseract_source(fields.get("tesseract_quelle")),
                         "output_seconds": _safe_float(fields.get("ausgabe_s")),
                         "size_bytes": _safe_int(fields.get("groesse_bytes")),
                         "document_types": _document_types(fields.get("typen")),
@@ -467,12 +527,21 @@ def build_diagnostic_report(
     overall = _new_result_bucket()
     by_day: defaultdict[str, dict[str, int]] = defaultdict(_new_result_bucket)
     by_version: defaultdict[str, dict[str, int]] = defaultdict(_new_result_bucket)
+    durations_by_version: defaultdict[str, list[float]] = defaultdict(list)
+    by_tesseract_source: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     by_reason: Counter[str] = Counter()
     by_document_type: Counter[str] = Counter()
     durations: list[float] = []
     archive_durations: list[float] = []
     recognition_durations: list[float] = []
     output_durations: list[float] = []
+    render_durations: list[float] = []
+    barcode_durations: list[float] = []
+    ocr_durations: list[float] = []
+    ocr_calls: list[float] = []
+    ocr_pixels: list[float] = []
+    ocr_max_durations: list[float] = []
+    recognition_paths: Counter[str] = Counter()
     sizes: list[float] = []
     problem_cases: list[dict[str, Any]] = []
 
@@ -487,6 +556,14 @@ def build_diagnostic_report(
             "duration_seconds": event["duration_seconds"],
             "archive_seconds": event["archive_seconds"],
             "recognition_seconds": event["recognition_seconds"],
+            "render_seconds": event["render_seconds"],
+            "barcode_seconds": event["barcode_seconds"],
+            "ocr_seconds": event["ocr_seconds"],
+            "ocr_calls": event["ocr_calls"],
+            "ocr_pixels": event["ocr_pixels"],
+            "ocr_max_seconds": event["ocr_max_seconds"],
+            "recognition_paths": event["recognition_paths"],
+            "tesseract_source": event["tesseract_source"],
             "output_seconds": event["output_seconds"],
             "size_bytes": event["size_bytes"],
         }
@@ -499,18 +576,33 @@ def build_diagnostic_report(
         _update_bucket(overall, status)
         _update_bucket(by_day[event["timestamp"].date().isoformat()], status)
         _update_bucket(by_version[event["version"]], status)
+        by_tesseract_source[event["tesseract_source"] or LEGACY_REASON_CODE].append(event)
         if event["reason_code"]:
             by_reason[event["reason_code"]] += 1
         for document_type in event["document_types"]:
             by_document_type[document_type] += 1
         if event["duration_seconds"] is not None:
             durations.append(event["duration_seconds"])
+            durations_by_version[event["version"]].append(event["duration_seconds"])
         if event["archive_seconds"] is not None:
             archive_durations.append(event["archive_seconds"])
         if event["recognition_seconds"] is not None:
             recognition_durations.append(event["recognition_seconds"])
         if event["output_seconds"] is not None:
             output_durations.append(event["output_seconds"])
+        if event["render_seconds"] is not None:
+            render_durations.append(event["render_seconds"])
+        if event["barcode_seconds"] is not None:
+            barcode_durations.append(event["barcode_seconds"])
+        if event["ocr_seconds"] is not None:
+            ocr_durations.append(event["ocr_seconds"])
+        if event["ocr_calls"] is not None and event["ocr_calls"] >= 0:
+            ocr_calls.append(float(event["ocr_calls"]))
+        if event["ocr_pixels"] is not None and event["ocr_pixels"] >= 0:
+            ocr_pixels.append(float(event["ocr_pixels"]))
+        if event["ocr_max_seconds"] is not None:
+            ocr_max_durations.append(event["ocr_max_seconds"])
+        recognition_paths.update(event["recognition_paths"])
         if event["size_bytes"] is not None and event["size_bytes"] >= 0:
             sizes.append(float(event["size_bytes"]))
         if status != "erfolgreich":
@@ -569,6 +661,35 @@ def build_diagnostic_report(
         unclassified_by_level["ERROR"] + unclassified_by_level["CRITICAL"]
     )
 
+    grouped_ocr_sources: dict[str, dict[str, Any]] = {}
+    for source, events in sorted(by_tesseract_source.items()):
+        source_bucket = _new_result_bucket()
+        for event in events:
+            _update_bucket(source_bucket, event["status"])
+        grouped_ocr_sources[source] = {
+            "processing_results": _finish_bucket(source_bucket),
+            "duration_seconds": _statistics(
+                event["duration_seconds"]
+                for event in events
+                if event["duration_seconds"] is not None
+            ),
+            "recognition_seconds": _statistics(
+                event["recognition_seconds"]
+                for event in events
+                if event["recognition_seconds"] is not None
+            ),
+            "ocr_seconds": _statistics(
+                event["ocr_seconds"]
+                for event in events
+                if event["ocr_seconds"] is not None
+            ),
+            "ocr_calls": _statistics(
+                event["ocr_calls"]
+                for event in events
+                if event["ocr_calls"] is not None and event["ocr_calls"] >= 0
+            ),
+        }
+
     return {
         "schema_version": SCHEMA_VERSION,
         "created_at": _iso_datetime(created_at or _utc_now()),
@@ -593,6 +714,15 @@ def build_diagnostic_report(
                 "archive": _statistics(archive_durations),
                 "recognition": _statistics(recognition_durations),
                 "output": _statistics(output_durations),
+            },
+            "recognition_diagnostics": {
+                "render_seconds": _statistics(render_durations),
+                "barcode_seconds": _statistics(barcode_durations),
+                "ocr_seconds": _statistics(ocr_durations),
+                "ocr_calls": _statistics(ocr_calls),
+                "ocr_pixels": _statistics(ocr_pixels),
+                "maximum_single_ocr_seconds": _statistics(ocr_max_durations),
+                "recognition_path_usage": dict(sorted(recognition_paths.items())),
             },
             "file_size_bytes": size_statistics,
             "queue": {
@@ -641,8 +771,13 @@ def build_diagnostic_report(
         "grouped_by_day": all_days,
         "application_lifecycle_by_day": application_by_day,
         "grouped_by_version": {
-            key: _finish_bucket(value) for key, value in sorted(by_version.items())
+            key: {
+                **_finish_bucket(value),
+                "duration_seconds": _statistics(durations_by_version[key]),
+            }
+            for key, value in sorted(by_version.items())
         },
+        "grouped_by_tesseract_source": grouped_ocr_sources,
         "grouped_by_document_type": dict(sorted(by_document_type.items())),
         "grouped_by_reason_code": dict(sorted(by_reason.items())),
         "problem_cases": problem_cases,
@@ -674,6 +809,7 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
     results = summary["processing_results"]
     durations = summary["duration_seconds"]
     phases = summary["phase_duration_seconds"]
+    recognition_diagnostics = summary["recognition_diagnostics"]
     lifecycle = summary["application_lifecycle"]
     log_health = summary["log_health"]
     privacy = report["privacy"]
@@ -696,9 +832,10 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
         f"<td>{esc(version)}</td><td>{values['total']}</td>"
         f"<td>{values['successful']}</td><td>{values['not_recognized']}</td>"
         f"<td>{esc(_format_percent(values['recognition_rate']))}</td>"
+        f"<td>{esc(_format_number(values['duration_seconds']['average'], 2))}</td>"
         "</tr>"
         for version, values in report["grouped_by_version"].items()
-    ) or '<tr><td colspan="5">Keine Verarbeitungsvorgänge vorhanden.</td></tr>'
+    ) or '<tr><td colspan="6">Keine Verarbeitungsvorgänge vorhanden.</td></tr>'
     type_rows = "".join(
         f"<tr><td>{esc(document_type)}</td><td>{count}</td></tr>"
         for document_type, count in report["grouped_by_document_type"].items()
@@ -718,6 +855,39 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
         )
         for values in (phases[key],)
     )
+    recognition_metric_rows = "".join(
+        "<tr>"
+        f"<td>{esc(label)}</td><td>{values['count']}</td>"
+        f"<td>{esc(_format_number(values['average'], 3))}</td>"
+        f"<td>{esc(_format_number(values['median'], 3))}</td>"
+        f"<td>{esc(_format_number(values['p95'], 3))}</td>"
+        f"<td>{esc(_format_number(values['maximum'], 3))}</td>"
+        "</tr>"
+        for key, label in (
+            ("render_seconds", "PDF-Rendering (s)"),
+            ("barcode_seconds", "Barcode-Erkennung (s)"),
+            ("ocr_seconds", "OCR gesamt (s)"),
+            ("ocr_calls", "OCR-Aufrufe"),
+            ("ocr_pixels", "OCR-Pixel"),
+            ("maximum_single_ocr_seconds", "Langsamster Einzelaufruf (s)"),
+        )
+        for values in (recognition_diagnostics[key],)
+    )
+    recognition_path_rows = "".join(
+        f"<tr><td>{esc(path)}</td><td>{count}</td></tr>"
+        for path, count in recognition_diagnostics["recognition_path_usage"].items()
+    ) or '<tr><td colspan="2">Für ältere Logs nicht verfügbar.</td></tr>'
+    tesseract_source_rows = "".join(
+        "<tr>"
+        f"<td>{esc(source)}</td>"
+        f"<td>{values['processing_results']['total']}</td>"
+        f"<td>{esc(_format_number(values['duration_seconds']['average'], 2))}</td>"
+        f"<td>{esc(_format_number(values['recognition_seconds']['average'], 2))}</td>"
+        f"<td>{esc(_format_number(values['ocr_seconds']['average'], 2))}</td>"
+        f"<td>{esc(_format_number(values['ocr_calls']['average'], 2))}</td>"
+        "</tr>"
+        for source, values in report["grouped_by_tesseract_source"].items()
+    ) or '<tr><td colspan="6">Für ältere Logs nicht verfügbar.</td></tr>'
     unknown_field_rows = "".join(
         f"<tr><td>{esc(field)}</td><td>{count}</td></tr>"
         for field, count in report["parser_statistics"]["unknown_field_names"].items()
@@ -811,11 +981,16 @@ Vollständige Pfade, Rohlogs, PDFs und OCR-Volltexte sind nicht Bestandteil des 
 <section><h2>Tagesverlauf</h2><table><thead><tr><th>Tag</th><th>Gesamt</th><th>Erfolgreich</th>
 <th>Nicht erkannt</th><th>Technische Fehler</th><th>Erkennungsquote</th></tr></thead><tbody>{day_rows}</tbody></table></section>
 <section><h2>Versionen</h2><table><thead><tr><th>Version</th><th>Gesamt</th><th>Erfolgreich</th>
-<th>Nicht erkannt</th><th>Erkennungsquote</th></tr></thead><tbody>{version_rows}</tbody></table></section>
+<th>Nicht erkannt</th><th>Erkennungsquote</th><th>Ø Laufzeit (s)</th></tr></thead><tbody>{version_rows}</tbody></table></section>
 <section><h2>Grundcodes</h2><table><thead><tr><th>Grundcode</th><th>Anzahl</th></tr></thead><tbody>{reason_rows}</tbody></table></section>
 <section><h2>Dokumenttypen</h2><table><thead><tr><th>Typ</th><th>Anzahl</th></tr></thead><tbody>{type_rows}</tbody></table></section>
 <section><h2>Phasenlaufzeiten</h2><table><thead><tr><th>Phase</th><th>Messungen</th><th>Durchschnitt (s)</th>
 <th>Median (s)</th><th>95. Perzentil (s)</th><th>Maximum (s)</th></tr></thead><tbody>{phase_rows}</tbody></table></section>
+<section><h2>Erkennungsdiagnose</h2><table><thead><tr><th>Messwert</th><th>Messungen</th><th>Durchschnitt</th>
+<th>Median</th><th>95. Perzentil</th><th>Maximum</th></tr></thead><tbody>{recognition_metric_rows}</tbody></table>
+<h3>Verwendete Erkennungspfade</h3><table><thead><tr><th>Pfad</th><th>Aufrufe</th></tr></thead><tbody>{recognition_path_rows}</tbody></table></section>
+<section><h2>OCR-Laufzeitquellen</h2><table><thead><tr><th>Quelle</th><th>Vorgänge</th><th>Ø Gesamt (s)</th>
+<th>Ø Erkennung (s)</th><th>Ø OCR (s)</th><th>Ø OCR-Aufrufe</th></tr></thead><tbody>{tesseract_source_rows}</tbody></table></section>
 <section><h2>Problemfälle</h2><table><thead><tr><th>Zeitpunkt</th><th>Status</th><th>Grundcode</th>
 <th>Stufe</th><th>Fehlerseite</th><th>Seiten gesamt</th><th>Dauer (s)</th><th>Größe (Bytes)</th>{filename_header}</tr></thead>
 <tbody>{problem_rows}</tbody></table></section>

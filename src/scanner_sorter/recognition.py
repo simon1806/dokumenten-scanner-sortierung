@@ -4,14 +4,16 @@ import io
 import logging
 import math
 import re
+import threading
 import time
 import unicodedata
+from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import date, datetime
 from pathlib import Path
 from typing import Iterable
 
-from .config import Settings, find_tesseract_executable
+from .config import Settings, find_tesseract_executable, tesseract_runtime_source
 from .models import DetectedDocument
 
 NUMBER = r"(\d{6,12})"
@@ -23,6 +25,7 @@ BOHLE_NUMBER_FAST_CROP = (0.02, 0.015, 0.46, 0.13)
 MONTAGE_FAST_CROP = (0.0, 0.02, 1.0, 0.24)
 INTERNAL_BARCODE_FAST_CROP = (0.03, 0.02, 0.48, 0.18)
 GENERAL_HEADER_BOTTOM = 0.45
+NEUMA_FAST_HEADER_BOTTOM = 0.35
 HEITZER_PAGE_TITLE_BOTTOM = 0.14
 HEITZER_PAGE_FOOTER_TOP = 0.82
 CODE39_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-. $/+%"
@@ -229,6 +232,12 @@ def is_neuma_order(text: str) -> bool:
     return "NEUMA" in normalised and bool(re.search(rf"\bAUFTRAG\s+{NEUMA_ORDER}\b", normalised))
 
 
+def has_neuma_header_signal(text: str) -> bool:
+    """Return whether the small initial crop contains the distinctive NEUMA logo."""
+
+    return "NEUMA" in normalise(text)
+
+
 def is_zeidler_execution_confirmation(text: str) -> bool:
     """Recognise the stable Zeidler execution-confirmation form header.
 
@@ -408,15 +417,76 @@ class PageRecognizer:
     def __init__(self, settings: Settings):
         self.settings = settings
         self._processing_deadline: float | None = None
+        self._metrics_lock = threading.Lock()
+        self._active_metrics: dict[str, object] | None = None
+        self._last_metrics = self._new_metrics()
+
+    def _new_metrics(self) -> dict[str, object]:
+        return {
+            "render_seconds": 0.0,
+            "barcode_seconds": 0.0,
+            "ocr_seconds": 0.0,
+            "ocr_calls": 0,
+            "ocr_pixels": 0,
+            "ocr_max_seconds": 0.0,
+            "recognition_paths": Counter(),
+            "tesseract_source": tesseract_runtime_source(self.settings.tesseract_path),
+        }
+
+    def _start_metrics(self) -> None:
+        with self._metrics_lock:
+            self._active_metrics = self._new_metrics()
+
+    def _finish_metrics(self) -> None:
+        with self._metrics_lock:
+            metrics = self._active_metrics or self._new_metrics()
+            paths = metrics["recognition_paths"]
+            self._last_metrics = {
+                **metrics,
+                "recognition_paths": dict(sorted(paths.items())),
+            }
+            self._active_metrics = None
+
+    @property
+    def last_metrics(self) -> dict[str, object]:
+        """Return path-free diagnostics for the most recent document."""
+
+        with self._metrics_lock:
+            result = dict(self._last_metrics)
+            result["recognition_paths"] = dict(result["recognition_paths"])
+            return result
+
+    def _add_metric(self, name: str, value: float | int) -> None:
+        with self._metrics_lock:
+            if self._active_metrics is not None:
+                self._active_metrics[name] = self._active_metrics[name] + value
+
+    def _record_ocr_call(self, seconds: float, pixels: int) -> None:
+        with self._metrics_lock:
+            if self._active_metrics is None:
+                return
+            self._active_metrics["ocr_seconds"] = self._active_metrics["ocr_seconds"] + seconds
+            self._active_metrics["ocr_calls"] = self._active_metrics["ocr_calls"] + 1
+            self._active_metrics["ocr_pixels"] = self._active_metrics["ocr_pixels"] + pixels
+            self._active_metrics["ocr_max_seconds"] = max(
+                float(self._active_metrics["ocr_max_seconds"]), seconds
+            )
+
+    def _record_path(self, path: str) -> None:
+        with self._metrics_lock:
+            if self._active_metrics is not None:
+                self._active_metrics["recognition_paths"][path] += 1
 
     def recognise_document(self, source: Path) -> list[DetectedDocument | None]:
         """Recognise pages in order while allowing two OCR processes to work concurrently."""
         previous_deadline = self._processing_deadline
         self._processing_deadline = time.monotonic() + self.settings.processing_timeout_seconds
+        self._start_metrics()
         try:
             return self._recognise_document_with_deadline(source)
         finally:
             self._processing_deadline = previous_deadline
+            self._finish_metrics()
 
     def recognise_document_pages(
         self,
@@ -425,11 +495,13 @@ class PageRecognizer:
         """Recognise pages and expose a validated logical-to-source page order."""
         previous_deadline = self._processing_deadline
         self._processing_deadline = time.monotonic() + self.settings.processing_timeout_seconds
+        self._start_metrics()
         try:
             detections = self._recognise_document_with_deadline(source)
             return self._order_heitzer_delivery_pages(source, detections)
         finally:
             self._processing_deadline = previous_deadline
+            self._finish_metrics()
 
     def _recognise_document_with_deadline(self, source: Path) -> list[DetectedDocument | None]:
         import pymupdf
@@ -541,7 +613,7 @@ class PageRecognizer:
         from PIL import Image
 
         with pymupdf.open(source) as document:
-            image = self._render(document.load_page(page_index))
+            image = self._render_with_metrics(document.load_page(page_index))
         width, height = image.size
         title = image.crop(
             (0, 0, width, max(1, round(height * HEITZER_PAGE_TITLE_BOTTOM)))
@@ -556,6 +628,7 @@ class PageRecognizer:
         )
         combined.paste(title, (0, 0))
         combined.paste(footer, (0, title.height))
+        self._record_path("heitzer_seitenreferenz")
         return heitzer_page_reference(self._read_ocr(combined))
 
     def _recognise_file_page(self, source: Path, page_index: int) -> DetectedDocument | None:
@@ -573,6 +646,7 @@ class PageRecognizer:
             pass
 
         if embedded_text:
+            self._record_path("eingebetteter_text")
             detected = detect_document_from_text(embedded_text, mi_scan_date=mi_scan_date)
             if detected and detected.document_type != "AG":
                 return detected
@@ -582,8 +656,13 @@ class PageRecognizer:
                 )
                 return None
 
-        image = self._render(page)
-        barcodes = self._read_barcodes(image)
+        image = self._render_with_metrics(page)
+        barcode_started = time.perf_counter()
+        try:
+            barcodes = self._read_barcodes(image)
+        finally:
+            self._add_metric("barcode_seconds", time.perf_counter() - barcode_started)
+        self._record_path("barcode")
         detected = detect_document_from_text(embedded_text, barcodes, mi_scan_date)
         if detected and detected.document_type != "AG":
             return detected
@@ -593,17 +672,30 @@ class PageRecognizer:
         # gezielte OCR-Lauf benoetigt weniger als ein Fuenftel des bisherigen
         # Kopfbereichs. Andere Dokumenttypen werden hier absichtlich nicht
         # akzeptiert und durchlaufen weiterhin die allgemeine Erkennung.
+        self._record_path("lieferantenkopf_klein")
         nowak_text = self._read_ocr(self._nowak_header_crop(image))
         detected = detect_document_from_text(nowak_text, barcodes, mi_scan_date)
         if detected and detected.supplier == "Nowak":
             LOGGER.info("Nowak-Schnellerkennung verwendet; lieferschein=%s", detected.number)
             return detected
 
+        # Der kleine erste Ausschnitt erkennt das NEUMA-Logo zuverlässig, die
+        # Auftragsnummer liegt jedoch etwas tiefer. In diesem eindeutigen Fall
+        # genügt ein 35-Prozent-Kopf statt des allgemeinen 45-Prozent-Bereichs.
+        if has_neuma_header_signal(nowak_text):
+            self._record_path("neuma_kopf")
+            neuma_text = self._read_ocr(self._neuma_header_crop(image))
+            detected = detect_document_from_text(neuma_text, barcodes, mi_scan_date)
+            if detected and detected.supplier == "NEUMA":
+                LOGGER.info("NEUMA-Schnellerkennung verwendet; auftrag=%s", detected.number)
+                return detected
+
         # Bohle druckt das Logo im bereits gelesenen rechten Kopfbereich und
         # die Lieferscheinnummer oben links. Nach dem Lieferantenhinweis wird
         # deshalb nur dieses kleine Nummernfeld statt des allgemeinen Kopfs
         # gelesen.
         if is_bohle_header(nowak_text):
+            self._record_path("bohle_nummer")
             bohle_number_text = self._read_ocr(self._bohle_number_crop(image))
             detected = detect_document_from_text(
                 f"{nowak_text}\n{bohle_number_text}",
@@ -618,18 +710,21 @@ class PageRecognizer:
         # wie Nowak oben rechts. Sie erhalten nur bei diesem Hinweis einen
         # schmalen Formularstreifen statt des deutlich größeren Kopfbereichs.
         if has_montage_order_hint(nowak_text):
+            self._record_path("montage_kopf")
             montage_text = self._read_ocr(self._montage_header_crop(image))
             detected = detect_document_from_text(montage_text, barcodes, mi_scan_date)
             if detected and detected.document_type == "MI":
                 LOGGER.info("Montageinfo-Schnellerkennung verwendet; auftrag=%s", detected.number)
                 return detected
 
+        self._record_path("allgemeiner_kopf")
         header_text = self._read_ocr(self._header_crop(image))
         detected = detect_document_from_text(header_text, barcodes, mi_scan_date)
         if detected:
             return detected
 
         if is_assignment_declaration(header_text):
+            self._record_path("abtretung_nummer")
             assignment_text = self._read_ocr(self._assignment_number_crop(image))
             detected = detect_document_from_text(f"{header_text}\n{assignment_text}", barcodes, mi_scan_date)
             if detected:
@@ -637,6 +732,7 @@ class PageRecognizer:
                 return detected
 
         if offer_number_from_text(header_text):
+            self._record_path("angebot_bestaetigung")
             confirmation_text = self._read_ocr(self._signed_offer_confirmation_crop(image))
             detected = detect_document_from_text(
                 f"{header_text}\n{confirmation_text}",
@@ -670,8 +766,16 @@ class PageRecognizer:
             )
             return None
 
+        self._record_path("ganzseite")
         text = self._read_ocr(image)
         return detect_document_from_text(text, barcodes, mi_scan_date)
+
+    def _render_with_metrics(self, page: object):
+        started = time.perf_counter()
+        try:
+            return self._render(page)
+        finally:
+            self._add_metric("render_seconds", time.perf_counter() - started)
 
     @staticmethod
     def _render(page: object):
@@ -712,6 +816,15 @@ class PageRecognizer:
                 max(1, round(width * right)),
                 max(1, round(height * bottom)),
             )
+        )
+
+    @staticmethod
+    def _neuma_header_crop(image: object):
+        """Read the compact NEUMA header including its complete order number."""
+
+        width, height = image.size
+        return image.crop(
+            (0, 0, width, max(1, round(height * NEUMA_FAST_HEADER_BOTTOM)))
         )
 
     @staticmethod
@@ -859,12 +972,20 @@ class PageRecognizer:
 
         last_error: Exception | None = None
         for language in languages:
+            timeout = self._remaining_ocr_seconds()
+            size = getattr(image, "size", (0, 0))
+            pixels = (
+                int(size[0]) * int(size[1])
+                if isinstance(size, tuple) and len(size) == 2
+                else 0
+            )
+            ocr_started = time.perf_counter()
             try:
                 return pytesseract.image_to_string(
                     image,
                     lang=language,
                     config="--psm 6",
-                    timeout=self._remaining_ocr_seconds(),
+                    timeout=timeout,
                 )
             except pytesseract.TesseractNotFoundError as error:
                 raise RuntimeError(
@@ -878,4 +999,6 @@ class PageRecognizer:
                         f"Tesseract OCR hat das Zeitlimit von {OCR_TIMEOUT_SECONDS} Sekunden ueberschritten."
                     ) from error
                 raise
+            finally:
+                self._record_ocr_call(time.perf_counter() - ocr_started, pixels)
         raise RuntimeError("Tesseract OCR konnte nicht gestartet werden.") from last_error

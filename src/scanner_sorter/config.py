@@ -36,7 +36,7 @@ class Settings:
     archive_folder: str = ""
     review_folder: str = ""
     archive_retention_days: int = 30
-    settle_seconds: int = 2
+    settle_seconds: int = 1
     invalid_pdf_timeout_seconds: int = 60
     poll_interval_seconds: int = 1
     backlog_threshold: int = 3
@@ -136,7 +136,10 @@ def find_tesseract_executable(configured_path: str = "") -> Path | None:
         return configured if configured.exists() else None
 
     program_files = [os.environ.get("PROGRAMFILES"), os.environ.get("PROGRAMFILES(X86)")]
-    roots = [folder for folder in (bundled_folder(), application_folder()) if folder]
+    # A stable runtime beside the installed application is preferred over the
+    # temporary PyInstaller extraction. The self-contained portable EXE still
+    # falls back to its bundled runtime when no adjacent installation exists.
+    roots = [folder for folder in (application_folder(), bundled_folder()) if folder]
     candidates = []
     for root in roots:
         candidates.extend(
@@ -150,6 +153,34 @@ def find_tesseract_executable(configured_path: str = "") -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def tesseract_runtime_source(configured_path: str = "") -> str:
+    """Return a path-free label for the active OCR runtime location."""
+
+    executable = find_tesseract_executable(configured_path)
+    if configured_path.strip():
+        return "konfiguriert" if executable is not None else "konfiguriert_nicht_gefunden"
+    if executable is None:
+        return "nicht_gefunden"
+
+    executable = executable.resolve(strict=False)
+    application = application_folder().resolve(strict=False)
+    bundle = bundled_folder()
+    try:
+        executable.relative_to(application)
+    except ValueError:
+        pass
+    else:
+        return "anwendungsverzeichnis"
+    if bundle is not None:
+        try:
+            executable.relative_to(bundle.resolve(strict=False))
+        except ValueError:
+            pass
+        else:
+            return "mitgeliefert_temporaer"
+    return "systeminstallation"
 
 
 def load_settings(path: Path | None = None) -> Settings:
