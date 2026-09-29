@@ -630,6 +630,17 @@ class AppTests(unittest.TestCase):
         self_test.assert_called_once_with()
         acquire.assert_not_called()
 
+    def test_self_test_writes_result_marker_for_packaged_build_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result_path = Path(directory) / "self-test.result"
+            with patch("scanner_sorter.app.run_self_test", return_value=4):
+                result = main(
+                    ["--self-test", "--self-test-result", str(result_path)]
+                )
+
+            self.assertEqual(4, result)
+            self.assertEqual("4\n", result_path.read_text(encoding="ascii"))
+
     def test_mutex_creation_error_is_reported_without_traceback(self) -> None:
         stderr = StringIO()
         with (

@@ -57,17 +57,24 @@ class BuildReleaseTests(unittest.TestCase):
     def test_built_executables_must_pass_bounded_self_tests(self) -> None:
         self.assertIn("function Invoke-ArtifactSelfTest", self.script)
         self.assertIn("New-Object System.Diagnostics.ProcessStartInfo", self.script)
-        self.assertIn('$startInfo.Arguments = "--self-test"', self.script)
+        self.assertIn('$startInfo.Arguments = if ($RequireResultMarker)', self.script)
+        self.assertIn('"--self-test"', self.script)
         self.assertIn("$startInfo.CreateNoWindow = $true", self.script)
         self.assertIn("$startInfo.RedirectStandardOutput = $true", self.script)
         self.assertIn("$startInfo.RedirectStandardError = $true", self.script)
-        self.assertIn('$env:TEMP = $selfTestTemp', self.script)
-        self.assertIn('$env:TMP = $selfTestTemp', self.script)
-        self.assertIn('$env:TEMP = $previousTemp', self.script)
-        self.assertIn('$env:TMP = $previousTmp', self.script)
+        self.assertIn('$startInfo.EnvironmentVariables["TEMP"] = $selfTestTemp', self.script)
+        self.assertIn('$startInfo.EnvironmentVariables["TMP"] = $selfTestTemp', self.script)
+        self.assertIn("--self-test-result", self.script)
+        self.assertIn("if ($reportedExitCode -ne \"0\")", self.script)
         self.assertIn("WaitForExit($TimeoutSeconds * 1000)", self.script)
         self.assertIn("if ($process.ExitCode -ne 0)", self.script)
         self.assertEqual(3, self.script.count("Invoke-ArtifactSelfTest $"))
+
+    def test_tcl_runtime_is_prepared_for_the_embedded_interpreter(self) -> None:
+        self.assertIn('$PreparedTclLibrary = Join-Path $BuildRoot "tcl8.6"', self.script)
+        self.assertIn('$exactTclRequirement = "package require -exact Tcl 8.6.12"', self.script)
+        self.assertIn('$tclInitText.Replace($exactTclRequirement, "package require Tcl 8.6")', self.script)
+        self.assertIn('"--add-data", "$PreparedTclLibrary;_tcl_data"', self.script)
 
     def test_release_requires_and_validates_expected_ocr_runtime(self) -> None:
         self.assertIn('[switch]$WithoutBundledTesseract', self.script)

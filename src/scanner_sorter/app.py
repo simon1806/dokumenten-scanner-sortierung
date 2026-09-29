@@ -2173,10 +2173,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Mitgelieferte Laufzeitkomponenten prüfen und ohne Datenänderung beenden",
     )
+    parser.add_argument("--self-test-result", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--settings", type=Path, default=default_settings_path(), help="Pfad zur settings.json")
     args = parser.parse_args(argv)
     if args.self_test:
-        return run_self_test()
+        result = run_self_test()
+        if args.self_test_result is not None:
+            try:
+                args.self_test_result.write_text(f"{result}\n", encoding="ascii")
+            except OSError as error:
+                logging.error("Selbsttestergebnis konnte nicht geschrieben werden: %s", error)
+                return 5
+        return result
     try:
         acquired, instance = acquire_single_instance(args.settings)
     except OSError as error:

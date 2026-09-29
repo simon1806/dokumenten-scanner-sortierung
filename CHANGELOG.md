@@ -2,6 +2,7 @@
 
 ## 0.3.5 – 2026-09-29
 
+- Der Windows-Build bereitet die mitgelieferte Tcl/Tk-Laufzeit kompatibel auf und verlangt beim Anwendungsselbsttest eine explizite Ergebnisdatei. Fehler eines entkoppelten Ein-Datei-Prozesses können den Release-Build dadurch nicht mehr unbemerkt passieren.
 - Der Diagnosebericht (Schema 4) zeigt das wirksame OCR-Threadlimit und gruppiert Erkennungs- und OCR-Zeiten danach. Ältere Protokolle bleiben lesbar.
 - Tesseract verwendet standardmäßig einen internen OCR-Thread pro Prozess. Dies vermeidet Konkurrenz mit den zwei parallelen Seitenarbeitern und verkürzt die Erkennung auf den geprüften Scans deutlich; eine vorhandene `OMP_THREAD_LIMIT`-Vorgabe bleibt erhalten.
 - Pauli-Lieferscheine werden auch erkannt, wenn die OCR das Wort „Lieferschein“ mit einem zusätzlichen Buchstaben, einem falschen Anfangsbuchstaben oder einer Trennung vor „chein“ liest. Pauli-Auftragsbestätigungen bleiben ausgeschlossen.
