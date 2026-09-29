@@ -385,6 +385,7 @@ class DocumentProcessor:
                     ocr_max_s=f"{recognition_metrics['ocr_max_seconds']:.3f}",
                     erkennungspfade=recognition_paths,
                     tesseract_quelle=recognition_metrics["tesseract_source"],
+                    ocr_threads=recognition_metrics["ocr_thread_limit"] or "unbekannt",
                     ausgabe_s=f"{output_seconds:.3f}",
                     gesamt_s=f"{total_seconds:.3f}",
                     ziel=created[0].name,
@@ -420,6 +421,7 @@ class DocumentProcessor:
                 ocr_max_s=f"{recognition_metrics['ocr_max_seconds']:.3f}",
                 erkennungspfade=recognition_paths,
                 tesseract_quelle=recognition_metrics["tesseract_source"],
+                ocr_threads=recognition_metrics["ocr_thread_limit"] or "unbekannt",
                 ausgabe_s=f"{output_seconds:.3f}",
                 gesamt_s=f"{total_seconds:.3f}",
                 ausgaben=", ".join(path.name for path in created),
@@ -680,6 +682,9 @@ class DocumentProcessor:
             "unbekannt",
         }:
             tesseract_source = "unbekannt"
+        thread_limit = source.get("ocr_thread_limit")
+        if type(thread_limit) is not int or not 1 <= thread_limit <= 256:
+            thread_limit = None
         return {
             "render_seconds": nonnegative_float("render_seconds"),
             "barcode_seconds": nonnegative_float("barcode_seconds"),
@@ -689,6 +694,7 @@ class DocumentProcessor:
             "ocr_max_seconds": nonnegative_float("ocr_max_seconds"),
             "recognition_paths": dict(sorted(paths.items())),
             "tesseract_source": tesseract_source,
+            "ocr_thread_limit": thread_limit,
         }
 
     def _publish_job(self, job_file: Path, job: dict[str, Any]) -> list[Path]:

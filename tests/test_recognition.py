@@ -878,6 +878,27 @@ class RecognitionTests(unittest.TestCase):
         self.assertIsNotNone(detected)
         self.assertEqual("LS-Pauli-82079358.pdf", detected.filename)
 
+    def test_pauli_delivery_note_title_ocr_errors(self) -> None:
+        for title, number in (
+            ("Liieferschein", "82115179"),
+            ("Kieferschein", "82115876"),
+            ("Liefers chein", "82118634"),
+        ):
+            header = f"Pauli+ Sohn GmbH-Metallwaren |{title}\nNummer/Datum: {number} vom 09.09.2026"
+            with self.subTest(title=title):
+                self.assertTrue(has_supported_document_signal(header))
+                detected = detect_document_from_text(header)
+                self.assertIsNotNone(detected)
+                self.assertEqual(f"LS-Pauli-{number}.pdf", detected.filename)
+
+    def test_pauli_order_confirmation_with_number_date_stays_unrecognised(self) -> None:
+        header = (
+            "Pauli+ Sohn GmbH-Metallwaren |Auftragsbestätigung\n"
+            "Nummer/Datum: 1865017 / 23.09.2026"
+        )
+        self.assertFalse(has_supported_document_signal(header))
+        self.assertIsNone(detect_document_from_text(header))
+
     def test_pauli_measurement_attachments_are_not_document_starts(self) -> None:
         for text in (
             "Pauli + Sohn GmbH\nFlamea+\nAUFMASS zu Set-Nr. 12-101\n1 / 3",

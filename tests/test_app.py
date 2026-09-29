@@ -60,7 +60,7 @@ class AppTests(unittest.TestCase):
         self.assertIn("schema=2", start_message)
         self.assertIn("ereignis=application_started", start_message)
         self.assertRegex(start_message, r"sitzung=[0-9a-f]{32}")
-        self.assertIn("version=0.3.4", start_message)
+        self.assertIn("version=0.3.5", start_message)
         self.assertIn("modus=SYSTEM/Headless", start_message)
 
     def test_access_denied_mutex_is_recognized_as_cross_session_monitor(self) -> None:
@@ -629,6 +629,17 @@ class AppTests(unittest.TestCase):
         self.assertEqual(0, result)
         self_test.assert_called_once_with()
         acquire.assert_not_called()
+
+    def test_self_test_writes_result_marker_for_packaged_build_check(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            result_path = Path(directory) / "self-test.result"
+            with patch("scanner_sorter.app.run_self_test", return_value=4):
+                result = main(
+                    ["--self-test", "--self-test-result", str(result_path)]
+                )
+
+            self.assertEqual(4, result)
+            self.assertEqual("4\n", result_path.read_text(encoding="ascii"))
 
     def test_mutex_creation_error_is_reported_without_traceback(self) -> None:
         stderr = StringIO()

@@ -1,5 +1,5 @@
 param(
-    [string]$Version = "0.3.4",
+    [string]$Version = "0.3.5",
     [string]$TesseractDir = "",
     [switch]$WithoutBundledTesseract,
     [string]$SignToolPath = "",
@@ -21,6 +21,7 @@ $WorkMain = Join-Path $BuildRoot "work-main"
 $WorkOpenLauncher = Join-Path $BuildRoot "work-open-launcher"
 $WorkSetup = Join-Path $BuildRoot "work-setup"
 $SpecRoot = Join-Path $BuildRoot "spec"
+$PreparedTclLibrary = Join-Path $BuildRoot "tcl8.6"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
 $VersionRelease = Join-Path $ReleaseRoot $Version
 $MainName = "DokumentenScannerSortierung"
@@ -184,35 +185,40 @@ function Invoke-QualityGates {
     }
 }
 
-function Invoke-ArtifactSelfTest([string]$Path, [int]$TimeoutSeconds = 120) {
+function Invoke-ArtifactSelfTest(
+    [string]$Path,
+    [int]$TimeoutSeconds = 120,
+    [switch]$RequireResultMarker
+) {
     $name = [System.IO.Path]::GetFileNameWithoutExtension($Path)
     $stdoutPath = Join-Path $BuildRoot "$name-self-test.stdout.log"
     $stderrPath = Join-Path $BuildRoot "$name-self-test.stderr.log"
+    $resultPath = Join-Path $BuildRoot "$name-self-test.result"
     $selfTestTemp = Join-Path $BuildRoot "self-test-temp-$name-$([guid]::NewGuid().ToString('N'))"
     Assert-ProjectChildPath $selfTestTemp
     New-Item -ItemType Directory -Path $selfTestTemp | Out-Null
-    $previousTemp = $env:TEMP
-    $previousTmp = $env:TMP
     # Start-Process in Windows PowerShell 5.1 can fail before launch when the
     # inherited environment contains differently-cased duplicates such as
     # Path/PATH. ProcessStartInfo inherits that environment without rebuilding
     # it as a case-insensitive PowerShell dictionary.
     $startInfo = New-Object System.Diagnostics.ProcessStartInfo
     $startInfo.FileName = $Path
-    $startInfo.Arguments = "--self-test"
+    $startInfo.Arguments = if ($RequireResultMarker) {
+        "--self-test --self-test-result `"$resultPath`""
+    } else {
+        "--self-test"
+    }
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $startInfo.EnvironmentVariables["TEMP"] = $selfTestTemp
+    $startInfo.EnvironmentVariables["TMP"] = $selfTestTemp
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $startInfo
     $stdoutTask = $null
     $stderrTask = $null
     try {
-        # Keep one-file extraction in the controlled build tree. This also makes
-        # the self-test independent of service-account TEMP permissions.
-        $env:TEMP = $selfTestTemp
-        $env:TMP = $selfTestTemp
         if (-not $process.Start()) {
             throw "Selbsttest-Prozess konnte nicht gestartet werden: $Path"
         }
@@ -241,10 +247,23 @@ function Invoke-ArtifactSelfTest([string]$Path, [int]$TimeoutSeconds = 120) {
                 "`nSTDOUT: $($stdout.Trim())`nSTDERR: $($stderr.Trim())"
             )
         }
+        if ($RequireResultMarker) {
+            $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+            while (-not (Test-Path -LiteralPath $resultPath -PathType Leaf) -and
+                [DateTime]::UtcNow -lt $deadline) {
+                Start-Sleep -Milliseconds 100
+            }
+            if (-not (Test-Path -LiteralPath $resultPath -PathType Leaf)) {
+                throw "Selbsttest-Ergebnis wurde nicht innerhalb des Zeitlimits geschrieben: $Path"
+            }
+            $reportedExitCode = [System.IO.File]::ReadAllText($resultPath).Trim()
+            if ($reportedExitCode -ne "0") {
+                throw "Selbsttest meldet Exitcode ${reportedExitCode}: $Path"
+            }
+        }
     } finally {
         $process.Dispose()
-        $env:TEMP = $previousTemp
-        $env:TMP = $previousTmp
+        Remove-Item -LiteralPath $resultPath -Force -ErrorAction SilentlyContinue
         if (Test-Path -LiteralPath $selfTestTemp) {
             try {
                 Remove-Item -LiteralPath $selfTestTemp -Recurse -Force -ErrorAction Stop
@@ -531,6 +550,20 @@ if ($WithoutBundledTesseract) {
 
 Reset-BuildDirectory $BuildRoot
 New-Item -ItemType Directory -Force -Path $MainDist, $OpenLauncherDist, $SetupDist, $SpecRoot | Out-Null
+[System.IO.Directory]::CreateDirectory($PreparedTclLibrary) | Out-Null
+Copy-Item -Path (Join-Path $TclRoot "tcl8.6\*") -Destination $PreparedTclLibrary -Recurse
+$preparedTclInit = Join-Path $PreparedTclLibrary "init.tcl"
+$tclInitText = [System.IO.File]::ReadAllText($preparedTclInit, [System.Text.Encoding]::UTF8)
+$exactTclRequirement = "package require -exact Tcl 8.6.12"
+if (-not $tclInitText.Contains($exactTclRequirement)) {
+    throw "Unerwartete Tcl-Initialisierung; Versionsanforderung fehlt: $preparedTclInit"
+}
+$tclInitText = $tclInitText.Replace($exactTclRequirement, "package require Tcl 8.6")
+[System.IO.File]::WriteAllText(
+    $preparedTclInit,
+    $tclInitText,
+    [System.Text.UTF8Encoding]::new($false)
+)
 [System.IO.File]::WriteAllText($VersionPayload, "$Version`n", [System.Text.UTF8Encoding]::new($false))
 
 $displayName = Get-PythonStringConstant $ProductSource "DISPLAY_NAME"
@@ -570,7 +603,7 @@ $mainArguments = @(
     "--add-binary", "$(Join-Path $DllRoot 'tcl86t.dll');.",
     "--add-binary", "$(Join-Path $DllRoot 'tk86t.dll');.",
     "--add-data", "$TkinterPackage;tkinter",
-    "--add-data", "$(Join-Path $TclRoot 'tcl8.6');_tcl_data",
+    "--add-data", "$PreparedTclLibrary;_tcl_data",
     "--add-data", "$(Join-Path $TclRoot 'tk8.6');_tk_data",
     "--add-data", "$IconAssets;scanner_sorter/assets/icons/tabler",
     "--add-data", "$AppAssets;scanner_sorter/assets/app"
@@ -586,7 +619,7 @@ $mainArguments += @(
 Invoke-PythonCommand $mainArguments "Anwendungs-Build"
 Assert-Artifact $MainExecutable $Version
 Sign-Artifact $MainExecutable
-Invoke-ArtifactSelfTest $MainExecutable
+Invoke-ArtifactSelfTest $MainExecutable -RequireResultMarker
 
 $openLauncherArguments = @(
     "-m", "PyInstaller",

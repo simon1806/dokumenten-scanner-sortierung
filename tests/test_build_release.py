@@ -13,7 +13,7 @@ class BuildReleaseTests(unittest.TestCase):
         cls.script = (PROJECT_ROOT / "scripts" / "build-release.ps1").read_text(encoding="utf-8-sig")
 
     def test_build_is_versioned_fail_closed_and_checks_native_commands(self) -> None:
-        self.assertIn('[string]$Version = "0.3.4"', self.script)
+        self.assertIn('[string]$Version = "0.3.5"', self.script)
         self.assertIn("function Invoke-PythonCommand", self.script)
         self.assertEqual(3, self.script.count('Invoke-PythonCommand $'))
         self.assertIn('Join-Path $ReleaseRoot $Version', self.script)
@@ -57,17 +57,24 @@ class BuildReleaseTests(unittest.TestCase):
     def test_built_executables_must_pass_bounded_self_tests(self) -> None:
         self.assertIn("function Invoke-ArtifactSelfTest", self.script)
         self.assertIn("New-Object System.Diagnostics.ProcessStartInfo", self.script)
-        self.assertIn('$startInfo.Arguments = "--self-test"', self.script)
+        self.assertIn('$startInfo.Arguments = if ($RequireResultMarker)', self.script)
+        self.assertIn('"--self-test"', self.script)
         self.assertIn("$startInfo.CreateNoWindow = $true", self.script)
         self.assertIn("$startInfo.RedirectStandardOutput = $true", self.script)
         self.assertIn("$startInfo.RedirectStandardError = $true", self.script)
-        self.assertIn('$env:TEMP = $selfTestTemp', self.script)
-        self.assertIn('$env:TMP = $selfTestTemp', self.script)
-        self.assertIn('$env:TEMP = $previousTemp', self.script)
-        self.assertIn('$env:TMP = $previousTmp', self.script)
+        self.assertIn('$startInfo.EnvironmentVariables["TEMP"] = $selfTestTemp', self.script)
+        self.assertIn('$startInfo.EnvironmentVariables["TMP"] = $selfTestTemp', self.script)
+        self.assertIn("--self-test-result", self.script)
+        self.assertIn("if ($reportedExitCode -ne \"0\")", self.script)
         self.assertIn("WaitForExit($TimeoutSeconds * 1000)", self.script)
         self.assertIn("if ($process.ExitCode -ne 0)", self.script)
         self.assertEqual(3, self.script.count("Invoke-ArtifactSelfTest $"))
+
+    def test_tcl_runtime_is_prepared_for_the_embedded_interpreter(self) -> None:
+        self.assertIn('$PreparedTclLibrary = Join-Path $BuildRoot "tcl8.6"', self.script)
+        self.assertIn('$exactTclRequirement = "package require -exact Tcl 8.6.12"', self.script)
+        self.assertIn('$tclInitText.Replace($exactTclRequirement, "package require Tcl 8.6")', self.script)
+        self.assertIn('"--add-data", "$PreparedTclLibrary;_tcl_data"', self.script)
 
     def test_release_requires_and_validates_expected_ocr_runtime(self) -> None:
         self.assertIn('[switch]$WithoutBundledTesseract', self.script)
@@ -115,8 +122,8 @@ class BuildReleaseTests(unittest.TestCase):
                 self.assertIn("==", stripped)
                 packages.append(stripped)
                 self.assertIn(f"{stripped} \\", lock)
-        self.assertIn("PyInstaller==6.22.2", constraints)
-        self.assertIn("ruff==0.16.4", constraints)
+        self.assertIn("PyInstaller==6.22.3", constraints)
+        self.assertIn("ruff==0.16.9", constraints)
         self.assertEqual(len(packages), lock.count("--hash=sha256:"))
         self.assertIn("$LockFile", self.script)
         self.assertIn("dependency_lock_sha256 = Get-Sha256 $LockFile", self.script)
@@ -146,7 +153,7 @@ class BuildReleaseTests(unittest.TestCase):
         self.assertEqual(workflow.count('python-version: "3.12"'), 2)
         self.assertIn(r".\.venv\Scripts\python.exe -m unittest", workflow)
         self.assertIn(r".\.venv\Scripts\ruff.exe check", workflow)
-        self.assertIn(r".\scripts\build-release.ps1 -Version 0.3.4", workflow)
+        self.assertIn(r".\scripts\build-release.ps1 -Version 0.3.5", workflow)
         self.assertEqual(workflow.count("--require-hashes"), 2)
         self.assertEqual(
             workflow.count("actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd"),
