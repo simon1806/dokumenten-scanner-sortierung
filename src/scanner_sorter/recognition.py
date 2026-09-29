@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import math
+import os
 import re
 import threading
 import time
@@ -19,6 +20,7 @@ from .models import DetectedDocument
 NUMBER = r"(\d{6,12})"
 NOWAK_NUMBER = r"(\d{7,12})"
 NOWAK_CONTACT_FRAGMENT = "60686"
+PAULI_DELIVERY_TITLE = re.compile(r"\b[LK]I{1,2}EFERS\s*CHEIN\b")
 NOWAK_FAST_CROP = (0.39, 0.025, 0.75, 0.205)
 BOHLE_NUMBER = r"(\d{5,12})"
 BOHLE_NUMBER_FAST_CROP = (0.02, 0.015, 0.46, 0.13)
@@ -72,6 +74,15 @@ def normalise(text: str) -> str:
     decomposed = unicodedata.normalize("NFKD", text)
     without_diacritics = "".join(char for char in decomposed if not unicodedata.combining(char))
     return re.sub(r"\s+", " ", without_diacritics.upper())
+
+
+def ocr_thread_limit() -> int | None:
+    """Return only a plausible numeric OpenMP limit for path-free diagnostics."""
+    try:
+        limit = int(os.environ.get("OMP_THREAD_LIMIT", ""))
+    except ValueError:
+        return None
+    return limit if 1 <= limit <= 256 else None
 
 
 def extract_number(text: str, expression: str, barcodes: Iterable[str]) -> str | None:
@@ -133,6 +144,16 @@ def is_bohle_header(text: str) -> bool:
     return "BOHLE AG" in normalised or "BOHLE.COM" in normalised
 
 
+def is_pauli_delivery_note(text: str) -> bool:
+    """Accept the small title OCR errors seen on Pauli delivery notes."""
+    normalised = normalise(text)
+    return (
+        "PAULI" in normalised
+        and "SOHN" in normalised
+        and bool(PAULI_DELIVERY_TITLE.search(normalised))
+    )
+
+
 def is_pauli_measurement_attachment(text: str) -> bool:
     """Recognise Pauli measurement/order sheets that belong to a preceding AM.
 
@@ -151,7 +172,7 @@ def is_pauli_measurement_attachment(text: str) -> bool:
         has_supplier
         and has_set_number
         and has_sheet_heading
-        and "LIEFERSCHEIN" not in normalised
+        and not is_pauli_delivery_note(normalised)
     )
 
 
@@ -161,11 +182,7 @@ def has_supported_document_signal(text: str) -> bool:
     return (
         is_assignment_declaration(normalised)
         or is_montage_report(normalised)
-        or (
-            "PAULI" in normalised
-            and "SOHN" in normalised
-            and "LIEFERSCHEIN" in normalised
-        )
+        or is_pauli_delivery_note(normalised)
         or any(signal in normalised for signal in SUPPORTED_DOCUMENT_SIGNALS)
     )
 
@@ -359,7 +376,7 @@ def detect_document_from_text(
         if number:
             return DetectedDocument("LS", number, "Heitzer")
 
-    if "PAULI" in normalised and "SOHN" in normalised and "LIEFERSCHEIN" in normalised:
+    if is_pauli_delivery_note(normalised):
         number = extract_number(
             normalised,
             rf"(?:NUMMER\s*/\s*DATUM|BELEG[- ]?NR\.?\s*/\s*DATUM)\s*:?\s*{NUMBER}",
@@ -415,6 +432,9 @@ class PageRecognizer:
     """Renders a page, reads its barcodes and uses OCR as a fallback."""
 
     def __init__(self, settings: Settings):
+        # Tesseract's OpenMP workers compete with our two parallel page workers.
+        # Keep an explicit process setting when an administrator has supplied one.
+        os.environ.setdefault("OMP_THREAD_LIMIT", "1")
         self.settings = settings
         self._processing_deadline: float | None = None
         self._metrics_lock = threading.Lock()
@@ -431,6 +451,7 @@ class PageRecognizer:
             "ocr_max_seconds": 0.0,
             "recognition_paths": Counter(),
             "tesseract_source": tesseract_runtime_source(self.settings.tesseract_path),
+            "ocr_thread_limit": ocr_thread_limit(),
         }
 
     def _start_metrics(self) -> None:

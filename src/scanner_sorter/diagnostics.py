@@ -18,7 +18,7 @@ from typing import Any, Iterable
 from . import __version__
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 DEFAULT_REPORT_DAYS = 30
 ALLOWED_REPORT_DAYS = (7, 30, 90)
 LEGACY_REASON_CODE = "legacy_nicht_spezifiziert"
@@ -96,6 +96,7 @@ _KNOWN_FIELDS_BY_KIND = {
         "ocr_max_s",
         "erkennungspfade",
         "tesseract_quelle",
+        "ocr_threads",
         "ausgabe_s",
         "gesamt_s",
         "ausgaben",
@@ -183,6 +184,11 @@ def _safe_int(value: Any) -> int | None:
         return int(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _safe_ocr_thread_limit(value: Any) -> int | None:
+    limit = _safe_int(value)
+    return limit if limit is not None and 1 <= limit <= 256 else None
 
 
 def _safe_float(value: Any) -> float | None:
@@ -511,6 +517,7 @@ def build_diagnostic_report(
                         "ocr_max_seconds": _safe_float(fields.get("ocr_max_s")),
                         "recognition_paths": _counted_values(fields.get("erkennungspfade")),
                         "tesseract_source": _tesseract_source(fields.get("tesseract_quelle")),
+                        "ocr_thread_limit": _safe_ocr_thread_limit(fields.get("ocr_threads")),
                         "output_seconds": _safe_float(fields.get("ausgabe_s")),
                         "size_bytes": _safe_int(fields.get("groesse_bytes")),
                         "document_types": _document_types(fields.get("typen")),
@@ -529,6 +536,7 @@ def build_diagnostic_report(
     by_version: defaultdict[str, dict[str, int]] = defaultdict(_new_result_bucket)
     durations_by_version: defaultdict[str, list[float]] = defaultdict(list)
     by_tesseract_source: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    by_ocr_thread_limit: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
     by_reason: Counter[str] = Counter()
     by_document_type: Counter[str] = Counter()
     durations: list[float] = []
@@ -564,6 +572,7 @@ def build_diagnostic_report(
             "ocr_max_seconds": event["ocr_max_seconds"],
             "recognition_paths": event["recognition_paths"],
             "tesseract_source": event["tesseract_source"],
+            "ocr_thread_limit": event["ocr_thread_limit"],
             "output_seconds": event["output_seconds"],
             "size_bytes": event["size_bytes"],
         }
@@ -577,6 +586,8 @@ def build_diagnostic_report(
         _update_bucket(by_day[event["timestamp"].date().isoformat()], status)
         _update_bucket(by_version[event["version"]], status)
         by_tesseract_source[event["tesseract_source"] or LEGACY_REASON_CODE].append(event)
+        thread_limit = event["ocr_thread_limit"]
+        by_ocr_thread_limit[str(thread_limit) if thread_limit is not None else "nicht_erfasst"].append(event)
         if event["reason_code"]:
             by_reason[event["reason_code"]] += 1
         for document_type in event["document_types"]:
@@ -690,6 +701,25 @@ def build_diagnostic_report(
             ),
         }
 
+    grouped_ocr_threads: dict[str, dict[str, Any]] = {}
+    for thread_limit, events in sorted(by_ocr_thread_limit.items()):
+        thread_bucket = _new_result_bucket()
+        for event in events:
+            _update_bucket(thread_bucket, event["status"])
+        grouped_ocr_threads[thread_limit] = {
+            "processing_results": _finish_bucket(thread_bucket),
+            "recognition_seconds": _statistics(
+                event["recognition_seconds"]
+                for event in events
+                if event["recognition_seconds"] is not None
+            ),
+            "ocr_seconds": _statistics(
+                event["ocr_seconds"]
+                for event in events
+                if event["ocr_seconds"] is not None
+            ),
+        }
+
     return {
         "schema_version": SCHEMA_VERSION,
         "created_at": _iso_datetime(created_at or _utc_now()),
@@ -778,6 +808,7 @@ def build_diagnostic_report(
             for key, value in sorted(by_version.items())
         },
         "grouped_by_tesseract_source": grouped_ocr_sources,
+        "grouped_by_ocr_thread_limit": grouped_ocr_threads,
         "grouped_by_document_type": dict(sorted(by_document_type.items())),
         "grouped_by_reason_code": dict(sorted(by_reason.items())),
         "problem_cases": problem_cases,
@@ -888,6 +919,15 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
         "</tr>"
         for source, values in report["grouped_by_tesseract_source"].items()
     ) or '<tr><td colspan="6">Für ältere Logs nicht verfügbar.</td></tr>'
+    ocr_thread_rows = "".join(
+        "<tr>"
+        f"<td>{esc(thread_limit)}</td>"
+        f"<td>{values['processing_results']['total']}</td>"
+        f"<td>{esc(_format_number(values['recognition_seconds']['average'], 2))}</td>"
+        f"<td>{esc(_format_number(values['ocr_seconds']['average'], 2))}</td>"
+        "</tr>"
+        for thread_limit, values in report["grouped_by_ocr_thread_limit"].items()
+    ) or '<tr><td colspan="4">Keine Verarbeitungsvorgänge vorhanden.</td></tr>'
     unknown_field_rows = "".join(
         f"<tr><td>{esc(field)}</td><td>{count}</td></tr>"
         for field, count in report["parser_statistics"]["unknown_field_names"].items()
@@ -988,9 +1028,14 @@ Vollständige Pfade, Rohlogs, PDFs und OCR-Volltexte sind nicht Bestandteil des 
 <th>Median (s)</th><th>95. Perzentil (s)</th><th>Maximum (s)</th></tr></thead><tbody>{phase_rows}</tbody></table></section>
 <section><h2>Erkennungsdiagnose</h2><table><thead><tr><th>Messwert</th><th>Messungen</th><th>Durchschnitt</th>
 <th>Median</th><th>95. Perzentil</th><th>Maximum</th></tr></thead><tbody>{recognition_metric_rows}</tbody></table>
+<p class="note">„OCR gesamt“ summiert parallele OCR-Aufrufe und kann daher größer als die verstrichene Erkennungszeit sein.</p>
 <h3>Verwendete Erkennungspfade</h3><table><thead><tr><th>Pfad</th><th>Aufrufe</th></tr></thead><tbody>{recognition_path_rows}</tbody></table></section>
 <section><h2>OCR-Laufzeitquellen</h2><table><thead><tr><th>Quelle</th><th>Vorgänge</th><th>Ø Gesamt (s)</th>
 <th>Ø Erkennung (s)</th><th>Ø OCR (s)</th><th>Ø OCR-Aufrufe</th></tr></thead><tbody>{tesseract_source_rows}</tbody></table></section>
+<section><h2>OCR-Threadlimit</h2><table><thead><tr><th>Threads je OCR-Prozess</th><th>Vorgänge</th>
+<th>Ø Erkennung (s)</th><th>Ø OCR (s)</th></tr></thead><tbody>{ocr_thread_rows}</tbody></table>
+<p class="note">„nicht_erfasst“ kennzeichnet ältere Protokolle oder eine nicht auswertbare Vorgabe.
+Die Laufzeiten hängen auch von Art und Seitenzahl der Scans ab.</p></section>
 <section><h2>Problemfälle</h2><table><thead><tr><th>Zeitpunkt</th><th>Status</th><th>Grundcode</th>
 <th>Stufe</th><th>Fehlerseite</th><th>Seiten gesamt</th><th>Dauer (s)</th><th>Größe (Bytes)</th>{filename_header}</tr></thead>
 <tbody>{problem_rows}</tbody></table></section>

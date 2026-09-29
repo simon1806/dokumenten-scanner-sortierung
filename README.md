@@ -145,11 +145,11 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Die freigegebene Version 0.3.4 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, pypdf 6.16.2 und zxing-cpp 3.1.1. Für den nächsten Stand ist pypdf 6.19.0 vorbereitet; weitere Änderungen werden vor dem nächsten Setup gesammelt. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-, Bohle-, Pauli- und Heitzer-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung, Zeidler-Ausführungsbestätigung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
+Die freigegebene Version 0.3.5 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, pypdf 6.19.0 und zxing-cpp 3.1.1. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-, Bohle-, Pauli- und Heitzer-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung, Zeidler-Ausführungsbestätigung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Die aktuelle Freigabe 0.3.4 enthält:
+Die aktuelle Freigabe 0.3.5 enthält:
 
 - Tesseract OCR 5.5.3
 - Leptonica 1.87.0
@@ -193,7 +193,7 @@ Wird die normale Benutzeroberfläche geöffnet, während diese SYSTEM-Aufgabe de
 
 Das Aktivitätsprotokoll in der Oberfläche zeigt bei eingerichtetem Serverautostart automatisch das zentrale Tagesprotokoll aus `C:\ProgramData\DokumentenScannerSortierung\logs`. Die Benutzeroberfläche schreibt weiterhin ihr eigenes Diagnoseprotokoll unter `%APPDATA%`; dadurch lesen beide Betriebsarten gemeinsam sichtbar aus einer zentralen Quelle, ohne gleichzeitig dieselbe Datei zu verändern.
 
-Über **Diagnosebericht erstellen** kann dieses lokale Protokoll für die letzten 7, 30 oder 90 Tage ausgewertet werden; voreingestellt sind 30 Tage. Das erzeugte ZIP enthält ausschließlich `diagnosebericht.html` und `diagnosebericht.json`. Schema 3 des JSON-Berichts enthält zusätzlich die Durchschnittslaufzeit je Anwendungsversion, Render-, Barcode- und OCR-Statistiken, OCR-Aufruf- und Pixelzahlen, Erkennungspfade sowie einen Vergleich nach pfadfreier Tesseract-Laufzeitquelle. Ältere Logs bleiben auswertbar und erscheinen bei den neuen Messwerten als nicht verfügbar beziehungsweise `legacy_nicht_spezifiziert`. Dateinamen sind standardmäßig deaktiviert und müssen bewusst freigegeben werden, vollständige Pfade werden nie aufgenommen. Rohlogs, PDFs und OCR-Volltexte verlassen den Rechner nicht und sind nicht Teil des Berichts. Die laufende Überwachung muss für den Export nicht beendet werden.
+Über **Diagnosebericht erstellen** kann dieses lokale Protokoll für die letzten 7, 30 oder 90 Tage ausgewertet werden; voreingestellt sind 30 Tage. Das erzeugte ZIP enthält ausschließlich `diagnosebericht.html` und `diagnosebericht.json`. Schema 4 des JSON-Berichts enthält die Durchschnittslaufzeit je Anwendungsversion, Render-, Barcode- und OCR-Statistiken, OCR-Aufruf- und Pixelzahlen, Erkennungspfade sowie Vergleiche nach pfadfreier Tesseract-Laufzeitquelle und wirksamem OCR-Threadlimit. Ältere Logs bleiben auswertbar und erscheinen bei den neuen Messwerten als nicht verfügbar beziehungsweise `legacy_nicht_spezifiziert` oder `nicht_erfasst`. Dateinamen sind standardmäßig deaktiviert und müssen bewusst freigegeben werden, vollständige Pfade werden nie aufgenommen. Rohlogs, PDFs und OCR-Volltexte verlassen den Rechner nicht und sind nicht Teil des Berichts. Die laufende Überwachung muss für den Export nicht beendet werden.
 
 Für Netzwerkfreigaben sind UNC-Pfade wie `\\server\freigabe\scanner\eingang` robuster als benutzerabhängige Laufwerksbuchstaben. Das Dienstkonto benötigt Lesen/Ändern/Löschen im Eingang sowie Lesen/Schreiben/Ändern in Ziel, Archiv, Prüfordner und am Ordner der zentralen `settings.json`.
 

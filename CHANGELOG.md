@@ -1,9 +1,12 @@
 # Änderungsprotokoll
 
-## Unveröffentlicht (geplant für 0.3.5)
+## 0.3.5 – 2026-09-29
 
-- pypdf wurde auf 6.19.0, PyInstaller auf 6.22.3 und ruff auf 0.16.9 aktualisiert. Der spätere Windows-x64-Release-Build wird die zugehörigen festgelegten Wheel-Hashes verwenden.
-- Weitere Änderungen werden vor dem nächsten Setup gesammelt. Vor einem Server-Update sind die dokumentierten Tests mit echten Scans und Serverpfaden erforderlich.
+- Der Diagnosebericht (Schema 4) zeigt das wirksame OCR-Threadlimit und gruppiert Erkennungs- und OCR-Zeiten danach. Ältere Protokolle bleiben lesbar.
+- Tesseract verwendet standardmäßig einen internen OCR-Thread pro Prozess. Dies vermeidet Konkurrenz mit den zwei parallelen Seitenarbeitern und verkürzt die Erkennung auf den geprüften Scans deutlich; eine vorhandene `OMP_THREAD_LIMIT`-Vorgabe bleibt erhalten.
+- Pauli-Lieferscheine werden auch erkannt, wenn die OCR das Wort „Lieferschein“ mit einem zusätzlichen Buchstaben, einem falschen Anfangsbuchstaben oder einer Trennung vor „chein“ liest. Pauli-Auftragsbestätigungen bleiben ausgeschlossen.
+- pypdf wurde auf 6.19.0, PyInstaller auf 6.22.3 und ruff auf 0.16.9 aktualisiert. Der Windows-x64-Release-Build verwendet die zugehörigen festgelegten Wheel-Hashes.
+- Vor dem Server-Update sind die dokumentierten Tests mit echten Scans und Serverpfaden erforderlich.
 
 ## 0.3.4 – 2026-09-03
 

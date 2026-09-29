@@ -226,6 +226,29 @@ class DiagnosticReportTests(unittest.TestCase):
             self.assertIn("Ø Laufzeit (s)", html)
             self.assertIn("OCR-Laufzeitquellen", html)
 
+    def test_ocr_thread_limit_is_reported_without_losing_legacy_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_log(
+                directory,
+                "2026-08-19 08:00:00,000 INFO scanner_sorter.processing [worker]: "
+                "Vorgang abgeschlossen; schema=2; ereignis=processing_completed; "
+                "status=erfolgreich; version=0.3.4; erkennung_s=8; ocr_s=7\n"
+                "2026-08-19 08:01:00,000 INFO scanner_sorter.processing [worker]: "
+                "Vorgang abgeschlossen; schema=2; ereignis=processing_completed; "
+                "status=erfolgreich; version=0.3.5; erkennung_s=4; ocr_s=3; "
+                "ocr_threads=1\n",
+            )
+
+            report = build_diagnostic_report(directory, days=7, end_date=self.report_day)
+
+            limits = report["grouped_by_ocr_thread_limit"]
+            self.assertEqual(1, limits["1"]["processing_results"]["total"])
+            self.assertEqual(4.0, limits["1"]["recognition_seconds"]["average"])
+            self.assertEqual(3.0, limits["1"]["ocr_seconds"]["average"])
+            self.assertEqual(1, limits["nicht_erfasst"]["processing_results"]["total"])
+            self.assertEqual({}, report["parser_statistics"]["unknown_field_names"])
+            self.assertIn("OCR-Threadlimit", render_diagnostic_html(report))
+
     def test_statistics_cover_empty_single_median_p95_and_maximum(self) -> None:
         self.assertEqual(0, _statistics([])["count"])
         self.assertIsNone(_statistics([])["median"])
@@ -254,6 +277,7 @@ class DiagnosticReportTests(unittest.TestCase):
                 "grundcode=kein_text; stufe=ocr; seite=1; "
                 "datei=C:\\Geheim\\kunde.pdf; gesamt_s=3.0; "
                 "tesseract_quelle=C:\\Geheim\\tesseract.exe; "
+                "ocr_threads=C:\\Geheim\\config.txt; "
                 "erkennungspfade=C:\\Geheim:1\n",
             )
 
@@ -265,6 +289,7 @@ class DiagnosticReportTests(unittest.TestCase):
             self.assertNotIn("kunde.pdf", serialized)
             self.assertNotIn("Geheim", serialized)
             self.assertIn('"tesseract_source": "unbekannt"', serialized)
+            self.assertIsNone(report["problem_cases"][0]["ocr_thread_limit"])
             self.assertNotIn("filename", report["problem_cases"][0])
             self.assertFalse(report["privacy"]["filenames_included"])
             self.assertFalse(report["privacy"]["full_paths_included"])
@@ -314,7 +339,7 @@ class DiagnosticReportTests(unittest.TestCase):
                     set(archive.namelist()),
                 )
                 report = json.loads(archive.read("diagnosebericht.json"))
-                self.assertEqual(3, report["schema_version"])
+                self.assertEqual(4, report["schema_version"])
                 self.assertEqual(7, report["report_period"]["days"])
                 self.assertIn("<!doctype html>", archive.read("diagnosebericht.html").decode())
 
