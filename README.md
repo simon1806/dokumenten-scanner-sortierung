@@ -145,11 +145,11 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 ## Server-Pilot und Freigaben
 
-Version 0.3.4 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, pypdf 6.16.2 und zxing-cpp 3.1.1. Sie ergänzt eine kleinere NEUMA-Kopferkennung, detaillierte OCR-Laufzeitmessungen und die Durchschnittslaufzeit je Anwendungsversion. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-, Bohle-, Pauli- und Heitzer-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung, Zeidler-Ausführungsbestätigung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
+Die freigegebene Version 0.3.4 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, pypdf 6.16.2 und zxing-cpp 3.1.1. Für den nächsten Stand ist pypdf 6.19.0 vorbereitet; weitere Änderungen werden vor dem nächsten Setup gesammelt. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-, Bohle-, Pauli- und Heitzer-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung, Zeidler-Ausführungsbestätigung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Release 0.3.4 enthält:
+Die aktuelle Freigabe 0.3.4 enthält:
 
 - Tesseract OCR 5.5.3
 - Leptonica 1.87.0
@@ -216,15 +216,15 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --require-hashes --only-binary=:all: --requirement requirements-build.lock
 .\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation --editable .
 .\.venv\Scripts\python.exe -m pip check
-.\.venv\Scripts\ruff.exe check src installer tests
+.\.venv\Scripts\ruff.exe check src installer scripts tests
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-OCR-Paket vorbereiten und Release 0.3.4 bauen:
+Nach Abschluss der gesammelten Änderungen das OCR-Paket vorbereiten und den nächsten Release-Build starten:
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.3.4
+.\scripts\build-release.ps1 -Version 0.3.5
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.

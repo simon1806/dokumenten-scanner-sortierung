@@ -1,5 +1,10 @@
 # Änderungsprotokoll
 
+## Unveröffentlicht (geplant für 0.3.5)
+
+- pypdf wurde auf 6.19.0, PyInstaller auf 6.22.3 und ruff auf 0.16.9 aktualisiert. Der spätere Windows-x64-Release-Build wird die zugehörigen festgelegten Wheel-Hashes verwenden.
+- Weitere Änderungen werden vor dem nächsten Setup gesammelt. Vor einem Server-Update sind die dokumentierten Tests mit echten Scans und Serverpfaden erforderlich.
+
 ## 0.3.4 – 2026-09-03
 
 - Verarbeitungslogs messen PDF-Rendering, Barcode-Erkennung, OCR-Gesamtzeit, langsamsten OCR-Einzelaufruf, OCR-Aufrufzahl, OCR-Pixel, Erkennungspfade und die pfadfreie Tesseract-Laufzeitquelle. OCR-Inhalte und vollständige Installationspfade werden weiterhin nicht protokolliert oder exportiert.
