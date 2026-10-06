@@ -21,6 +21,7 @@ NUMBER = r"(\d{6,12})"
 NOWAK_NUMBER = r"(\d{7,12})"
 NOWAK_CONTACT_FRAGMENT = "60686"
 PAULI_DELIVERY_TITLE = re.compile(r"\b[LK]I{1,2}EFERS\s*CHEIN\b")
+PAULI_DELIVERY_HEADER_CROP = (0.5, 0.13, 0.99, 0.36)
 NOWAK_FAST_CROP = (0.39, 0.025, 0.75, 0.205)
 BOHLE_NUMBER = r"(\d{5,12})"
 BOHLE_NUMBER_FAST_CROP = (0.02, 0.015, 0.46, 0.13)
@@ -144,12 +145,21 @@ def is_bohle_header(text: str) -> bool:
     return "BOHLE AG" in normalised or "BOHLE.COM" in normalised
 
 
+def is_pauli_header(text: str) -> bool:
+    """Use Pauli's domain when OCR loses the printed company name."""
+    normalised = normalise(text)
+    return (
+        ("PAULI" in normalised and "SOHN" in normalised)
+        or bool(re.search(r"\bPAULI\.DE\b", normalised))
+    )
+
+
 def is_pauli_delivery_note(text: str) -> bool:
     """Accept the small title OCR errors seen on Pauli delivery notes."""
     normalised = normalise(text)
     return (
-        "PAULI" in normalised
-        and "SOHN" in normalised
+        is_pauli_header(normalised)
+        and "AUFTRAGSBESTATIGUNG" not in normalised
         and bool(PAULI_DELIVERY_TITLE.search(normalised))
     )
 
@@ -185,6 +195,31 @@ def has_supported_document_signal(text: str) -> bool:
         or is_pauli_delivery_note(normalised)
         or any(signal in normalised for signal in SUPPORTED_DOCUMENT_SIGNALS)
     )
+
+
+def unrecognised_document_reason(text: str) -> str:
+    """Describe only evidence present in the OCR, without exporting its text."""
+    normalised = normalise(text)
+    if re.search(r"\bAUFTRAGSBEST(?:A|AE)TIGUNG\b", normalised):
+        return "dokumentart_nicht_unterstuetzt"
+    if (
+        is_pauli_delivery_note(normalised)
+        or "EMPFANGSSCHEIN" in normalised
+        or is_assignment_declaration(normalised)
+        or is_montage_report(normalised)
+        or is_neuma_order(normalised)
+        or is_zeidler_execution_confirmation(normalised)
+        or "AUFMASSBLATT" in normalised
+        or "AUFMASS SCHEIN" in normalised
+        or (
+            "LIEFERSCHEIN" in normalised
+            and (is_nowak_header(normalised) or is_bohle_header(normalised) or "HEITZER AG" in normalised)
+        )
+    ):
+        return "belegnummer_nicht_erkannt"
+    if is_pauli_header(normalised) or is_nowak_header(normalised) or is_bohle_header(normalised):
+        return "lieferant_erkannt_belegart_unbekannt"
+    return "keine_bekannte_dokumentart"
 
 
 def heitzer_page_reference(text: str) -> tuple[str, int, int] | None:
@@ -293,7 +328,8 @@ def is_signed_offer(text: str) -> bool:
         )
     )
     has_signature_field = bool(
-        re.search(r"\bDATUM\s*/\s*UNTERSCHR[A-Z]{2,8}\b", normalised)
+        # Handwriting across the printed label can turn "chr" into "enn".
+        re.search(r"\bDATUM\s*/\s*UNTERS(?:CHR|ENN)[A-Z]{2,8}\b", normalised)
     )
     return has_acceptance and has_signature_field
 
@@ -440,6 +476,8 @@ class PageRecognizer:
         self._metrics_lock = threading.Lock()
         self._active_metrics: dict[str, object] | None = None
         self._last_metrics = self._new_metrics()
+        self._page_reasons: dict[int, str] = {}
+        self._last_page_reasons: dict[int, str] = {}
 
     def _new_metrics(self) -> dict[str, object]:
         return {
@@ -457,6 +495,7 @@ class PageRecognizer:
     def _start_metrics(self) -> None:
         with self._metrics_lock:
             self._active_metrics = self._new_metrics()
+            self._page_reasons = {}
 
     def _finish_metrics(self) -> None:
         with self._metrics_lock:
@@ -467,6 +506,19 @@ class PageRecognizer:
                 "recognition_paths": dict(sorted(paths.items())),
             }
             self._active_metrics = None
+            self._last_page_reasons = dict(self._page_reasons)
+
+    @property
+    def last_page_reasons(self) -> dict[int, str]:
+        with self._metrics_lock:
+            return dict(self._last_page_reasons)
+
+    def _unrecognised_page(self, page: object, reason_code: str) -> None:
+        page_index = getattr(page, "number", None)
+        if type(page_index) is int and page_index >= 0:
+            with self._metrics_lock:
+                self._page_reasons[page_index] = reason_code
+        return None
 
     @property
     def last_metrics(self) -> dict[str, object]:
@@ -675,7 +727,7 @@ class PageRecognizer:
                 LOGGER.info(
                     "Pauli-Aufmassanlage erkannt; Bildrendering und Ganzseiten-OCR uebersprungen."
                 )
-                return None
+                return self._unrecognised_page(page, "anlage_ohne_hauptbeleg")
 
         image = self._render_with_metrics(page)
         barcode_started = time.perf_counter()
@@ -742,7 +794,24 @@ class PageRecognizer:
         header_text = self._read_ocr(self._header_crop(image))
         detected = detect_document_from_text(header_text, barcodes, mi_scan_date)
         if detected:
+            if detected.document_type == "AG" and not self._has_signed_offer_mark(image):
+                return self._unrecognised_page(page, "angebot_ohne_handschrift")
             return detected
+
+        pauli_header = f"{embedded_text}\n{nowak_text}\n{header_text}"
+        if (
+            is_pauli_header(pauli_header)
+            and "AUFTRAGSBESTATIGUNG" not in normalise(pauli_header)
+            and re.search(r"\bNUMMER\s*/\s*DATUM\b", normalise(header_text))
+        ):
+            self._record_path("pauli_belegkopf")
+            pauli_text = self._read_ocr(self._pauli_delivery_header_crop(image))
+            detected = detect_document_from_text(
+                f"{pauli_header}\n{pauli_text}", barcodes, mi_scan_date
+            )
+            if detected and detected.supplier == "Pauli":
+                LOGGER.info("Pauli-Belegkopf erneut gelesen; lieferschein=%s", detected.number)
+                return detected
 
         if is_assignment_declaration(header_text):
             self._record_path("abtretung_nummer")
@@ -766,30 +835,37 @@ class PageRecognizer:
                         "Angebot ohne handschriftliche Eintragung im Unterschriftsbereich "
                         "bleibt unberuecksichtigt."
                     )
-                    return None
+                    return self._unrecognised_page(page, "angebot_ohne_handschrift")
                 LOGGER.info(
                     "Unterschriebenes Angebot erkannt; angebot=%s",
                     detected.number.removesuffix("_UNTERS"),
                 )
                 return detected
             LOGGER.info("Angebot ohne erkennbare Auftragsbestaetigung bleibt unberuecksichtigt.")
-            return None
+            return self._unrecognised_page(page, "angebot_bestaetigung_nicht_erkannt")
 
         if is_pauli_measurement_attachment(
             f"{embedded_text}\n{nowak_text}\n{header_text}"
         ):
             LOGGER.info("Pauli-Aufmassanlage erkannt; Ganzseiten-OCR uebersprungen.")
-            return None
+            return self._unrecognised_page(page, "anlage_ohne_hauptbeleg")
 
         if not has_supported_document_signal(header_text):
             LOGGER.info(
                 "Ganzseiten-OCR uebersprungen; keine bekannte Dokument-Signatur im Kopfbereich."
             )
-            return None
+            return self._unrecognised_page(page, unrecognised_document_reason(pauli_header))
 
         self._record_path("ganzseite")
         text = self._read_ocr(image)
-        return detect_document_from_text(text, barcodes, mi_scan_date)
+        detected = detect_document_from_text(text, barcodes, mi_scan_date)
+        if detected:
+            if detected.document_type == "AG" and not self._has_signed_offer_mark(image):
+                return self._unrecognised_page(page, "angebot_ohne_handschrift")
+            return detected
+        return self._unrecognised_page(
+            page, unrecognised_document_reason(f"{pauli_header}\n{text}")
+        )
 
     def _render_with_metrics(self, page: object):
         started = time.perf_counter()
@@ -881,6 +957,20 @@ class PageRecognizer:
         """Read Bohle's delivery-note number from the small top-left field."""
         width, height = image.size
         left, top, right, bottom = BOHLE_NUMBER_FAST_CROP
+        return image.crop(
+            (
+                round(width * left),
+                round(height * top),
+                max(1, round(width * right)),
+                max(1, round(height * bottom)),
+            )
+        )
+
+    @staticmethod
+    def _pauli_delivery_header_crop(image: object):
+        """Isolate Pauli's title and number from the left address column."""
+        width, height = image.size
+        left, top, right, bottom = PAULI_DELIVERY_HEADER_CROP
         return image.crop(
             (
                 round(width * left),

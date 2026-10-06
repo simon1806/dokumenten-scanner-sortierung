@@ -1,7 +1,12 @@
 # Änderungsprotokoll
 
-## Noch nicht veröffentlicht
+## 0.3.6 – 2026-10-06
 
+- Diagnoseberichte verwenden Schema 5 und lassen sich beim Export auf die aktuelle Version beschränken oder über alle Versionen vergleichen. Problemfälle und langsame Vorgänge nennen ihre Verarbeitungsversion; die Versionstabelle zeigt zusätzlich Median und 95. Perzentil.
+- Nicht zugeordnete Scans erhalten konkrete, pfadfreie Prüfgründe wie fehlende Belegnummer, unbekannte Belegart oder nicht lesbare Auftragserteilung. Ältere Protokolle behalten ihren bisherigen Grundcode. Die Pauli-Wiederholungsprüfung erscheint auch in den Erkennungspfaden der Diagnose.
+- Pauli-Lieferscheine verwenden auch die Lieferanten-Domain als Erkennungshinweis. Bei einem beschädigten Titel wird ausschließlich der rechte Belegkopf erneut gelesen; Pauli-Auftragsbestätigungen bleiben ausgeschlossen.
+- Unterschriebene Angebote werden auch erkannt, wenn überlagerte Handschrift das gedruckte Feld „Unterschrift“ als „Untersennitt“ lesen lässt. Die Prüfung auf eine handschriftliche Eintragung bleibt erhalten.
+- Die Handschriftprüfung gilt auch für Angebote, die bereits im allgemeinen Kopf oder erst in der Ganzseiten-OCR erkannt werden. Ein leeres Unterschriftsfeld kann diese Prüfung nicht mehr umgehen.
 - Updates gleichen die geprüfte bisherige Runtime-Dateiliste mit dem neuen Paket ab. Unveränderte, veraltete Dateien werden innerhalb derselben Transaktion gesichert und entfernt; Rollback und Wiederherstellung stellen auch Wechsel zwischen Dateien und Ordnern wieder her. Geänderte und unbekannte Dateien bleiben erhalten.
 - Eine eingerichtete, bereits gestoppte SYSTEM-Aufgabe löst beim Beenden keine Administratorabfrage mehr aus. Der Aufgabenstatus wird im Hintergrund geprüft, und während des Beendens lässt sich die Überwachung nicht erneut über die Oberfläche starten.
 - „Anwendung beenden“ stoppt auch die eingerichtete SYSTEM-Überwachung kontrolliert und schließt die Oberfläche erst, wenn die Serveraufgabe vollständig beendet ist. Ein laufender Scan wird abgeschlossen. Bei abgebrochener Administratorbestätigung oder nicht bestätigtem Stopp bleibt das Fenster offen; das Ausblenden in den Infobereich lässt die Überwachung weiterhin laufen.

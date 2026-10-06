@@ -1350,7 +1350,7 @@ class SettingsWindow:
         except Exception as error:
             self._messagebox.showerror("Protokollordner", f"Ordner konnte nicht geöffnet werden:\n{error}")
 
-    def _show_diagnostic_export_dialog(self) -> tuple[int, bool] | None:
+    def _show_diagnostic_export_dialog(self) -> tuple[int, bool, str | None] | None:
         """Fragt Zeitraum und die bewusste Freigabe von Dateinamen ab."""
 
         window = self.tk.Toplevel(self.root)
@@ -1385,6 +1385,23 @@ class SettingsWindow:
                 variable=days_var,
             ).pack(anchor="w", pady=2)
 
+        current_version_var = self.tk.BooleanVar(value=True)
+        self.tk.Label(
+            body,
+            text="Versionen",
+            background="#FFFFFF",
+            foreground="#17354B",
+            font=("Segoe UI Semibold", 11),
+        ).pack(anchor="w", pady=(14, 4))
+        self.ttk.Radiobutton(
+            body, text=f"Nur aktuelle Version ({__version__})",
+            value=True, variable=current_version_var,
+        ).pack(anchor="w", pady=2)
+        self.ttk.Radiobutton(
+            body, text="Alle Versionen vergleichen",
+            value=False, variable=current_version_var,
+        ).pack(anchor="w", pady=2)
+
         include_filenames_var = self.tk.BooleanVar(value=False)
         self.ttk.Checkbutton(
             body,
@@ -1401,10 +1418,13 @@ class SettingsWindow:
             font=("Segoe UI", 8),
         ).pack(anchor="w", pady=(0, 14))
 
-        result: list[tuple[int, bool]] = []
+        result: list[tuple[int, bool, str | None]] = []
 
         def confirm() -> None:
-            result.append((days_var.get(), bool(include_filenames_var.get())))
+            result.append((
+                days_var.get(), bool(include_filenames_var.get()),
+                __version__ if current_version_var.get() else None,
+            ))
             window.destroy()
 
         buttons = self.tk.Frame(body, background="#FFFFFF")
@@ -1429,7 +1449,7 @@ class SettingsWindow:
         options = self._show_diagnostic_export_dialog()
         if options is None:
             return
-        days, include_filenames = options
+        days, include_filenames, version_filter = options
         destination = self._filedialog.asksaveasfilename(
             title="Diagnosebericht speichern",
             defaultextension=".zip",
@@ -1452,6 +1472,7 @@ class SettingsWindow:
                     Path(destination),
                     days=days,
                     include_filenames=include_filenames,
+                    version_filter=version_filter,
                 )
             except Exception as error:
                 self._diagnostic_results.put(("error", error))

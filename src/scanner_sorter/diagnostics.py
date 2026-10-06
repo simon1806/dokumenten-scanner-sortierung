@@ -16,9 +16,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from . import __version__
+from .review_reasons import REVIEW_REASON_LABELS
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_REPORT_DAYS = 30
 ALLOWED_REPORT_DAYS = (7, 30, 90)
 LEGACY_REASON_CODE = "legacy_nicht_spezifiziert"
@@ -35,6 +36,7 @@ _RECOGNITION_PATHS = {
     "eingebetteter_text",
     "barcode",
     "lieferantenkopf_klein",
+    "pauli_belegkopf",
     "neuma_kopf",
     "bohle_nummer",
     "montage_kopf",
@@ -358,11 +360,17 @@ def build_diagnostic_report(
     include_filenames: bool = False,
     end_date: date | None = None,
     created_at: datetime | None = None,
+    version_filter: str | None = None,
 ) -> dict[str, Any]:
     """Liest Tageslogs und erstellt die maschinenlesbare Berichtsdatenstruktur."""
 
     if days not in ALLOWED_REPORT_DAYS:
         raise ValueError(f"Zeitraum muss einer von {ALLOWED_REPORT_DAYS} sein")
+    if version_filter is not None and (
+        not isinstance(version_filter, str)
+        or not re.fullmatch(r"(?:\d+\.\d+\.\d+(?:[+-][A-Za-z0-9.-]+)?|unbekannt)", version_filter)
+    ):
+        raise ValueError("Versionsfilter muss eine Versionsnummer oder 'unbekannt' sein")
 
     report_end = end_date or date.today()
     report_start = report_end - timedelta(days=days - 1)
@@ -392,6 +400,7 @@ def build_diagnostic_report(
     folder_error_continues = 0
     folder_recoveries = 0
     active_version = "unbekannt"
+    available_versions: set[str] = set()
     level_counts: Counter[str] = Counter()
     unclassified_by_level: Counter[str] = Counter()
     unclassified_by_logger: Counter[str] = Counter()
@@ -435,6 +444,9 @@ def build_diagnostic_report(
 
                 if fields.get("version"):
                     active_version = fields["version"]
+                available_versions.add(active_version)
+                if version_filter is not None and active_version != version_filter:
+                    continue
                 if kind == "start":
                     starts += 1
                     starts_by_day[timestamp.date().isoformat()] += 1
@@ -557,7 +569,9 @@ def build_diagnostic_report(
         result: dict[str, Any] = {
             "timestamp": event["timestamp"].isoformat(timespec="milliseconds"),
             "status": event["status"],
+            "version": event["version"],
             "reason_code": event["reason_code"],
+            "reason_label": REVIEW_REASON_LABELS.get(event["reason_code"], event["reason_code"]),
             "stage": event["stage"],
             "page": event["page"],
             "page_count": event["page_count"],
@@ -724,6 +738,11 @@ def build_diagnostic_report(
         "schema_version": SCHEMA_VERSION,
         "created_at": _iso_datetime(created_at or _utc_now()),
         "application_version": __version__,
+        "report_filters": {
+            "application_version": version_filter,
+            "available_versions": sorted(available_versions),
+            "log_quality_scope": "all_versions",
+        },
         "report_period": {
             "from": report_start.isoformat(),
             "to": report_end.isoformat(),
@@ -855,18 +874,20 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
         for day, values in report["grouped_by_day"].items()
     )
     reason_rows = "".join(
-        f"<tr><td>{esc(reason)}</td><td>{count}</td></tr>"
+        f"<tr><td>{esc(REVIEW_REASON_LABELS.get(reason, reason))}</td><td>{count}</td></tr>"
         for reason, count in report["grouped_by_reason_code"].items()
     ) or '<tr><td colspan="2">Keine Grundcodes vorhanden.</td></tr>'
     version_rows = "".join(
-        "<tr>"
-        f"<td>{esc(version)}</td><td>{values['total']}</td>"
+        ('<tr class="current-version">' if version == report["application_version"] else "<tr>")
+        + f"<td>{esc(version)}</td><td>{values['total']}</td>"
         f"<td>{values['successful']}</td><td>{values['not_recognized']}</td>"
         f"<td>{esc(_format_percent(values['recognition_rate']))}</td>"
         f"<td>{esc(_format_number(values['duration_seconds']['average'], 2))}</td>"
+        f"<td>{esc(_format_number(values['duration_seconds']['median'], 2))}</td>"
+        f"<td>{esc(_format_number(values['duration_seconds']['p95'], 2))}</td>"
         "</tr>"
         for version, values in report["grouped_by_version"].items()
-    ) or '<tr><td colspan="6">Keine Verarbeitungsvorgänge vorhanden.</td></tr>'
+    ) or '<tr><td colspan="8">Keine Verarbeitungsvorgänge vorhanden.</td></tr>'
     type_rows = "".join(
         f"<tr><td>{esc(document_type)}</td><td>{count}</td></tr>"
         for document_type, count in report["grouped_by_document_type"].items()
@@ -948,7 +969,8 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
         problem_rows_parts.append(
             "<tr>"
             f"<td>{esc(case['timestamp'])}</td><td>{esc(case['status'])}</td>"
-            f"<td>{esc(case.get('reason_code') or '–')}</td>"
+            f"<td>{esc(case.get('version') or 'unbekannt')}</td>"
+            f"<td>{esc(case.get('reason_label') or case.get('reason_code') or '–')}</td>"
             f"<td>{esc(case.get('stage') or '–')}</td>"
             f"<td>{esc(_format_number(case.get('page'), 0))}</td>"
             f"<td>{esc(_format_number(case.get('page_count'), 0))}</td>"
@@ -957,7 +979,7 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
             f"{filename_cell}</tr>"
         )
     problem_rows = "".join(problem_rows_parts) or (
-        f'<tr><td colspan="{9 if privacy["filenames_included"] else 8}">'
+        f'<tr><td colspan="{10 if privacy["filenames_included"] else 9}">'
         "Keine Problemfälle vorhanden.</td></tr>"
     )
 
@@ -971,6 +993,7 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
         slowest_rows_parts.append(
             "<tr>"
             f"<td>{esc(case['timestamp'])}</td><td>{esc(case['status'])}</td>"
+            f"<td>{esc(case.get('version') or 'unbekannt')}</td>"
             f"<td>{esc(_format_number(case.get('duration_seconds'), 2))}</td>"
             f"<td>{esc(_format_number(case.get('archive_seconds'), 2))}</td>"
             f"<td>{esc(_format_number(case.get('recognition_seconds'), 2))}</td>"
@@ -978,8 +1001,17 @@ def render_diagnostic_html(report: dict[str, Any]) -> str:
             f"{filename_cell}</tr>"
         )
     slowest_rows = "".join(slowest_rows_parts) or (
-        f'<tr><td colspan="{7 if privacy["filenames_included"] else 6}">'
+        f'<tr><td colspan="{8 if privacy["filenames_included"] else 7}">'
         "Keine Laufzeitdaten vorhanden.</td></tr>"
+    )
+
+    selected_version = report.get("report_filters", {}).get("application_version")
+    filter_description = (
+        f"Nur Version {selected_version}" if selected_version else "Alle Versionen"
+    )
+    empty_filter_note = (
+        '<p class="note">Für die ausgewählte Version wurden im Zeitraum noch keine Vorgänge gefunden.</p>'
+        if selected_version and not results["total"] else ""
     )
 
     return f"""<!doctype html>
@@ -999,6 +1031,7 @@ table {{ border-collapse: collapse; width: 100%; font-size: .92rem; }}
 th, td {{ border-bottom: 1px solid #e3e8ee; padding: .5rem; text-align: left; vertical-align: top; }}
 th {{ background: #eef3f8; }}
 .note {{ color: #566573; font-size: .9rem; }}
+.current-version td {{ background: #e8f4fb; font-weight: 600; }}
 </style>
 </head>
 <body>
@@ -1006,6 +1039,8 @@ th {{ background: #eef3f8; }}
 <h1>Lokaler Diagnosebericht</h1>
 <p>Version {esc(report['application_version'])} · Zeitraum {esc(report['report_period']['from'])}
 bis {esc(report['report_period']['to'])} · erstellt {esc(report['created_at'])}</p>
+<p>Auswertung: <strong>{esc(filter_description)}</strong> · blau markiert: aktuelle Anwendungsversion.</p>
+{empty_filter_note}
 <p class="note">Dateinamen: {"enthalten" if privacy['filenames_included'] else "nicht enthalten"}.
 Vollständige Pfade, Rohlogs, PDFs und OCR-Volltexte sind nicht Bestandteil des Berichts.</p>
 </div>
@@ -1021,8 +1056,8 @@ Vollständige Pfade, Rohlogs, PDFs und OCR-Volltexte sind nicht Bestandteil des 
 <section><h2>Tagesverlauf</h2><table><thead><tr><th>Tag</th><th>Gesamt</th><th>Erfolgreich</th>
 <th>Nicht erkannt</th><th>Technische Fehler</th><th>Erkennungsquote</th></tr></thead><tbody>{day_rows}</tbody></table></section>
 <section><h2>Versionen</h2><table><thead><tr><th>Version</th><th>Gesamt</th><th>Erfolgreich</th>
-<th>Nicht erkannt</th><th>Erkennungsquote</th><th>Ø Laufzeit (s)</th></tr></thead><tbody>{version_rows}</tbody></table></section>
-<section><h2>Grundcodes</h2><table><thead><tr><th>Grundcode</th><th>Anzahl</th></tr></thead><tbody>{reason_rows}</tbody></table></section>
+<th>Nicht erkannt</th><th>Erkennungsquote</th><th>Ø Laufzeit (s)</th><th>Median (s)</th><th>95. Perzentil (s)</th></tr></thead><tbody>{version_rows}</tbody></table></section>
+<section><h2>Prüfgründe</h2><table><thead><tr><th>Prüfgrund</th><th>Anzahl</th></tr></thead><tbody>{reason_rows}</tbody></table></section>
 <section><h2>Dokumenttypen</h2><table><thead><tr><th>Typ</th><th>Anzahl</th></tr></thead><tbody>{type_rows}</tbody></table></section>
 <section><h2>Phasenlaufzeiten</h2><table><thead><tr><th>Phase</th><th>Messungen</th><th>Durchschnitt (s)</th>
 <th>Median (s)</th><th>95. Perzentil (s)</th><th>Maximum (s)</th></tr></thead><tbody>{phase_rows}</tbody></table></section>
@@ -1036,10 +1071,10 @@ Vollständige Pfade, Rohlogs, PDFs und OCR-Volltexte sind nicht Bestandteil des 
 <th>Ø Erkennung (s)</th><th>Ø OCR (s)</th></tr></thead><tbody>{ocr_thread_rows}</tbody></table>
 <p class="note">„nicht_erfasst“ kennzeichnet ältere Protokolle oder eine nicht auswertbare Vorgabe.
 Die Laufzeiten hängen auch von Art und Seitenzahl der Scans ab.</p></section>
-<section><h2>Problemfälle</h2><table><thead><tr><th>Zeitpunkt</th><th>Status</th><th>Grundcode</th>
+<section><h2>Problemfälle</h2><table><thead><tr><th>Zeitpunkt</th><th>Status</th><th>Version</th><th>Prüfgrund</th>
 <th>Stufe</th><th>Fehlerseite</th><th>Seiten gesamt</th><th>Dauer (s)</th><th>Größe (Bytes)</th>{filename_header}</tr></thead>
 <tbody>{problem_rows}</tbody></table></section>
-<section><h2>Langsamste Vorgänge</h2><table><thead><tr><th>Zeitpunkt</th><th>Status</th><th>Gesamt (s)</th>
+<section><h2>Langsamste Vorgänge</h2><table><thead><tr><th>Zeitpunkt</th><th>Status</th><th>Version</th><th>Gesamt (s)</th>
 <th>Archiv (s)</th><th>Erkennung (s)</th><th>Ausgabe (s)</th>{filename_header}</tr></thead><tbody>{slowest_rows}</tbody></table></section>
 <section><h2>Anwendungslebenszyklus</h2>
 <p>Starts: {lifecycle['starts']} · kontrollierte Stopps: {lifecycle['controlled_stops']} ·
@@ -1047,6 +1082,7 @@ Sitzungen ohne Stop-Ereignis: {lifecycle['sessions_without_stop']}.</p>
 <p class="note">Eine Sitzung ohne Stop-Ereignis kann noch aktiv sein oder unerwartet beendet worden sein.</p>
 <table><thead><tr><th>Stoppgrund</th><th>Anzahl</th></tr></thead><tbody>{shutdown_reason_rows}</tbody></table></section>
 <section><h2>Logqualität</h2>
+<p class="note">Die Logqualität bezieht sich auf alle gelesenen Protokolle im Zeitraum, unabhängig vom Versionsfilter.</p>
 <p>Warnungen: {log_health['warning_lines']} · Fehler: {log_health['error_lines']} ·
 kritische Fehler: {log_health['critical_lines']} · unklassifizierte Warnungen:
 {log_health['unclassified_warning_lines']} · unklassifizierte Fehler:
@@ -1069,6 +1105,7 @@ def export_diagnostic_report(
     include_filenames: bool = False,
     end_date: date | None = None,
     created_at: datetime | None = None,
+    version_filter: str | None = None,
 ) -> Path:
     """Erstellt das Diagnose-ZIP temporaer und veroeffentlicht es atomar."""
 
@@ -1080,6 +1117,7 @@ def export_diagnostic_report(
         include_filenames=include_filenames,
         end_date=end_date,
         created_at=created_at,
+        version_filter=version_filter,
     )
     json_content = json.dumps(
         report, ensure_ascii=False, indent=2, sort_keys=False

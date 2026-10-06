@@ -77,7 +77,7 @@ class AppTests(unittest.TestCase):
         self.assertIn("schema=2", start_message)
         self.assertIn("ereignis=application_started", start_message)
         self.assertRegex(start_message, r"sitzung=[0-9a-f]{32}")
-        self.assertIn("version=0.3.5", start_message)
+        self.assertIn("version=0.3.6", start_message)
         self.assertIn("modus=SYSTEM/Headless", start_message)
 
     def test_access_denied_mutex_is_recognized_as_cross_session_monitor(self) -> None:
@@ -745,7 +745,7 @@ class AppTests(unittest.TestCase):
 
     def test_diagnostic_export_uses_selected_period_privacy_and_central_logs(self) -> None:
         window = object.__new__(SettingsWindow)
-        window._show_diagnostic_export_dialog = Mock(return_value=(90, True))
+        window._show_diagnostic_export_dialog = Mock(return_value=(90, True, "0.3.6"))
         window._filedialog = Mock()
         window._filedialog.asksaveasfilename.return_value = r"C:\Berichte\diagnose.zip"
         window._activity_log_settings_path = Path(r"C:\ProgramData\Scanner\settings.json")
@@ -767,6 +767,7 @@ class AppTests(unittest.TestCase):
             Path(r"C:\Berichte\diagnose.zip"),
             days=90,
             include_filenames=True,
+            version_filter="0.3.6",
         )
         self.assertEqual(
             ("success", Path(r"C:\Berichte\diagnose.zip")),
@@ -774,6 +775,24 @@ class AppTests(unittest.TestCase):
         )
         window.diagnostic_button.configure.assert_called_once_with(state="disabled")
         thread.start.assert_called_once_with()
+
+    def test_diagnostic_export_can_compare_all_versions(self) -> None:
+        window = object.__new__(SettingsWindow)
+        window._show_diagnostic_export_dialog = Mock(return_value=(30, False, None))
+        window._filedialog = Mock()
+        window._filedialog.asksaveasfilename.return_value = "bericht.zip"
+        window._activity_log_settings_path = Path("settings.json")
+        window.diagnostic_button = Mock()
+        window.status = Mock()
+        window._append_activity = Mock()
+        window._diagnostic_results = queue.Queue()
+        with patch("scanner_sorter.app.export_diagnostic_report") as export, patch(
+            "scanner_sorter.app.threading.Thread"
+        ) as thread_factory:
+            window.create_diagnostic_report()
+            thread_factory.call_args.kwargs["target"]()
+        self.assertIsNone(export.call_args.kwargs["version_filter"])
+        self.assertFalse(export.call_args.kwargs["include_filenames"])
 
     def test_diagnostic_success_and_error_messages_restore_button(self) -> None:
         window = object.__new__(SettingsWindow)
