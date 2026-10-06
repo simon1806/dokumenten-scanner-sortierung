@@ -273,6 +273,38 @@ def server_settings_path() -> Path:
     return program_data / SERVER_SETTINGS_FOLDER / SERVER_SETTINGS_FILENAME
 
 
+def server_autostart_task_running(
+    *, platform_name: str | None = None, runner: Callable[..., object] | None = None,
+) -> bool | None:
+    """Check the task's whole process lifetime, including a one-file bootloader.
+
+    Scheduler state numbers are independent of the Windows display language.
+    Call this from a background thread; a scheduler query must not block Tk.
+    """
+    if (os.name if platform_name is None else platform_name) != "nt":
+        return False
+    system_root = os.environ.get("SystemRoot", r"C:\Windows")
+    executable = ntpath.join(system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
+    task_name = "'" + SERVER_AUTOSTART_TASK_NAME.replace("'", "''") + "'"
+    script = (
+        "$ErrorActionPreference='Stop'; try { "
+        "$scheduler=New-Object -ComObject Schedule.Service; $scheduler.Connect(); "
+        f"$task=$scheduler.GetFolder('\\').GetTask({task_name}); "
+        "if ([int]$task.State -in @(2,4)) { exit 0 } else { exit 1 } "
+        "} catch { exit 2 }"
+    )
+    try:
+        result = (subprocess.run if runner is None else runner)(
+            [executable, "-NoProfile", "-NonInteractive", "-EncodedCommand", _encoded_powershell_command(script)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+            timeout=5, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return_code = getattr(result, "returncode", 2)
+    return True if return_code == 0 else (False if return_code == 1 else None)
+
+
 def server_stop_request_path(settings_path: Path | None = None) -> Path:
     """Return the privileged control file used for a graceful SYSTEM stop."""
     effective_settings = settings_path or server_settings_path()
@@ -470,7 +502,9 @@ class DailyFileHandler(logging.Handler):
             self.handleError(record)
 
 
-def configure_logging(settings_path: Path, *, runtime_mode: str = "Benutzeroberfläche") -> Path:
+def configure_logging(
+    settings_path: Path, *, runtime_mode: str = "Benutzeroberfläche", probe_ocr: bool = True,
+) -> Path:
     log_path = log_file_path(settings_path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     handlers: list[logging.Handler] = [DailyFileHandler(log_path.parent)]
@@ -495,8 +529,13 @@ def configure_logging(settings_path: Path, *, runtime_mode: str = "Benutzeroberf
             "Tesseract-Pfad konnte für die Versionsabfrage nicht aus den Einstellungen gelesen werden.",
             exc_info=True,
         )
-    report = collect_version_information(configured_tesseract_path)
-    ocr_versions = {entry.name: entry.version for entry in report.ocr}
+    # The UI does not process documents in server mode. A cold OCR executable
+    # and Windows platform/WMI queries must not delay its first window.
+    ocr_versions = (
+        {entry.name: entry.version for entry in collect_version_information(configured_tesseract_path).ocr}
+        if probe_ocr else {}
+    )
+    version_fallback = "Unbekannt" if probe_ocr else "Nicht abgefragt"
     logging.info(
         structured_event(
             "Anwendung gestartet",
@@ -504,11 +543,15 @@ def configure_logging(settings_path: Path, *, runtime_mode: str = "Benutzeroberf
             version=__version__,
             modus=runtime_mode,
             python=platform.python_version(),
-            tesseract=ocr_versions.get("Tesseract OCR", "Unbekannt"),
+            tesseract=ocr_versions.get("Tesseract OCR", version_fallback),
             tesseract_quelle=tesseract_runtime_source(configured_tesseract_path),
-            leptonica=ocr_versions.get("Leptonica", "Unbekannt"),
-            system=platform.platform(),
-            architektur=platform.machine(),
+            leptonica=ocr_versions.get("Leptonica", version_fallback),
+            system=platform.platform() if probe_ocr else sys.platform,
+            architektur=(
+                platform.machine() if probe_ocr else
+                os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE")
+                or ("64bit" if sys.maxsize > 2**32 else "32bit")
+            ),
             prozess_id=os.getpid(),
             protokoll=log_path,
         )
@@ -655,6 +698,8 @@ class SettingsWindow:
         self._activity_log_poll_after_id: str | None = None
         self.tray_icon: object | None = None
         self._quitting = False
+        self._quit_requested = False
+        self._server_transition_action: str | None = None
         self._tooltips: list[ToolTip] = []
         self._button_images: dict[tuple[str, str], object] = {}
         self._window_icon: object | None = None
@@ -1774,16 +1819,28 @@ class SettingsWindow:
         return self._current_settings()
 
     def _control_server_monitoring(self, action: str) -> None:
+        pending_action = getattr(self, "_server_transition_action", None)
+        if pending_action == action:
+            return
+        if pending_action is not None:
+            self._quit_requested = False
+            self._messagebox.showwarning(
+                "Serverüberwachung wird gesteuert",
+                "Warten Sie, bis die laufende Start- oder Stoppanforderung abgeschlossen ist.",
+            )
+            return
         verb = "gestartet" if action == "start" else "beendet"
         try:
             request_server_task_action(action)
         except (OSError, ValueError) as error:
+            self._quit_requested = False
             self._messagebox.showerror(
                 f"Serverüberwachung konnte nicht {verb} werden",
                 str(error),
             )
             return
 
+        self._server_transition_action = action
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="disabled")
         self.clear_archive_button.configure(state="disabled")
@@ -1818,20 +1875,16 @@ class SettingsWindow:
         expected_active = action == "start"
         if active is expected_active:
             if expected_active:
+                self._server_transition_action = None
                 self._set_external_monitoring_active()
                 message = "Serverüberwachung wurde gestartet."
                 self.status.set(message)
                 self._append_activity(message)
             else:
-                self._external_monitoring_active = False
-                self.start_button.configure(state="normal")
-                self.stop_button.configure(state="disabled")
-                self.clear_archive_button.configure(state="normal")
-                self._update_monitoring_badge()
-                self._update_tray_status()
-                message = "Serverüberwachung wurde beendet."
-                self.status.set(message)
-                self._append_activity(message)
+                # The input mutex is released before process cleanup completes.
+                # Wait for the registered task to exit before allowing an update
+                # or archive reset, including the legacy bootloader parent.
+                self._wait_for_server_task_exit(attempts_remaining)
             return
         if attempts_remaining > 0:
             self.root.after(
@@ -1840,6 +1893,11 @@ class SettingsWindow:
             )
             return
 
+        self._server_transition_timeout(action)
+
+    def _server_transition_timeout(self, action: str) -> None:
+        self._server_transition_action = None
+        self._quit_requested = False
         action_text = "Starten" if action == "start" else "Beenden"
         self._messagebox.showerror(
             f"{action_text} nicht bestätigt",
@@ -1848,6 +1906,47 @@ class SettingsWindow:
         )
         self._detect_external_monitoring()
 
+    def _wait_for_server_task_exit(self, attempts_remaining: int) -> None:
+        results: queue.Queue[bool | None] = queue.Queue()
+
+        def query() -> None:
+            try:
+                results.put(server_autostart_task_running())
+            except Exception:
+                logging.exception("Ende der Serveraufgabe konnte nicht bestätigt werden.")
+                results.put(None)
+
+        threading.Thread(target=query, name="server-stop-check", daemon=True).start()
+        self.root.after(500, lambda: self._poll_server_task_exit(results, attempts_remaining))
+
+    def _poll_server_task_exit(self, results: queue.Queue[bool | None], attempts_remaining: int) -> None:
+        try:
+            running = results.get_nowait()
+        except queue.Empty:
+            if attempts_remaining <= 0:
+                self._server_transition_timeout("stop")
+                return
+            self.root.after(500, lambda: self._poll_server_task_exit(results, attempts_remaining - 1))
+            return
+        if running is False:
+            self._server_transition_action = None
+            self._external_monitoring_active = False
+            self.start_button.configure(state="normal")
+            self.stop_button.configure(state="disabled")
+            self.clear_archive_button.configure(state="normal")
+            self._update_monitoring_badge()
+            self._update_tray_status()
+            message = "Serverüberwachung wurde vollständig beendet."
+            self.status.set(message)
+            self._append_activity(message)
+            if getattr(self, "_quit_requested", False):
+                self._finish_quit()
+            return
+        if attempts_remaining <= 0:
+            self._server_transition_timeout("stop")
+            return
+        self.root.after(500, lambda: self._poll_server_monitoring_transition("stop", attempts_remaining - 1))
+
     def show_window(self) -> None:
         self.root.deiconify()
         self.root.lift()
@@ -1855,7 +1954,11 @@ class SettingsWindow:
 
     def hide_to_tray(self) -> None:
         if self.tray_icon is None:
-            self.quit_application()
+            # Closing the window is distinct from explicitly ending the whole
+            # application, even when the notification icon is unavailable.
+            if getattr(self, "_quit_requested", False):
+                return
+            self._finish_quit()
             return
         self.root.withdraw()
         logging.info("Fenster in den Windows-Infobereich ausgeblendet.")
@@ -2049,13 +2152,27 @@ class SettingsWindow:
         pass
 
     def quit_application(self) -> None:
+        if self._quitting or getattr(self, "_quit_requested", False):
+            return
+        # Explicitly ending the application also ends its SYSTEM worker. Hiding
+        # the window in the tray continues to leave server monitoring running.
+        local_monitoring = (self.watcher and self.watcher.running) or self._monitor_instance is not None
+        if not local_monitoring and (
+            getattr(self, "_server_task_available", False) or server_autostart_task_exists()
+        ):
+            self._server_task_available = True
+            self._quit_requested = True
+            self._control_server_monitoring("stop")
+            return
+        self._finish_quit()
+
+    def _finish_quit(self) -> None:
         if self._quitting:
             return
+        self._quit_requested = False
         self._quitting = True
         self._cancel_worker_message_poll()
         self._cancel_activity_log_poll()
-        # Closing the interactive UI must never stop an independently running
-        # SYSTEM task. Only a watcher owned by this process is stopped here.
         if (self.watcher and self.watcher.running) or self._monitor_instance is not None:
             self.stop()
         if self.tray_icon is not None:
@@ -2204,7 +2321,7 @@ def main(argv: list[str] | None = None) -> int:
     exit_code = 1
     exit_reason = "unerwartet"
     try:
-        configure_logging(args.settings, runtime_mode=runtime_mode)
+        configure_logging(args.settings, runtime_mode=runtime_mode, probe_ocr=args.run)
 
         try:
             if args.run:

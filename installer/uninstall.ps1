@@ -10,6 +10,7 @@ $OpenLauncherFilename = "DokumentenScannerSortierung-Oeffnen.exe"
 $NoticeFilename = "THIRD_PARTY_NOTICES.md"
 $IconFilename = "DokumentenScannerSortierung.ico"
 $VersionFilename = "version.txt"
+$RuntimeManifestFilename = "runtime-files.json"
 $LegacyUninstallerFilename = "DokumentenScannerSortierung-Deinstallieren.exe"
 $ShortcutFilename = "Dokumenten-Scanner-Sortierung.lnk"
 $ServerAutostartTaskName = "GlasHagen Dokumenten-Scanner-Sortierung"
@@ -106,8 +107,78 @@ try {
     if ($resolvedActual -ne $resolvedExpected) {
         throw "Der Installationspfad ist nicht sicher."
     }
+    if ((Get-Item -LiteralPath $InstallFolder -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Der Installationsordner ist ein Reparse-Point."
+    }
     if (-not (Confirm-Uninstall)) {
         exit 0
+    }
+
+    # Remove only manifest-owned, unchanged runtime files. Never recursively
+    # delete the runtime directory: unknown files and junctions stay intact.
+    $runtimeManifestPath = Join-Path $InstallFolder $RuntimeManifestFilename
+    if (Test-Path -LiteralPath $runtimeManifestPath) {
+        $runtimeManifestItem = Get-Item -LiteralPath $runtimeManifestPath -Force
+        if ($runtimeManifestItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+            throw "Die Runtime-Dateiliste ist ein Reparse-Point."
+        }
+        $runtimeManifest = Get-Content -LiteralPath $runtimeManifestPath -Raw | ConvertFrom-Json
+        $runtimeDirectories = @{}
+        $runtimeFilesToRemove = @()
+        foreach ($entry in $runtimeManifest.PSObject.Properties) {
+            $parts = $entry.Name.Split('/')
+            if ($parts.Count -lt 2 -or $parts[0] -cne '_internal') {
+                throw "Nicht erlaubter Runtime-Pfad: $($entry.Name)"
+            }
+            foreach ($part in $parts) {
+                if (-not $part -or $part -in @('.', '..') -or $part -match '[\\:<>"|?*\x00-\x1f]' -or $part -match '[ .]$') {
+                    throw "Ungültiger Runtime-Pfad: $($entry.Name)"
+                }
+            }
+            $runtimePath = [System.IO.Path]::GetFullPath((Join-Path $InstallFolder $entry.Name))
+            if (-not $runtimePath.StartsWith($resolvedActual + '\_internal\', [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Runtime-Pfad liegt außerhalb des Programmordners."
+            }
+            $currentPath = $InstallFolder
+            foreach ($part in $parts) {
+                $currentPath = Join-Path $currentPath $part
+                if (Test-Path -LiteralPath $currentPath) {
+                    $currentItem = Get-Item -LiteralPath $currentPath -Force
+                    if ($currentItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                        throw "Runtime-Pfad enthält einen Reparse-Point: $currentPath"
+                    }
+                }
+            }
+            if (Test-Path -LiteralPath $runtimePath -PathType Leaf) {
+                $runtimeItem = Get-Item -LiteralPath $runtimePath -Force
+                $runtimeStream = [System.IO.File]::OpenRead($runtimePath)
+                $runtimeHasher = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $runtimeHash = [System.BitConverter]::ToString($runtimeHasher.ComputeHash($runtimeStream)).Replace('-', '')
+                } finally {
+                    $runtimeHasher.Dispose()
+                    $runtimeStream.Dispose()
+                }
+                if ($runtimeItem.Length -eq $entry.Value.size -and $runtimeHash -eq $entry.Value.sha256) {
+                    $runtimeFilesToRemove += $runtimePath
+                }
+            }
+            $runtimeParent = Split-Path -Parent $runtimePath
+            while ($runtimeParent.StartsWith($resolvedActual + '\_internal', [System.StringComparison]::OrdinalIgnoreCase)) {
+                $runtimeDirectories[$runtimeParent] = $true
+                $runtimeParent = Split-Path -Parent $runtimeParent
+            }
+        }
+        foreach ($runtimePath in $runtimeFilesToRemove) {
+            Remove-Item -LiteralPath $runtimePath -Force -ErrorAction Stop
+        }
+        foreach ($runtimeDirectory in ($runtimeDirectories.Keys | Sort-Object Length -Descending)) {
+            if ((Test-Path -LiteralPath $runtimeDirectory -PathType Container) -and
+                -not (Get-ChildItem -LiteralPath $runtimeDirectory -Force | Select-Object -First 1)) {
+                Remove-Item -LiteralPath $runtimeDirectory -Force -ErrorAction Stop
+            }
+        }
+        Remove-Item -LiteralPath $runtimeManifestPath -Force -ErrorAction Stop
     }
 
     foreach ($filename in @(

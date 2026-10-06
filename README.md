@@ -143,6 +143,14 @@ Die administrativen Schalter `--allow-downgrade` und `--allow-unknown-version` h
 
 Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmaske bietet die standardmäßig aktivierte Option **Anwendung starten**.
 
+Die noch nicht veröffentlichte Änderung an **Anwendung beenden** beendet auch die eingerichtete SYSTEM-Überwachung. Windows fordert dafür bei Bedarf eine administrative Bestätigung an. Ein bereits laufender Vorgang wird sicher fertiggestellt; erst nachdem die Serveraufgabe einschließlich ihres Startprozesses beendet ist, schließt sich die Oberfläche. Wird die Bestätigung abgebrochen oder der Stopp nicht innerhalb von 120 Sekunden bestätigt, bleibt die Oberfläche mit einer Fehlermeldung geöffnet. **In Infobereich ausblenden** und das Schließen des Fensters über das Windows-X lassen die SYSTEM-Überwachung weiterhin laufen.
+
+### Vorbereitete Beschleunigung des ersten Fensterstarts
+
+Die noch nicht veröffentlichte Änderung installiert die Laufzeitdateien dauerhaft im Unterordner `_internal` des Programmordners. Damit muss die installierte Anwendung beim ersten Öffnen nach einem Serverneustart ihr großes OCR-Paket nicht erneut in einen temporären Ordner entpacken. Die Benutzeroberfläche fragt beim Start außerdem keine OCR-Versionen ab; diese bleiben im Infofenster und in den Protokollen der aktiven Überwachung verfügbar. Die tatsächliche Startzeit wird erst mit dem nächsten freigegebenen Build auf dem Server geprüft.
+
+EXE und `_internal` gehören bei dieser Installation zusammen. Zum Installieren, Aktualisieren oder Übertragen einer Installation wird weiterhin das Setup verwendet. Die portable Einzel-EXE bleibt eigenständig und entpackt ihre Komponenten weiterhin beim Start. Die Serveraufgabe, zentrale Einstellungen und Desktop-Verknüpfung verwenden unverändert ihre bisherigen Einstiegspunkte.
+
 ## Server-Pilot und Freigaben
 
 Die freigegebene Version 0.3.5 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, pypdf 6.19.0 und zxing-cpp 3.1.1. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-, Bohle-, Pauli- und Heitzer-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung, Zeidler-Ausführungsbestätigung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
