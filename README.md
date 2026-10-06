@@ -145,6 +145,8 @@ Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmask
 
 Die noch nicht veröffentlichte Änderung an **Anwendung beenden** beendet auch die eingerichtete SYSTEM-Überwachung. Windows fordert dafür bei Bedarf eine administrative Bestätigung an. Ein bereits laufender Vorgang wird sicher fertiggestellt; erst nachdem die Serveraufgabe einschließlich ihres Startprozesses beendet ist, schließt sich die Oberfläche. Wird die Bestätigung abgebrochen oder der Stopp nicht innerhalb von 120 Sekunden bestätigt, bleibt die Oberfläche mit einer Fehlermeldung geöffnet. **In Infobereich ausblenden** und das Schließen des Fensters über das Windows-X lassen die SYSTEM-Überwachung weiterhin laufen.
 
+Ist die SYSTEM-Aufgabe bereits gestoppt, schließt **Anwendung beenden** nach einer Statusprüfung ohne erneute Administratorabfrage. Updates entfernen unveränderte, veraltete Laufzeitdateien anhand der geprüften bisherigen Runtime-Dateiliste mit Rückrollmöglichkeit. Geänderte und unbekannte Dateien bleiben erhalten; bei einem Konflikt mit der neuen Ordnerstruktur wird das Update zurückgerollt.
+
 ### Vorbereitete Beschleunigung des ersten Fensterstarts
 
 Die noch nicht veröffentlichte Änderung installiert die Laufzeitdateien dauerhaft im Unterordner `_internal` des Programmordners. Damit muss die installierte Anwendung beim ersten Öffnen nach einem Serverneustart ihr großes OCR-Paket nicht erneut in einen temporären Ordner entpacken. Die Benutzeroberfläche fragt beim Start außerdem keine OCR-Versionen ab; diese bleiben im Infofenster und in den Protokollen der aktiven Überwachung verfügbar. Die tatsächliche Startzeit wird erst mit dem nächsten freigegebenen Build auf dem Server geprüft.

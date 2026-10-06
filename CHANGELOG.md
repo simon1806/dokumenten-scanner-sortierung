@@ -2,6 +2,8 @@
 
 ## Noch nicht veröffentlicht
 
+- Updates gleichen die geprüfte bisherige Runtime-Dateiliste mit dem neuen Paket ab. Unveränderte, veraltete Dateien werden innerhalb derselben Transaktion gesichert und entfernt; Rollback und Wiederherstellung stellen auch Wechsel zwischen Dateien und Ordnern wieder her. Geänderte und unbekannte Dateien bleiben erhalten.
+- Eine eingerichtete, bereits gestoppte SYSTEM-Aufgabe löst beim Beenden keine Administratorabfrage mehr aus. Der Aufgabenstatus wird im Hintergrund geprüft, und während des Beendens lässt sich die Überwachung nicht erneut über die Oberfläche starten.
 - „Anwendung beenden“ stoppt auch die eingerichtete SYSTEM-Überwachung kontrolliert und schließt die Oberfläche erst, wenn die Serveraufgabe vollständig beendet ist. Ein laufender Scan wird abgeschlossen. Bei abgebrochener Administratorbestätigung oder nicht bestätigtem Stopp bleibt das Fenster offen; das Ausblenden in den Infobereich lässt die Überwachung weiterhin laufen.
 - Das Setup installiert die Anwendung mit dauerhaft ausgepackten Laufzeitdateien unter `_internal`. Beim ersten Öffnen nach einem Serverneustart entfällt damit das erneute Entpacken der großen OCR-Anwendung. Die portable Einzel-EXE bleibt separat erhalten.
 - Die Benutzeroberfläche startet ohne OCR-Versionsabfrage und ohne Windows-Plattformabfragen. Die Hintergrundüberwachung protokolliert weiterhin ihre Laufzeitversionen; das Infofenster fragt sie bei Bedarf ab.

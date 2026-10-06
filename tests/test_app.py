@@ -478,7 +478,84 @@ class AppTests(unittest.TestCase):
         window._update_tray_status = Mock()
         window._messagebox = Mock()
         window._detect_external_monitoring = Mock()
+        window._probe_external_monitoring = Mock(return_value=True)
         return window
+
+    def test_quitting_installed_but_stopped_server_task_needs_no_elevation(self) -> None:
+        window = self._server_quit_window()
+        window._probe_external_monitoring.return_value = False
+        with (
+            patch("scanner_sorter.app.request_server_task_action") as stop_request,
+            patch.object(window, "_wait_for_server_task_exit") as check_state,
+        ):
+            window.quit_application()
+            check_state.assert_called_once_with(240, request_stop_if_running=True)
+            window.root.destroy.assert_not_called()
+            results: queue.Queue[bool | None] = queue.Queue()
+            results.put(False)
+            window._poll_server_task_exit(results, 239, request_stop_if_running=True)
+        stop_request.assert_not_called()
+        window.root.destroy.assert_called_once_with()
+
+    def test_quit_checks_scheduler_when_mutex_is_free_but_task_is_still_active(self) -> None:
+        window = self._server_quit_window()
+        window._probe_external_monitoring.return_value = False
+        with (
+            patch("scanner_sorter.app.request_server_task_action") as stop_request,
+            patch.object(window, "_wait_for_server_task_exit"),
+        ):
+            window.quit_application()
+            results: queue.Queue[bool | None] = queue.Queue()
+            results.put(True)
+            window._poll_server_task_exit(results, 239, request_stop_if_running=True)
+        stop_request.assert_called_once_with("stop")
+        window.root.destroy.assert_not_called()
+
+    def test_quit_does_not_request_elevation_on_unknown_scheduler_state(self) -> None:
+        window = self._server_quit_window()
+        window._probe_external_monitoring.return_value = False
+        with (
+            patch("scanner_sorter.app.request_server_task_action") as stop_request,
+            patch.object(window, "_wait_for_server_task_exit") as check_state,
+        ):
+            window.quit_application()
+            results: queue.Queue[bool | None] = queue.Queue()
+            results.put(None)
+            window._poll_server_task_exit(results, 239, request_stop_if_running=True)
+            window.root.after.call_args.args[1]()
+            self.assertEqual(2, check_state.call_count)
+            check_state.assert_called_with(238, request_stop_if_running=True)
+        stop_request.assert_not_called()
+        window.root.destroy.assert_not_called()
+
+    def test_unknown_external_monitoring_state_keeps_window_open_without_elevation(self) -> None:
+        window = self._server_quit_window()
+        window._probe_external_monitoring.return_value = None
+        with patch("scanner_sorter.app.request_server_task_action") as stop_request:
+            window.quit_application()
+        stop_request.assert_not_called()
+        self.assertFalse(window._quit_requested)
+        window.root.destroy.assert_not_called()
+        window._messagebox.showerror.assert_called_once()
+
+    def test_quit_checks_wall_clock_deadline_even_with_poll_attempts_remaining(self) -> None:
+        window = self._server_quit_window()
+        window._quit_requested = True
+        window._server_transition_deadline = 100.0
+        results: queue.Queue[bool | None] = queue.Queue()
+        results.put(None)
+        with patch("scanner_sorter.app.time.monotonic", return_value=100.0):
+            window._poll_server_task_exit(results, 240, request_stop_if_running=True)
+        window._messagebox.showerror.assert_called_once()
+        window.root.destroy.assert_not_called()
+        self.assertFalse(window._quit_requested)
+
+    def test_quit_preflight_prevents_restarting_server_from_the_window(self) -> None:
+        window = self._server_quit_window()
+        window._quit_requested = True
+        with patch("scanner_sorter.app.request_server_task_action") as server_request:
+            window.start()
+        server_request.assert_not_called()
 
     def test_quitting_server_application_waits_for_worker_and_bootloader_to_exit(self) -> None:
         window = self._server_quit_window()

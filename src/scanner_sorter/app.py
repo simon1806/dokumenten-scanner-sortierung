@@ -13,6 +13,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -700,6 +701,7 @@ class SettingsWindow:
         self._quitting = False
         self._quit_requested = False
         self._server_transition_action: str | None = None
+        self._server_transition_deadline: float | None = None
         self._tooltips: list[ToolTip] = []
         self._button_images: dict[tuple[str, str], object] = {}
         self._window_icon: object | None = None
@@ -1841,6 +1843,7 @@ class SettingsWindow:
             return
 
         self._server_transition_action = action
+        self._server_transition_deadline = time.monotonic() + 120
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="disabled")
         self.clear_archive_button.configure(state="disabled")
@@ -1876,6 +1879,7 @@ class SettingsWindow:
         if active is expected_active:
             if expected_active:
                 self._server_transition_action = None
+                self._server_transition_deadline = None
                 self._set_external_monitoring_active()
                 message = "Serverüberwachung wurde gestartet."
                 self.status.set(message)
@@ -1886,7 +1890,7 @@ class SettingsWindow:
                 # or archive reset, including the legacy bootloader parent.
                 self._wait_for_server_task_exit(attempts_remaining)
             return
-        if attempts_remaining > 0:
+        if not self._server_transition_expired(attempts_remaining):
             self.root.after(
                 500,
                 lambda: self._poll_server_monitoring_transition(action, attempts_remaining - 1),
@@ -1897,6 +1901,7 @@ class SettingsWindow:
 
     def _server_transition_timeout(self, action: str) -> None:
         self._server_transition_action = None
+        self._server_transition_deadline = None
         self._quit_requested = False
         action_text = "Starten" if action == "start" else "Beenden"
         self._messagebox.showerror(
@@ -1906,7 +1911,11 @@ class SettingsWindow:
         )
         self._detect_external_monitoring()
 
-    def _wait_for_server_task_exit(self, attempts_remaining: int) -> None:
+    def _server_transition_expired(self, attempts_remaining: int) -> bool:
+        deadline = getattr(self, "_server_transition_deadline", None)
+        return attempts_remaining <= 0 or (deadline is not None and time.monotonic() >= deadline)
+
+    def _wait_for_server_task_exit(self, attempts_remaining: int, *, request_stop_if_running: bool = False) -> None:
         results: queue.Queue[bool | None] = queue.Queue()
 
         def query() -> None:
@@ -1917,19 +1926,26 @@ class SettingsWindow:
                 results.put(None)
 
         threading.Thread(target=query, name="server-stop-check", daemon=True).start()
-        self.root.after(500, lambda: self._poll_server_task_exit(results, attempts_remaining))
+        self.root.after(500, lambda: self._poll_server_task_exit(
+            results, attempts_remaining, request_stop_if_running=request_stop_if_running,
+        ))
 
-    def _poll_server_task_exit(self, results: queue.Queue[bool | None], attempts_remaining: int) -> None:
+    def _poll_server_task_exit(
+        self, results: queue.Queue[bool | None], attempts_remaining: int, *, request_stop_if_running: bool = False,
+    ) -> None:
         try:
             running = results.get_nowait()
         except queue.Empty:
-            if attempts_remaining <= 0:
+            if self._server_transition_expired(attempts_remaining):
                 self._server_transition_timeout("stop")
                 return
-            self.root.after(500, lambda: self._poll_server_task_exit(results, attempts_remaining - 1))
+            self.root.after(500, lambda: self._poll_server_task_exit(
+                results, attempts_remaining - 1, request_stop_if_running=request_stop_if_running,
+            ))
             return
         if running is False:
             self._server_transition_action = None
+            self._server_transition_deadline = None
             self._external_monitoring_active = False
             self.start_button.configure(state="normal")
             self.stop_button.configure(state="disabled")
@@ -1942,10 +1958,18 @@ class SettingsWindow:
             if getattr(self, "_quit_requested", False):
                 self._finish_quit()
             return
-        if attempts_remaining <= 0:
+        if running is True and request_stop_if_running:
+            self._control_server_monitoring("stop")
+            return
+        if self._server_transition_expired(attempts_remaining):
             self._server_transition_timeout("stop")
             return
-        self.root.after(500, lambda: self._poll_server_monitoring_transition("stop", attempts_remaining - 1))
+        if request_stop_if_running:
+            self.root.after(500, lambda: self._wait_for_server_task_exit(
+                attempts_remaining - 1, request_stop_if_running=True,
+            ))
+        else:
+            self.root.after(500, lambda: self._poll_server_monitoring_transition("stop", attempts_remaining - 1))
 
     def show_window(self) -> None:
         self.root.deiconify()
@@ -2025,6 +2049,8 @@ class SettingsWindow:
         return settings
 
     def start(self) -> None:
+        if getattr(self, "_quit_requested", False):
+            return
         if self.watcher and self.watcher.running:
             return
         if self._external_monitoring_active:
@@ -2162,7 +2188,26 @@ class SettingsWindow:
         ):
             self._server_task_available = True
             self._quit_requested = True
-            self._control_server_monitoring("stop")
+            if getattr(self, "_server_transition_action", None) is not None:
+                self._control_server_monitoring("stop")
+            else:
+                active = self._probe_external_monitoring()
+                if active is True:
+                    self._control_server_monitoring("stop")
+                elif active is False:
+                    # A stopped task needs no privileged stop signal. Query its
+                    # state off the Tk thread to also cover queued/starting tasks
+                    # and the legacy bootloader's final cleanup.
+                    self._server_transition_deadline = time.monotonic() + 120
+                    self.status.set("Status der Serverüberwachung wird vor dem Beenden geprüft …")
+                    self._wait_for_server_task_exit(240, request_stop_if_running=True)
+                else:
+                    self._quit_requested = False
+                    self._messagebox.showerror(
+                        "Beenden nicht bestätigt",
+                        "Der Status der Serverüberwachung konnte nicht geprüft werden. "
+                        "Das Fenster bleibt geöffnet. Bitte prüfen Sie die Servereinstellungen und das Protokoll.",
+                    )
             return
         self._finish_quit()
 

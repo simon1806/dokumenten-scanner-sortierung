@@ -23,6 +23,23 @@ def verified_payload(name: str, source: Path, destination: Path) -> installer.Pa
     )
 
 
+def runtime_payloads(source_root: Path, install_root: Path, runtime: dict[str, bytes]) -> tuple[installer.PayloadFile, ...]:
+    """Create a complete verified bundle without building an EXE."""
+    contents = {name: b"MZpayload" for name in installer.PAYLOAD_LAYOUT}
+    contents.update(runtime)
+    contents[installer.RUNTIME_MANIFEST_FILENAME] = json.dumps({
+        name: {"size": len(content), "sha256": hashlib.sha256(content).hexdigest().upper()}
+        for name, content in runtime.items()
+    }).encode()
+    payloads = []
+    for name, content in contents.items():
+        source = source_root / name
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(content)
+        payloads.append(verified_payload(name, source, install_root / installer.safe_payload_destination(name)))
+    return tuple(payloads)
+
+
 def create_full_recovery_transaction(
     root: Path,
     transaction_id: str,
@@ -92,6 +109,150 @@ def create_full_recovery_transaction(
 
 
 class InstallerTests(unittest.TestCase):
+    def test_update_removes_only_unchanged_obsolete_runtime_files(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_root = root / "install"
+            old = {"_internal/obsolete.dll": b"old", "_internal/modified.dll": b"original", "_internal/keep.dll": b"keep"}
+            previous = runtime_payloads(root / "previous", install_root, old)
+            installer.install_files_transactionally(previous).commit()
+            modified = install_root / "_internal/modified.dll"
+            modified.write_bytes(b"modified-by-user")
+            unknown = install_root / "_internal/unknown.txt"
+            unknown.write_bytes(b"user-file")
+            prior_manifest = (install_root / installer.RUNTIME_MANIFEST_FILENAME).read_bytes()
+            current = runtime_payloads(root / "current", install_root, {"_internal/keep.dll": b"new-keep", "_internal/new.dll": b"new"})
+            transaction = installer.install_files_transactionally(current)
+            self.assertFalse((install_root / "_internal/obsolete.dll").exists())
+            self.assertEqual(b"modified-by-user", modified.read_bytes())
+            self.assertEqual(b"user-file", unknown.read_bytes())
+            transaction.rollback()
+            self.assertEqual(b"old", (install_root / "_internal/obsolete.dll").read_bytes())
+            self.assertEqual(prior_manifest, (install_root / installer.RUNTIME_MANIFEST_FILENAME).read_bytes())
+            self.assertEqual(b"keep", (install_root / "_internal/keep.dll").read_bytes())
+            self.assertFalse((install_root / "_internal/new.dll").exists())
+            installer.install_files_transactionally(current).commit()
+            self.assertFalse((install_root / "_internal/obsolete.dll").exists())
+            self.assertEqual(b"modified-by-user", modified.read_bytes())
+            self.assertEqual(b"user-file", unknown.read_bytes())
+
+    def test_failed_update_restores_removed_runtime_files_and_manifest(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_root = root / "install"
+            previous = runtime_payloads(root / "previous", install_root, {"_internal/old.dll": b"old"})
+            installer.install_files_transactionally(previous).commit()
+            prior_manifest = (install_root / installer.RUNTIME_MANIFEST_FILENAME).read_bytes()
+            current = runtime_payloads(root / "current", install_root, {"_internal/new.dll": b"new"})
+            real_replace = installer.os.replace
+
+            def fail_new_file(source: Path, destination: Path) -> None:
+                if destination == install_root / "_internal/new.dll":
+                    raise OSError("Update unterbrochen")
+                real_replace(source, destination)
+
+            with patch("installer.installer.os.replace", side_effect=fail_new_file):
+                with self.assertRaisesRegex(OSError, "Update unterbrochen"):
+                    installer.install_files_transactionally(current)
+            self.assertEqual(b"old", (install_root / "_internal/old.dll").read_bytes())
+            self.assertEqual(prior_manifest, (install_root / installer.RUNTIME_MANIFEST_FILENAME).read_bytes())
+            self.assertFalse(list(install_root.glob(".backup-*")))
+
+    def test_runtime_layout_changes_support_rollback_and_crash_recovery(self) -> None:
+        for old_name, new_name in (
+            ("_internal/component", "_internal/component/sub/library.dll"),
+            ("_internal/component/sub/library.dll", "_internal/component"),
+        ):
+            for recovery in ("rollback", "prepared", "committed"):
+                with self.subTest(old_name=old_name, recovery=recovery), TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    install_root = root / "install"
+                    previous = runtime_payloads(root / "previous", install_root, {old_name: b"old"})
+                    installer.install_files_transactionally(previous).commit()
+                    prior_manifest = (install_root / installer.RUNTIME_MANIFEST_FILENAME).read_bytes()
+                    current = runtime_payloads(root / "current", install_root, {new_name: b"new"})
+                    transaction = installer.install_files_transactionally(current)
+                    self.assertEqual(b"new", (install_root / new_name).read_bytes())
+                    if recovery == "rollback":
+                        transaction.rollback()
+                    else:
+                        if recovery == "committed":
+                            with patch("installer.installer.shutil.rmtree", side_effect=OSError("Bereinigung unterbrochen")):
+                                self.assertIsNotNone(transaction.commit())
+                        installer.recover_transaction(install_root, transaction.stage_directory, transaction.backup_directory)
+                    if recovery == "committed":
+                        self.assertEqual(b"new", (install_root / new_name).read_bytes())
+                        self.assertFalse((install_root / old_name).is_file())
+                    else:
+                        self.assertEqual(b"old", (install_root / old_name).read_bytes())
+                        self.assertEqual(prior_manifest, (install_root / installer.RUNTIME_MANIFEST_FILENAME).read_bytes())
+                    self.assertFalse(transaction.backup_directory.exists())
+
+    def test_modified_runtime_file_blocks_layout_change_without_data_loss(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_root = root / "install"
+            previous = runtime_payloads(root / "previous", install_root, {"_internal/component": b"old"})
+            installer.install_files_transactionally(previous).commit()
+            modified = install_root / "_internal/component"
+            modified.write_bytes(b"user-data")
+            prior_manifest = (install_root / installer.RUNTIME_MANIFEST_FILENAME).read_bytes()
+            current = runtime_payloads(root / "current", install_root, {"_internal/component/library.dll": b"new"})
+            with self.assertRaises(OSError):
+                installer.install_files_transactionally(current)
+            self.assertEqual(b"user-data", modified.read_bytes())
+            self.assertEqual(prior_manifest, (install_root / installer.RUNTIME_MANIFEST_FILENAME).read_bytes())
+
+    def test_unknown_runtime_file_blocks_directory_to_file_change_without_data_loss(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_root = root / "install"
+            previous = runtime_payloads(root / "previous", install_root, {"_internal/component/old.dll": b"old"})
+            installer.install_files_transactionally(previous).commit()
+            unknown = install_root / "_internal/component/user.txt"
+            unknown.write_bytes(b"user-data")
+            prior_manifest = (install_root / installer.RUNTIME_MANIFEST_FILENAME).read_bytes()
+            current = runtime_payloads(root / "current", install_root, {"_internal/component": b"new"})
+            with self.assertRaises(OSError):
+                installer.install_files_transactionally(current)
+            self.assertEqual(b"old", (install_root / "_internal/component/old.dll").read_bytes())
+            self.assertEqual(b"user-data", unknown.read_bytes())
+            self.assertEqual(prior_manifest, (install_root / installer.RUNTIME_MANIFEST_FILENAME).read_bytes())
+
+    def test_invalid_previous_runtime_manifest_blocks_update_before_replacing_files(self) -> None:
+        for entries in (
+            {"../outside.txt": {"size": 0, "sha256": "0" * 64}},
+            {"_internal/file.dll": {"size": True, "sha256": "0" * 64}},
+            {"_internal/file.dll": {"size": 0, "sha256": "invalid"}},
+            {"_internal/FILE.dll": {"size": 0, "sha256": "0" * 64}, "_internal/file.dll": {"size": 0, "sha256": "0" * 64}},
+        ):
+            with self.subTest(entries=entries), TemporaryDirectory() as directory:
+                root = Path(directory)
+                install_root = root / "install"
+                previous = runtime_payloads(root / "previous", install_root, {"_internal/old.dll": b"old"})
+                installer.install_files_transactionally(previous).commit()
+                (install_root / installer.RUNTIME_MANIFEST_FILENAME).write_text(json.dumps(entries), encoding="utf-8")
+                current = runtime_payloads(root / "current", install_root, {"_internal/new.dll": b"new"})
+                with self.assertRaises(RuntimeError):
+                    installer.install_files_transactionally(current)
+                self.assertEqual(b"old", (install_root / "_internal/old.dll").read_bytes())
+                self.assertFalse((install_root / "_internal/new.dll").exists())
+
+    def test_runtime_removal_rollback_preserves_unknown_replacement_and_backup(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            install_root = root / "install"
+            previous = runtime_payloads(root / "previous", install_root, {"_internal/old.dll": b"old"})
+            installer.install_files_transactionally(previous).commit()
+            current = runtime_payloads(root / "current", install_root, {"_internal/new.dll": b"new"})
+            transaction = installer.install_files_transactionally(current)
+            removed = next(item for item in transaction.replacements if item.remove_only)
+            removed.destination.write_bytes(b"unknown-file")
+            with self.assertRaisesRegex(RuntimeError, "Rollback unvollständig"):
+                transaction.rollback()
+            self.assertEqual(b"unknown-file", removed.destination.read_bytes())
+            self.assertEqual(b"old", removed.backup.read_bytes())
+
     def test_runtime_paths_reject_escape_and_windows_aliases(self) -> None:
         for name in (
             "../outside.dll", "_internal/../outside.dll", "_internal/C:/file.dll",
