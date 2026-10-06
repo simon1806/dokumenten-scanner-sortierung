@@ -15,7 +15,7 @@ class BuildReleaseTests(unittest.TestCase):
     def test_build_is_versioned_fail_closed_and_checks_native_commands(self) -> None:
         self.assertIn('[string]$Version = "0.3.5"', self.script)
         self.assertIn("function Invoke-PythonCommand", self.script)
-        self.assertEqual(3, self.script.count('Invoke-PythonCommand $'))
+        self.assertEqual(4, self.script.count('Invoke-PythonCommand $'))
         self.assertIn('Join-Path $ReleaseRoot $Version', self.script)
         self.assertNotIn("Reset-BuildDirectory $ReleaseRoot", self.script)
         self.assertNotIn("Reset-BuildDirectory $VersionRelease", self.script)
@@ -68,7 +68,15 @@ class BuildReleaseTests(unittest.TestCase):
         self.assertIn("if ($reportedExitCode -ne \"0\")", self.script)
         self.assertIn("WaitForExit($TimeoutSeconds * 1000)", self.script)
         self.assertIn("if ($process.ExitCode -ne 0)", self.script)
-        self.assertEqual(3, self.script.count("Invoke-ArtifactSelfTest $"))
+        self.assertEqual(4, self.script.count("Invoke-ArtifactSelfTest $"))
+
+    def test_setup_uses_expanded_runtime_and_portable_exe_stays_self_contained(self) -> None:
+        self.assertIn('"--onefile" { $installedArguments[$argumentIndex] = "--onedir" }', self.script)
+        self.assertIn('Invoke-ArtifactSelfTest $InstalledExecutable -RequireResultMarker', self.script)
+        self.assertIn('"$MainName.exe" = $InstalledExecutable', self.script)
+        self.assertIn('"--add-data", "$InstalledRuntime;payload/_internal"', self.script)
+        self.assertIn('"--add-data", "$InstalledRuntimeManifest;payload"', self.script)
+        self.assertIn('Copy-Item -LiteralPath $MainExecutable -Destination (Join-Path $readyDirectory $portableName)', self.script)
 
     def test_tcl_runtime_is_prepared_for_the_embedded_interpreter(self) -> None:
         self.assertIn('$PreparedTclLibrary = Join-Path $BuildRoot "tcl8.6"', self.script)

@@ -15,9 +15,11 @@ $Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
 $ArtifactsRoot = Join-Path $ProjectRoot ".artifacts"
 $BuildRoot = Join-Path $ArtifactsRoot "release-build\$Version"
 $MainDist = Join-Path $BuildRoot "main"
+$InstalledDist = Join-Path $BuildRoot "installed"
 $OpenLauncherDist = Join-Path $BuildRoot "open-launcher"
 $SetupDist = Join-Path $BuildRoot "setup"
 $WorkMain = Join-Path $BuildRoot "work-main"
+$WorkInstalled = Join-Path $BuildRoot "work-installed"
 $WorkOpenLauncher = Join-Path $BuildRoot "work-open-launcher"
 $WorkSetup = Join-Path $BuildRoot "work-setup"
 $SpecRoot = Join-Path $BuildRoot "spec"
@@ -27,6 +29,10 @@ $VersionRelease = Join-Path $ReleaseRoot $Version
 $MainName = "DokumentenScannerSortierung"
 $OpenLauncherName = "DokumentenScannerSortierung-Oeffnen"
 $MainExecutable = Join-Path $MainDist "$MainName.exe"
+$InstalledApplication = Join-Path $InstalledDist $MainName
+$InstalledExecutable = Join-Path $InstalledApplication "$MainName.exe"
+$InstalledRuntime = Join-Path $InstalledApplication "_internal"
+$InstalledRuntimeManifest = Join-Path $BuildRoot "runtime-files.json"
 $OpenLauncherExecutable = Join-Path $OpenLauncherDist "$OpenLauncherName.exe"
 $SetupExecutable = Join-Path $SetupDist "$MainName-Setup.exe"
 $UninstallerSource = Join-Path $ProjectRoot "installer\uninstall.ps1"
@@ -549,7 +555,7 @@ if ($WithoutBundledTesseract) {
 }
 
 Reset-BuildDirectory $BuildRoot
-New-Item -ItemType Directory -Force -Path $MainDist, $OpenLauncherDist, $SetupDist, $SpecRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $MainDist, $InstalledDist, $OpenLauncherDist, $SetupDist, $SpecRoot | Out-Null
 [System.IO.Directory]::CreateDirectory($PreparedTclLibrary) | Out-Null
 Copy-Item -Path (Join-Path $TclRoot "tcl8.6\*") -Destination $PreparedTclLibrary -Recurse
 $preparedTclInit = Join-Path $PreparedTclLibrary "init.tcl"
@@ -621,6 +627,24 @@ Assert-Artifact $MainExecutable $Version
 Sign-Artifact $MainExecutable
 Invoke-ArtifactSelfTest $MainExecutable -RequireResultMarker
 
+# The installed application loads an already expanded runtime. The portable
+# artifact remains self-contained; the setup alone carries the onedir build.
+$installedArguments = @($mainArguments)
+for ($argumentIndex = 0; $argumentIndex -lt $installedArguments.Count; $argumentIndex++) {
+    switch ($installedArguments[$argumentIndex]) {
+        "--onefile" { $installedArguments[$argumentIndex] = "--onedir" }
+        "--distpath" { $installedArguments[$argumentIndex + 1] = $InstalledDist }
+        "--workpath" { $installedArguments[$argumentIndex + 1] = $WorkInstalled }
+    }
+}
+Invoke-PythonCommand $installedArguments "Installierter Anwendungs-Build"
+Assert-Artifact $InstalledExecutable $Version
+Sign-Artifact $InstalledExecutable
+Invoke-ArtifactSelfTest $InstalledExecutable -RequireResultMarker
+if (-not (Test-Path -LiteralPath $InstalledRuntime -PathType Container)) {
+    throw "Installierte Runtime fehlt: $InstalledRuntime"
+}
+
 $openLauncherArguments = @(
     "-m", "PyInstaller",
     "--noconfirm", "--clean", "--onefile", "--windowed",
@@ -639,13 +663,28 @@ Sign-Artifact $OpenLauncherExecutable
 Invoke-ArtifactSelfTest $OpenLauncherExecutable
 
 $payloadSources = [ordered]@{
-    "$MainName.exe" = $MainExecutable
+    "$MainName.exe" = $InstalledExecutable
     "$OpenLauncherName.exe" = $OpenLauncherExecutable
     "THIRD_PARTY_NOTICES.md" = $ThirdPartyNotices
     "dokumenten-scanner-sortierung.ico" = $AppIcon
     "version.txt" = $VersionPayload
     "uninstall.ps1" = $UninstallerSource
 }
+$runtimeEntries = [ordered]@{}
+foreach ($runtimeFile in (Get-ChildItem -LiteralPath $InstalledRuntime -Recurse -File | Sort-Object FullName)) {
+    $relativeName = $runtimeFile.FullName.Substring($InstalledApplication.Length + 1).Replace('\', '/')
+    $payloadSources[$relativeName] = $runtimeFile.FullName
+    $runtimeEntries[$relativeName] = [ordered]@{
+        size = $runtimeFile.Length
+        sha256 = Get-Sha256 $runtimeFile.FullName
+    }
+}
+[System.IO.File]::WriteAllText(
+    $InstalledRuntimeManifest,
+    ($runtimeEntries | ConvertTo-Json -Depth 5),
+    [System.Text.UTF8Encoding]::new($false)
+)
+$payloadSources["runtime-files.json"] = $InstalledRuntimeManifest
 $payloadEntries = [ordered]@{}
 foreach ($entry in $payloadSources.GetEnumerator()) {
     $item = Get-Item -LiteralPath $entry.Value
@@ -672,7 +711,9 @@ $setupArguments = @(
     "--icon", $AppIcon,
     "--version-file", $SetupVersionResource,
     "--paths", $ProjectRoot,
-    "--add-data", "$MainExecutable;payload",
+    "--add-data", "$InstalledExecutable;payload",
+    "--add-data", "$InstalledRuntime;payload/_internal",
+    "--add-data", "$InstalledRuntimeManifest;payload",
     "--add-data", "$OpenLauncherExecutable;payload",
     "--add-data", "$UninstallerSource;payload",
     "--add-data", "$ThirdPartyNotices;payload",

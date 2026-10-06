@@ -162,6 +162,15 @@ class FileReplacement:
     payload_sha256: str | None = None
     backup_created: bool = False
     destination_replaced: bool = False
+    remove_only: bool = False
+    original_directory: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeRemoval:
+    destination: Path
+    original_size: int
+    original_sha256: str
 
 
 @dataclass(slots=True)
@@ -206,6 +215,7 @@ class InstallationTransaction:
         errors: list[str] = []
         for replacement in reversed(self.replacements):
             try:
+                assert_payload_path(self.backup_directory.parent, replacement.destination, "Rollback-Ziel")
                 if replacement.backup_created:
                     assert_safe_regular_file(
                         replacement.backup,
@@ -214,7 +224,9 @@ class InstallationTransaction:
                         replacement.original_sha256,
                     )
                     assert_not_reparse(replacement.destination, "Rollback-Ziel")
-                    if replacement.destination.exists():
+                    if replacement.remove_only:
+                        prepare_removed_file_restore(self.backup_directory.parent, replacement.destination)
+                    elif replacement.destination.exists():
                         assert_safe_regular_file(
                             replacement.destination,
                             "zu ersetzende Payload-Datei",
@@ -235,6 +247,10 @@ class InstallationTransaction:
                         )
                         replacement.destination.unlink()
                     replacement.destination_replaced = False
+                    if replacement.original_directory:
+                        replacement.destination.mkdir(parents=True, exist_ok=True)
+                if replacement.original_directory and not replacement.destination.exists():
+                    replacement.destination.mkdir(parents=True, exist_ok=True)
             except OSError as error:
                 errors.append(f"{replacement.destination}: {error}")
         if errors:
@@ -293,6 +309,58 @@ PAYLOAD_LAYOUT = {
     VERSION_FILENAME: VERSION_FILENAME,
     PAYLOAD_UNINSTALLER_FILENAME: UNINSTALLER_FILENAME,
 }
+RUNTIME_MANIFEST_FILENAME = "runtime-files.json"
+RUNTIME_FOLDER = "_internal"
+WINDOWS_RESERVED_FILENAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{index}" for index in range(10)),
+    *(f"LPT{index}" for index in range(10)),
+}
+
+
+def safe_payload_destination(name: object) -> str:
+    """Allow fixed root files and regular files below the packaged runtime only."""
+    if isinstance(name, str) and name in PAYLOAD_LAYOUT:
+        return PAYLOAD_LAYOUT[name]
+    if name == RUNTIME_MANIFEST_FILENAME:
+        return RUNTIME_MANIFEST_FILENAME
+    if not isinstance(name, str):
+        raise RuntimeError(f"Ungültiger Runtime-Pfad: {name!r}")
+    parts = name.split("/")
+    if len(parts) < 2 or parts[0] != RUNTIME_FOLDER:
+        raise RuntimeError(f"Nicht erlaubter Runtime-Pfad: {name!r}")
+    for part in parts:
+        if (
+            not part or part in {".", ".."} or part.rstrip(" .") != part
+            or any(character in part for character in '\\:<>"|?*')
+            or any(ord(character) < 32 for character in part)
+            or part.split(".")[0].upper() in WINDOWS_RESERVED_FILENAMES
+        ):
+            raise RuntimeError(f"Ungültiger Runtime-Pfad: {name!r}")
+    return name
+
+
+def assert_payload_path(parent: Path, child: Path, label: str) -> None:
+    """Check containment and every ancestor, including Windows junctions."""
+    try:
+        relative = child.relative_to(parent)
+    except ValueError as error:
+        raise OSError(f"{label} liegt außerhalb des Installationsordners: {child}") from error
+    if not relative.parts or any(part in {".", ".."} for part in relative.parts):
+        raise OSError(f"Ungültiger {label}: {child}")
+    current = parent
+    assert_not_reparse(current, label)
+    for part in relative.parts:
+        current = current / part
+        assert_not_reparse(current, label)
+
+
+def check_recovery_destination_names(names: set[str]) -> None:
+    if not PAYLOAD_DESTINATION_NAMES_CASEFOLD.issubset(names):
+        raise RuntimeError("Recovery-Journal enthält nicht alle erlaubten Installationsziele.")
+    has_runtime = any(name.startswith(f"{RUNTIME_FOLDER}/") for name in names)
+    if has_runtime != (RUNTIME_MANIFEST_FILENAME in names):
+        raise RuntimeError("Recovery-Journal enthält eine unvollständige Runtime-Dateiliste.")
 
 
 def file_matches(path: Path, expected_size: int | None, expected_sha256: str | None) -> bool:
@@ -309,7 +377,7 @@ def file_matches(path: Path, expected_size: int | None, expected_sha256: str | N
 def is_reparse_point(path: Path) -> bool:
     try:
         file_stat = path.lstat()
-    except FileNotFoundError:
+    except (FileNotFoundError, NotADirectoryError):
         return False
     attributes = int(getattr(file_stat, "st_file_attributes", 0))
     reparse_flag = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400))
@@ -344,6 +412,7 @@ def assert_original_destination_state(
     had_original: bool,
     original_size: int | None,
     original_sha256: str | None,
+    *, original_directory: bool = False,
 ) -> None:
     assert_not_reparse(destination, "Rollback-Ziel")
     if had_original:
@@ -353,6 +422,9 @@ def assert_original_destination_state(
             original_size,
             original_sha256,
         )
+    elif original_directory:
+        if not destination.is_dir():
+            raise OSError(f"Rollback-Ziel müsste ein Ordner sein: {destination}")
     elif destination.exists():
         raise OSError(f"Rollback-Ziel müsste nicht vorhanden sein: {destination}")
 
@@ -364,7 +436,73 @@ def assert_replacements_rolled_back(replacements: list[FileReplacement]) -> None
             replacement.had_original,
             replacement.original_size,
             replacement.original_sha256,
+            original_directory=replacement.original_directory,
         )
+
+
+def prune_empty_runtime_directories(root: Path, path: Path) -> None:
+    """Remove empty runtime directories only, preserving all files and links."""
+    assert_payload_path(root, path, "Runtime-Ordner")
+    if not path.is_dir():
+        return
+    for current, directories, _files in os.walk(path, topdown=False, followlinks=False):
+        for name in directories:
+            assert_payload_path(root, Path(current) / name, "Runtime-Ordner")
+        candidate = Path(current)
+        assert_payload_path(root, candidate, "Runtime-Ordner")
+        try:
+            candidate.rmdir()
+        except OSError:
+            if not candidate.is_dir() or not any(candidate.iterdir()):
+                raise
+
+
+def prepare_removed_file_restore(root: Path, destination: Path) -> None:
+    prune_empty_runtime_directories(root, destination)
+    if destination.exists():
+        raise OSError(f"Rollback darf einen unbekannten Eintrag nicht ersetzen: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    assert_payload_path(root, destination, "Rollback-Ziel")
+
+
+def assert_removed_destination_state(destination: Path) -> None:
+    assert_not_reparse(destination, "entfernte Runtime-Datei")
+    if destination.exists() and not destination.is_dir():
+        raise OSError(f"Veraltete Runtime-Datei wurde nicht sicher entfernt: {destination}")
+
+
+def obsolete_runtime_files(files: tuple[PayloadFile, ...], root: Path) -> tuple[RuntimeRemoval, ...]:
+    """Plan hash-verified obsolete files from the previous ownership manifest."""
+    if not any(payload.manifest_name == RUNTIME_MANIFEST_FILENAME for payload in files):
+        return ()
+    previous_manifest = root / RUNTIME_MANIFEST_FILENAME
+    assert_payload_path(root, previous_manifest, "vorherige Runtime-Dateiliste")
+    if not previous_manifest.exists():
+        return ()
+    try:
+        entries = json.loads(previous_manifest.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Vorherige Runtime-Dateiliste ist ungültig: {error}") from error
+    if not isinstance(entries, dict):
+        raise RuntimeError("Vorherige Runtime-Dateiliste muss ein Objekt enthalten.")
+    new_names = {payload.manifest_name.casefold() for payload in files}
+    previous_names: set[str] = set()
+    removals = []
+    for name, entry in sorted(entries.items()):
+        relative = safe_payload_destination(name)
+        if not relative.startswith(f"{RUNTIME_FOLDER}/") or relative.casefold() in previous_names:
+            raise RuntimeError(f"Mehrdeutiger oder unerlaubter vorheriger Runtime-Pfad: {name}")
+        previous_names.add(relative.casefold())
+        if not isinstance(entry, dict):
+            raise RuntimeError(f"Ungültiger vorheriger Runtime-Eintrag: {name}")
+        size = _journal_integer(entry.get("size"), "Runtime-Dateigröße")
+        digest = _journal_hash(entry.get("sha256"), "Runtime-Dateihash")
+        assert size is not None and digest is not None
+        destination = root / relative
+        assert_payload_path(root, destination, "vorherige Runtime-Datei")
+        if relative.casefold() not in new_names and file_matches(destination, size, digest):
+            removals.append(RuntimeRemoval(destination, size, digest))
+    return tuple(removals)
 
 
 def cleanup_transaction_directories(
@@ -402,7 +540,7 @@ def write_transaction_journal(transaction: InstallationTransaction) -> None:
             raise RuntimeError(f"Stage-Pfad fehlt für {replacement.destination}.")
         records.append(
             {
-                "destination_name": replacement.destination.name,
+                "destination_name": replacement.destination.relative_to(transaction.backup_directory.parent).as_posix(),
                 "backup_name": replacement.backup.name,
                 "stage_name": replacement.stage.name,
                 "had_original": replacement.had_original,
@@ -410,6 +548,8 @@ def write_transaction_journal(transaction: InstallationTransaction) -> None:
                 "original_sha256": replacement.original_sha256,
                 "payload_size": replacement.payload_size,
                 "payload_sha256": replacement.payload_sha256,
+                **({"remove_only": True} if replacement.remove_only else {}),
+                **({"original_directory": True} if replacement.original_directory else {}),
             }
         )
     journal = transaction.backup_directory / TRANSACTION_JOURNAL_FILENAME
@@ -509,9 +649,9 @@ def assert_recovery_records_rolled_back(
     records: list[dict[str, object]],
     journal_path: Path,
 ) -> None:
-    if len(records) != len(PAYLOAD_DESTINATION_NAMES):
+    if len(records) < len(PAYLOAD_DESTINATION_NAMES):
         raise RuntimeError(
-            f"Rollback-Prüfung erwartet exakt {len(PAYLOAD_DESTINATION_NAMES)} Recovery-Einträge: {journal_path}"
+            f"Rollback-Prüfung erwartet mindestens {len(PAYLOAD_DESTINATION_NAMES)} Recovery-Einträge: {journal_path}"
         )
     for record in records:
         destination = record.get("destination")
@@ -523,6 +663,7 @@ def assert_recovery_records_rolled_back(
             had_original,
             record.get("original_size") if isinstance(record.get("original_size"), int) else None,
             record.get("original_sha256") if isinstance(record.get("original_sha256"), str) else None,
+            original_directory=bool(record.get("original_directory", False)),
         )
 
 
@@ -530,14 +671,17 @@ def assert_recovery_records_committed(
     records: list[dict[str, object]],
     journal_path: Path,
 ) -> None:
-    if len(records) != len(PAYLOAD_DESTINATION_NAMES):
+    if len(records) < len(PAYLOAD_DESTINATION_NAMES):
         raise RuntimeError(
-            f"Commit-Prüfung erwartet exakt {len(PAYLOAD_DESTINATION_NAMES)} Recovery-Einträge: {journal_path}"
+            f"Commit-Prüfung erwartet mindestens {len(PAYLOAD_DESTINATION_NAMES)} Recovery-Einträge: {journal_path}"
         )
     for record in records:
         destination = record.get("destination")
         if not isinstance(destination, Path):
             raise RuntimeError(f"Interner Recovery-Fehler in {journal_path}")
+        if record.get("remove_only"):
+            assert_removed_destination_state(destination)
+            continue
         assert_safe_regular_file(
             destination,
             "festgeschriebene Payload-Datei",
@@ -582,9 +726,9 @@ def recover_transaction(
             f"Backup={backup_directory}; Stage={stage_directory}"
         )
     records = journal.get("records")
-    if not isinstance(records, list) or len(records) != len(PAYLOAD_DESTINATION_NAMES):
+    if not isinstance(records, list) or len(records) < len(PAYLOAD_DESTINATION_NAMES):
         raise RuntimeError(
-            f"Recovery-Journal muss exakt {len(PAYLOAD_DESTINATION_NAMES)} Payload-Einträge enthalten. "
+            f"Recovery-Journal muss mindestens {len(PAYLOAD_DESTINATION_NAMES)} Payload-Einträge enthalten. "
             "Recovery-Daten nicht verändern: "
             f"Backup={backup_directory}; Stage={stage_directory}"
         )
@@ -593,10 +737,14 @@ def recover_transaction(
     destination_names: set[str] = set()
     backup_names: set[str] = set()
     stage_names: set[str] = set()
-    for raw_record in records:
+    for record_index, raw_record in enumerate(records):
         if not isinstance(raw_record, dict) or not isinstance(raw_record.get("had_original"), bool):
             raise RuntimeError(f"Ungültiger Recovery-Eintrag in {journal_path}")
-        destination_name = _safe_transaction_name(raw_record.get("destination_name"), "Zielname")
+        destination_value = raw_record.get("destination_name")
+        if isinstance(destination_value, str) and destination_value.casefold() in PAYLOAD_DESTINATION_NAMES_CASEFOLD:
+            destination_name = _safe_transaction_name(destination_value, "Zielname")
+        else:
+            destination_name = safe_payload_destination(destination_value)
         backup_name = _safe_transaction_name(raw_record.get("backup_name"), "Backupname")
         stage_name = _safe_transaction_name(raw_record.get("stage_name"), "Stagename")
         destination_key = destination_name.casefold()
@@ -604,14 +752,16 @@ def recover_transaction(
         stage_key = stage_name.casefold()
         if destination_key in destination_names or backup_key in backup_names or stage_key in stage_names:
             raise RuntimeError(f"Doppelter oder mehrdeutiger Recovery-Eintrag in {journal_path}")
-        if destination_key not in PAYLOAD_DESTINATION_NAMES_CASEFOLD:
-            raise RuntimeError(f"Nicht erlaubtes Installationsziel im Recovery-Journal: {destination_name}")
-        expected_index = next(
-            index
-            for index, allowed_name in enumerate(PAYLOAD_DESTINATION_NAMES)
-            if allowed_name.casefold() == destination_key
-        )
-        expected_transaction_name = f"{expected_index:02d}-{PAYLOAD_DESTINATION_NAMES[expected_index]}"
+        if destination_key in PAYLOAD_DESTINATION_NAMES_CASEFOLD:
+            expected_index = next(
+                index for index, allowed_name in enumerate(PAYLOAD_DESTINATION_NAMES)
+                if allowed_name.casefold() == destination_key
+            )
+            expected_transaction_name = f"{expected_index:02d}-{PAYLOAD_DESTINATION_NAMES[expected_index]}"
+        else:
+            if record_index < len(PAYLOAD_DESTINATION_NAMES):
+                raise RuntimeError("Runtime-Eintrag steht vor den festen Installationsdateien.")
+            expected_transaction_name = f"{record_index:02d}-{Path(destination_name).name}"
         if backup_key != expected_transaction_name.casefold() or stage_key != expected_transaction_name.casefold():
             raise RuntimeError(
                 f"Backup-/Stagename passt nicht zum erlaubten Installationsziel {destination_name}: "
@@ -623,7 +773,7 @@ def recover_transaction(
         destination = installation_directory / destination_name
         backup = backup_directory / backup_name
         stage_path = stage_directory / stage_name
-        assert_direct_child(installation_directory, destination, "Recovery-Ziel")
+        assert_payload_path(installation_directory, destination, "Recovery-Ziel")
         assert_direct_child(backup_directory, backup, "Recovery-Backup")
         assert_direct_child(stage_directory, stage_path, "Recovery-Stage")
         for path, label in (
@@ -633,6 +783,14 @@ def recover_transaction(
         ):
             assert_not_reparse(path, label)
         had_original = raw_record["had_original"]
+        remove_only = raw_record.get("remove_only", False)
+        original_directory = raw_record.get("original_directory", False)
+        if not isinstance(remove_only, bool) or not isinstance(original_directory, bool):
+            raise RuntimeError(f"Ungültige Runtime-Aktion in {journal_path}")
+        if (remove_only or original_directory) and not destination_name.startswith(f"{RUNTIME_FOLDER}/"):
+            raise RuntimeError("Runtime-Aktionen sind nur unter _internal erlaubt.")
+        if (remove_only and (not had_original or original_directory)) or (original_directory and had_original):
+            raise RuntimeError("Widersprüchlicher ursprünglicher Runtime-Zustand.")
         original_size = _journal_integer(
             raw_record.get("original_size"),
             "Originalgröße",
@@ -647,6 +805,10 @@ def recover_transaction(
             raise RuntimeError(
                 f"Recovery-Eintrag ohne Original enthält unerwartete Originaldaten: {destination_name}"
             )
+        payload_size = _journal_integer(raw_record.get("payload_size"), "Payloadgröße", optional=remove_only)
+        payload_sha256 = _journal_hash(raw_record.get("payload_sha256"), "Payloadhash", optional=remove_only)
+        if remove_only and (payload_size is not None or payload_sha256 is not None):
+            raise RuntimeError("Ein Löschvorgang darf keine neue Payload enthalten.")
         parsed_records.append(
             {
                 "destination": destination,
@@ -655,16 +817,14 @@ def recover_transaction(
                 "had_original": had_original,
                 "original_size": original_size,
                 "original_sha256": original_sha256,
-                "payload_size": _journal_integer(raw_record.get("payload_size"), "Payloadgröße"),
-                "payload_sha256": _journal_hash(raw_record.get("payload_sha256"), "Payloadhash"),
+                "payload_size": payload_size,
+                "payload_sha256": payload_sha256,
+                "remove_only": remove_only,
+                "original_directory": original_directory,
             }
         )
 
-    if destination_names != PAYLOAD_DESTINATION_NAMES_CASEFOLD:
-        raise RuntimeError(
-            f"Recovery-Journal enthält nicht exakt die {len(PAYLOAD_DESTINATION_NAMES)} erlaubten "
-            f"Installationsziele: {journal_path}"
-        )
+    check_recovery_destination_names(destination_names)
 
     if journal["state"] == TRANSACTION_STATE_COMMITTED:
         try:
@@ -729,6 +889,15 @@ def recover_transaction(
             backup = record["backup"]
             if not isinstance(destination, Path) or not isinstance(backup, Path):
                 raise RuntimeError(f"Interner Recovery-Fehler in {journal_path}")
+            assert_payload_path(installation_directory, destination, "Recovery-Ziel")
+            if record["remove_only"]:
+                if backup.exists():
+                    assert_safe_regular_file(backup, "Runtime-Backup", record["original_size"], record["original_sha256"])
+                    prepare_removed_file_restore(installation_directory, destination)
+                    os.replace(backup, destination)
+                else:
+                    assert_original_destination_state(destination, True, record["original_size"], record["original_sha256"])
+                continue
             if record["had_original"]:
                 if backup.is_file():
                     assert_safe_regular_file(
@@ -753,6 +922,8 @@ def recover_transaction(
                     raise RuntimeError(
                         f"Weder Original noch Backup sind eindeutig: Ziel={destination}; Backup={backup}"
                     )
+            elif record["original_directory"] and destination.is_dir():
+                continue
             elif destination.exists():
                 assert_safe_regular_file(
                     destination,
@@ -761,6 +932,8 @@ def recover_transaction(
                     record["payload_sha256"],
                 )
                 destination.unlink()
+            if record["original_directory"]:
+                destination.mkdir(parents=True, exist_ok=True)
     except (OSError, RuntimeError) as error:
         raise RuntimeError(
             "Automatische Wiederherstellung fehlgeschlagen. Recovery-Daten bleiben erhalten: "
@@ -832,7 +1005,7 @@ def recover_orphaned_transactions(installation_directory: Path) -> tuple[str, ..
 
 
 def payload_files(target: Path) -> tuple[PayloadFile, ...]:
-    return (
+    fixed_files = (
         PayloadFile(APPLICATION_FILENAME, payload_path(), target),
         PayloadFile(
             OPEN_LAUNCHER_FILENAME,
@@ -849,28 +1022,40 @@ def payload_files(target: Path) -> tuple[PayloadFile, ...]:
         ),
     )
 
+    # The setup's embedded manifest defines the complete onedir runtime. Never
+    # enumerate destinations supplied by an installed/untrusted manifest.
+    manifest = json.loads(payload_manifest_path().read_text(encoding="utf-8-sig"))
+    entries = manifest.get("files")
+    if not isinstance(entries, dict):
+        raise RuntimeError("Payload-Manifest enthält keine gültige Dateiliste.")
+    additional = []
+    for name in sorted(set(entries) - set(PAYLOAD_LAYOUT)):
+        relative = safe_payload_destination(name)
+        additional.append(PayloadFile(name, payload_path().parent / relative, target.parent / relative))
+    return fixed_files + tuple(additional)
+
 
 def validate_payload_bundle(version: str, files: tuple[PayloadFile, ...]) -> tuple[PayloadFile, ...]:
-    if len(files) != len(PAYLOAD_LAYOUT):
-        raise RuntimeError(f"Payload muss exakt {len(PAYLOAD_LAYOUT)} Installationsdateien enthalten.")
+    if len(files) < len(PAYLOAD_LAYOUT):
+        raise RuntimeError(f"Payload muss mindestens {len(PAYLOAD_LAYOUT)} Installationsdateien enthalten.")
     manifest_names = {payload.manifest_name for payload in files}
-    if manifest_names != set(PAYLOAD_LAYOUT):
+    if len(manifest_names) != len(files) or not set(PAYLOAD_LAYOUT).issubset(manifest_names):
         raise RuntimeError("Payload-Dateiliste entspricht nicht der erlaubten Installations-Layout-Definition.")
     installation_directory = files[0].destination.parent
     if installation_directory.exists():
         assert_not_reparse(installation_directory, "Installationsordner")
     destination_keys: set[str] = set()
     for payload in files:
-        expected_destination = PAYLOAD_LAYOUT[payload.manifest_name]
-        if payload.destination.name.casefold() != expected_destination.casefold():
+        expected_destination = safe_payload_destination(payload.manifest_name)
+        if payload.destination.relative_to(installation_directory).as_posix().casefold() != expected_destination.casefold():
             raise RuntimeError(
                 f"Nicht erlaubtes Payload-Ziel: {payload.manifest_name} -> {payload.destination.name}"
             )
-        destination_key = payload.destination.name.casefold()
+        destination_key = expected_destination.casefold()
         if destination_key in destination_keys:
             raise RuntimeError(f"Doppeltes Payload-Ziel: {payload.destination}")
         destination_keys.add(destination_key)
-        assert_direct_child(installation_directory, payload.destination, "Payload-Ziel")
+        assert_payload_path(installation_directory, payload.destination, "Payload-Ziel")
         assert_not_reparse(payload.destination, "Payload-Ziel")
         assert_not_reparse(payload.source, "Payload-Quelle")
     try:
@@ -885,8 +1070,18 @@ def validate_payload_bundle(version: str, files: tuple[PayloadFile, ...]) -> tup
             f"Payload-Version stimmt nicht: Manifest={manifest.get('version')!r}, Setup={version!r}."
         )
     manifest_files = manifest.get("files")
-    if not isinstance(manifest_files, dict):
-        raise RuntimeError("Payload-Manifest enthält keine gültige Dateiliste.")
+    if not isinstance(manifest_files, dict) or set(manifest_files) != manifest_names:
+        raise RuntimeError("Payload-Manifest enthält keine vollständige, eindeutige Dateiliste.")
+    check_recovery_destination_names(destination_keys)
+    source_root = next(item.source.parent for item in files if item.manifest_name == APPLICATION_FILENAME)
+    for payload in files:
+        assert_payload_path(source_root, payload.source, "Payload-Quelle")
+    runtime_files = sorted(name for name in manifest_names if name.startswith(f"{RUNTIME_FOLDER}/"))
+    if runtime_files:
+        runtime_manifest = next(item.source for item in files if item.manifest_name == RUNTIME_MANIFEST_FILENAME)
+        runtime_entries = json.loads(runtime_manifest.read_text(encoding="utf-8"))
+        if runtime_entries != {name: manifest_files[name] for name in runtime_files}:
+            raise RuntimeError("Runtime-Dateiliste stimmt nicht mit dem Payload-Manifest überein.")
 
     validated_files: list[PayloadFile] = []
     for payload in files:
@@ -933,7 +1128,7 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
     installation_directory.mkdir(parents=True, exist_ok=True)
     assert_not_reparse(installation_directory, "Installationsordner")
     for payload in files:
-        assert_direct_child(installation_directory, payload.destination, "Payload-Ziel")
+        assert_payload_path(installation_directory, payload.destination, "Payload-Ziel")
         assert_not_reparse(payload.destination, "Payload-Ziel")
         assert_not_reparse(payload.source, "Payload-Quelle")
     transaction_id = uuid4().hex
@@ -948,9 +1143,24 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
     transaction = InstallationTransaction(stage_directory, backup_directory, [])
 
     try:
-        staged: list[tuple[PayloadFile, Path]] = []
-        for index, payload in enumerate(files):
-            stage_path = stage_directory / f"{index:02d}-{payload.destination.name}"
+        removals = obsolete_runtime_files(files, installation_directory)
+        # Keep fixed root entries first for legacy recovery. Remove old runtime
+        # files before adding the new runtime so file/directory changes work;
+        # reversing the journal restores the old layout after removing new files.
+        split = min(len(PAYLOAD_DESTINATION_NAMES), len(files))
+        operations = (*files[:split], *removals, *files[split:])
+        for index, operation in enumerate(operations):
+            destination = operation.destination
+            stage_path = stage_directory / f"{index:02d}-{destination.name}"
+            backup_path = backup_directory / stage_path.name
+            if isinstance(operation, RuntimeRemoval):
+                transaction.replacements.append(FileReplacement(
+                    destination, backup_path, True, stage=stage_path,
+                    original_size=operation.original_size, original_sha256=operation.original_sha256,
+                    remove_only=True,
+                ))
+                continue
+            payload = operation
             shutil.copy2(payload.source, stage_path)
             assert_not_reparse(stage_path, "Stage-Datei")
             if not file_matches(stage_path, payload.expected_size, payload.expected_sha256):
@@ -958,27 +1168,21 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
                     "Payload nach Staging nicht mehr manifestkonform: "
                     f"{payload.manifest_name}; erwartet {payload.expected_size} Bytes / {payload.expected_sha256}"
                 )
-            staged.append((payload, stage_path))
-
-        for index, (payload, stage_path) in enumerate(staged):
-            backup_path = backup_directory / f"{index:02d}-{payload.destination.name}"
-            had_original = payload.destination.exists()
-            original_size = payload.destination.stat().st_size if had_original else None
-            original_sha256 = sha256_file(payload.destination) if had_original else None
-            replacement = FileReplacement(
-                payload.destination,
-                backup_path,
-                had_original,
-                stage=stage_path,
-                original_size=original_size,
-                original_sha256=original_sha256,
-                payload_size=payload.expected_size,
-                payload_sha256=payload.expected_sha256,
-            )
-            transaction.replacements.append(replacement)
+            original_directory = destination.is_dir()
+            if original_directory and not payload.manifest_name.startswith(f"{RUNTIME_FOLDER}/"):
+                raise OSError(f"Payload-Ziel ist ein unerwarteter Ordner: {destination}")
+            had_original = destination.exists() and not original_directory
+            transaction.replacements.append(FileReplacement(
+                destination, backup_path, had_original, stage=stage_path,
+                original_size=destination.stat().st_size if had_original else None,
+                original_sha256=sha256_file(destination) if had_original else None,
+                payload_size=payload.expected_size, payload_sha256=payload.expected_sha256,
+                original_directory=original_directory,
+            ))
 
         write_transaction_journal(transaction)
         for replacement in transaction.replacements:
+            assert_payload_path(installation_directory, replacement.destination, "Payload-Ziel")
             if replacement.had_original:
                 if not file_matches(
                     replacement.destination,
@@ -988,12 +1192,21 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
                     raise OSError(f"Installierte Datei wurde während des Updates verändert: {replacement.destination}")
                 os.replace(replacement.destination, replacement.backup)
                 replacement.backup_created = True
+            if replacement.remove_only:
+                continue
             if replacement.stage is None or not file_matches(
                 replacement.stage,
                 replacement.payload_size,
                 replacement.payload_sha256,
             ):
                 raise OSError(f"Stage-Datei wurde vor der Installation verändert: {replacement.stage}")
+            assert_payload_path(installation_directory, replacement.destination, "Payload-Ziel")
+            if replacement.original_directory:
+                prune_empty_runtime_directories(installation_directory, replacement.destination)
+                if replacement.destination.exists():
+                    raise OSError(f"Runtime-Ordner enthält unveränderte fremde Einträge: {replacement.destination}")
+            replacement.destination.parent.mkdir(parents=True, exist_ok=True)
+            assert_payload_path(installation_directory, replacement.destination, "Payload-Ziel")
             os.replace(replacement.stage, replacement.destination)
             replacement.destination_replaced = True
     except Exception as installation_error:
@@ -1628,7 +1841,7 @@ def setup_self_test() -> int:
             raise RuntimeError(f"Ungültige Setup-Version: {version!r}")
         dummy_target = Path("self-test") / APPLICATION_FILENAME
         validated = validate_payload_bundle(version, payload_files(dummy_target))
-        if len(validated) != len(PAYLOAD_LAYOUT):
+        if len(validated) < len(PAYLOAD_LAYOUT):
             raise RuntimeError(f"Unerwartete Payload-Anzahl: {len(validated)}")
     except Exception as error:
         if sys.stderr is not None:
@@ -1690,7 +1903,8 @@ def run_installation() -> int:
             "showerror",
             "Installation abgebrochen",
             "Die Anwendung läuft noch und muss vor dem Update vollständig beendet werden. "
-            "Beenden Sie sie über das Symbol im Windows-Infobereich und starten Sie das Setup anschließend erneut.",
+            "Wählen Sie „Anwendung beenden“ und warten Sie, bis auch die Serverüberwachung "
+            "ihren laufenden Vorgang abgeschlossen hat. Starten Sie das Setup anschließend erneut.",
         )
         return 1
     selection = confirm_installation_selection(action, version, installed_version)
@@ -1711,10 +1925,8 @@ def run_installation() -> int:
                 print(f"Installiere {payload_path()} nach {target}")
         registry_snapshot = installed_application_registration()
         transaction = install_files_transactionally(files)
-        installed_notice = target.parent / NOTICE_FILENAME
         installed_launcher = target.parent / OPEN_LAUNCHER_FILENAME
         installed_icon = target.parent / ICON_FILENAME
-        installed_version_file = target.parent / VERSION_FILENAME
         installed_uninstaller = target.parent / UNINSTALLER_FILENAME
         desktop_shortcut_backup = transaction.backup_directory / f"desktop-{SHORTCUT_FILENAME}"
         desktop_shortcut = create_desktop_shortcut(installed_launcher, installed_icon, desktop_shortcut_backup)
@@ -1728,7 +1940,7 @@ def run_installation() -> int:
             target,
             installed_uninstaller,
             version,
-            (target, installed_launcher, installed_notice, installed_icon, installed_version_file, installed_uninstaller),
+            tuple(payload.destination for payload in files),
         )
         cleanup_warning = transaction.commit()
         transaction = None
