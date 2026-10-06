@@ -206,13 +206,41 @@ class ProcessorIntegrationTests(unittest.TestCase):
             self.assertIn("schema=2", summary)
             self.assertIn("ereignis=processing_completed", summary)
             self.assertRegex(summary, r"sitzung=[0-9a-f]{32}")
-            self.assertIn("version=0.3.5", summary)
+            self.assertIn("version=0.3.6", summary)
             self.assertIn("grundcode=dokumenttyp_nicht_erkannt", summary)
             self.assertIn("stufe=seitenerkennung", summary)
             self.assertIn("seite=1", summary)
             self.assertIn("seiten=unbekannt", summary)
             self.assertIn("erkennung_s=", summary)
             self.assertIn("ausgabe_s=", summary)
+
+    def test_review_reason_tracks_source_page_after_logical_reordering(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            incoming = root / "eingang"
+            output = root / "ziel"
+            archive = root / "archiv"
+            incoming.mkdir()
+            source = incoming / "angebot.pdf"
+            self._create_pdf(source, 2)
+            original = source.read_bytes()
+            recognizer = OrderedDocumentRecognizer([(1, None), (0, None)])
+            recognizer.last_page_reasons = {
+                0: "keine_bekannte_dokumentart",
+                1: "angebot_ohne_handschrift",
+            }
+            processor = DocumentProcessor(Settings(str(incoming), str(output), str(archive)))
+            processor.recognizer = recognizer
+
+            with self.assertLogs("scanner_sorter.processing", level="WARNING") as captured:
+                result = processor.process(source)
+
+            self.assertFalse(result.success)
+            self.assertIn("Seite 2: Angebot ohne erkennbare handschriftliche Eintragung", result.message)
+            self.assertEqual(original, (output / "Nicht_erkannt" / "angebot.pdf").read_bytes())
+            summary = next(line for line in captured.output if "status=nicht_erkannt" in line)
+            self.assertIn("grundcode=angebot_ohne_handschrift", summary)
+            self.assertIn("seite=2", summary)
 
     def test_archive_retention_starts_when_original_is_archived(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

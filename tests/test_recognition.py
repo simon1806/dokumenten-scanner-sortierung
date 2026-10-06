@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -31,6 +32,77 @@ from scanner_sorter.recognition import (
 
 
 class RecognitionTests(unittest.TestCase):
+    def test_parallel_pages_keep_separate_review_reasons_and_reset_between_documents(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        image = Image.new("RGB", (100, 100), "white")
+        attachment = "Pauli + Sohn Aufmassblatt Glasbestellung Set-Nr. 12-101"
+        # The attachment uses the early text path; the unknown page uses OCR.
+        with (
+            patch.object(recognizer, "_render", return_value=image),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(recognizer, "_read_ocr", return_value="Fremder Lieferschein"),
+        ):
+            recognizer._start_metrics()
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(recognizer.recognise, [
+                    SimpleNamespace(number=0, get_text=lambda _format: attachment),
+                    SimpleNamespace(number=1, get_text=lambda _format: ""),
+                ]))
+            recognizer._finish_metrics()
+            self.assertEqual([None, None], results)
+            self.assertEqual({
+                0: "anlage_ohne_hauptbeleg",
+                1: "keine_bekannte_dokumentart",
+            }, recognizer.last_page_reasons)
+            snapshot = recognizer.last_page_reasons
+            snapshot.clear()
+            self.assertEqual(2, len(recognizer.last_page_reasons))
+            recognizer._start_metrics()
+            recognizer.recognise(SimpleNamespace(number=0, get_text=lambda _format: "Empfangsschein 6260377"))
+            recognizer._finish_metrics()
+            self.assertEqual({}, recognizer.last_page_reasons)
+
+    def test_review_reasons_follow_recognition_evidence_without_extra_ocr(self) -> None:
+        cases = (
+            ("Pauli + Sohn Auftragsbestaetigung Nummer/Datum 82118445", "dokumentart_nicht_unterstuetzt"),
+            ("Pauli + Sohn Lieferschein Nummer/Datum unlesbar", "belegnummer_nicht_erkannt"),
+            ("Pauli + Sohn Nummer/Datum unlesbar", "lieferant_erkannt_belegart_unbekannt"),
+            ("Empfangsschein Nummer unlesbar", "belegnummer_nicht_erkannt"),
+            ("Angebot Nr. 5260661", "angebot_bestaetigung_nicht_erkannt"),
+            ("Angebot Nr. 5260661 Ich erteile Ihnen den Auftrag zur Ausfuehrung der angebotenen Leistung. Datum / Unterschrift", "angebot_ohne_handschrift"),
+        )
+        for text, expected in cases:
+            with self.subTest(expected=expected):
+                recognizer = PageRecognizer(Settings())
+                with (
+                    patch.object(recognizer, "_render", return_value=Image.new("RGB", (100, 100))),
+                    patch.object(recognizer, "_read_barcodes", return_value=()),
+                    patch.object(recognizer, "_has_signed_offer_mark", return_value=False),
+                    patch.object(recognizer, "_read_ocr", return_value=text) as ocr,
+                ):
+                    recognizer._start_metrics()
+                    self.assertIsNone(recognizer.recognise(SimpleNamespace(number=0)))
+                    recognizer._finish_metrics()
+                self.assertEqual({0: expected}, recognizer.last_page_reasons)
+                self.assertLessEqual(ocr.call_count, 4)
+
+    def test_offer_detected_on_full_page_requires_handwriting(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        with (
+            patch.object(recognizer, "_render", return_value=Image.new("RGB", (100, 100))),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(recognizer, "_has_signed_offer_mark", return_value=False) as signature,
+            patch.object(recognizer, "_read_ocr", side_effect=(
+                "", "Empfangsschein",
+                "Angebot Nr. 5260661 Ich erteile Ihnen den Auftrag zur Ausfuehrung der angebotenen Leistung. Datum / Unterschrift",
+            )),
+        ):
+            recognizer._start_metrics()
+            self.assertIsNone(recognizer.recognise(SimpleNamespace(number=0)))
+            recognizer._finish_metrics()
+        signature.assert_called_once()
+        self.assertEqual({0: "angebot_ohne_handschrift"}, recognizer.last_page_reasons)
+
     def test_heitzer_page_reference_reads_number_and_complete_page_marker(self) -> None:
         self.assertEqual(
             ("26071771", 2, 3),
@@ -596,18 +668,48 @@ class RecognitionTests(unittest.TestCase):
         self.assertIsNone(detected)
 
     def test_signed_offer_accepts_known_ocr_variants(self) -> None:
-        text = (
-            "Angebot Nr. 5250798\n"
-            "Ich erteile Innen den Auftrag zur Ausfuehrung der angebotenen Leistung:\n"
-            "Datum / Unterschritt: 04.08.26"
+        for label in ("Unterschritt", "Untersennitt"):
+            with self.subTest(label=label):
+                text = (
+                    "Angebot Nr. 5250798\n"
+                    "Ich erteile Innen den Auftrag zur Ausfuehrung der angebotenen Leistung:\n"
+                    f"Datum / {label}: 04.08.26"
+                )
+                detected = detect_document_from_text(text)
+                self.assertTrue(is_signed_offer(text))
+                self.assertEqual("5250798", offer_number_from_text(text))
+                self.assertIsNotNone(detected)
+                self.assertEqual("AG_5250798_UNTERS.pdf", detected.filename)
+
+    def test_misread_signature_label_still_requires_acceptance_and_handwriting(self) -> None:
+        self.assertIsNone(
+            detect_document_from_text("Angebot Nr. 5260837 Datum / Untersennitt")
         )
-
-        detected = detect_document_from_text(text)
-
-        self.assertTrue(is_signed_offer(text))
-        self.assertEqual("5250798", offer_number_from_text(text))
-        self.assertIsNotNone(detected)
-        self.assertEqual("AG_5250798_UNTERS.pdf", detected.filename)
+        page = SimpleNamespace(get_text=lambda _mode: "")
+        for has_mark in (False, True):
+            with self.subTest(has_mark=has_mark):
+                recognizer = PageRecognizer(Settings())
+                with (
+                    patch.object(recognizer, "_render", return_value=Image.new("RGB", (1000, 1400))),
+                    patch.object(recognizer, "_read_barcodes", return_value=()),
+                    patch.object(recognizer, "_has_signed_offer_mark", return_value=has_mark),
+                    patch.object(
+                        recognizer,
+                        "_read_ocr",
+                        side_effect=(
+                            "Unbekannter Kopf",
+                            "Angebot Nr. 5260837",
+                            "Ich erteile Ihnen den Auftrag zur Ausführung der angebotenen Leistung. "
+                            "Datum / Untersennitt",
+                        ),
+                    ),
+                ):
+                    detected = recognizer.recognise(page)
+                if has_mark:
+                    self.assertIsNotNone(detected)
+                    self.assertEqual("AG_5260837_UNTERS.pdf", detected.filename)
+                else:
+                    self.assertIsNone(detected)
 
     def test_signed_offer_detection_is_copied_to_normal_and_reversed_pages(self) -> None:
         signed_offer = detect_document_from_text(
@@ -898,6 +1000,67 @@ class RecognitionTests(unittest.TestCase):
         )
         self.assertFalse(has_supported_document_signal(header))
         self.assertIsNone(detect_document_from_text(header))
+
+    def test_pauli_domain_identifies_delivery_note_when_company_name_is_lost(self) -> None:
+        header = "Lieferschein Nummer/Datum: 82118445 E-Mail: mathias.rieser@pauli.de"
+        detected = detect_document_from_text(header)
+        self.assertIsNotNone(detected)
+        self.assertEqual("LS-Pauli-82118445.pdf", detected.filename)
+        self.assertIsNone(detect_document_from_text(header.replace("pauli.de", "nichtpauli.de")))
+
+    def test_pauli_misread_title_retries_small_area_and_keeps_delivery_number(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        page = SimpleNamespace(get_text=lambda _mode: "")
+        image = Image.new("RGB", (1000, 1400))
+        header = (
+            "Pauli+ Sohn GmbH Digfessclien\nNummer/Datum: 82118445 vom 23.09.2026\n"
+            "Auftragsnummer/Datum: 1865017/23.09.2026\nE-Mail: mathias.rieser@pauli.de"
+        )
+        with (
+            patch.object(recognizer, "_render", return_value=image),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Unbekannter Kopf", header, "Lieferschein Nummer/Datum: 82118445"),
+            ) as read_ocr,
+        ):
+            detected = recognizer.recognise(page)
+        self.assertIsNotNone(detected)
+        self.assertEqual("LS-Pauli-82118445.pdf", detected.filename)
+        self.assertEqual(3, read_ocr.call_count)
+        self.assertEqual((490, 322), read_ocr.call_args_list[-1].args[0].size)
+
+    def test_pauli_order_confirmation_never_retries_delivery_area(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        page = SimpleNamespace(get_text=lambda _mode: "")
+        header = (
+            "Auftragsbestätigung Nummer/Datum: 1865017\n"
+            "E-Mail: mathias.rieser@pauli.de\nBezug: Lieferschein 82118445"
+        )
+        self.assertIsNone(detect_document_from_text(header))
+        with (
+            patch.object(recognizer, "_render", return_value=Image.new("RGB", (1000, 1400))),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(recognizer, "_read_ocr", side_effect=("Unbekannter Kopf", header)) as read_ocr,
+        ):
+            self.assertIsNone(recognizer.recognise(page))
+        self.assertEqual(2, read_ocr.call_count)
+
+    def test_pauli_failed_title_retry_does_not_accept_number_alone(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        page = SimpleNamespace(get_text=lambda _mode: "")
+        header = "Pauli + Sohn GmbH\nNummer/Datum: 82118445"
+        with (
+            patch.object(recognizer, "_render", return_value=Image.new("RGB", (1000, 1400))),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(
+                recognizer,
+                "_read_ocr",
+                side_effect=("Unbekannter Kopf", header, "Nummer/Datum: 82118445"),
+            ),
+        ):
+            self.assertIsNone(recognizer.recognise(page))
 
     def test_pauli_measurement_attachments_are_not_document_starts(self) -> None:
         for text in (

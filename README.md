@@ -143,23 +143,23 @@ Die administrativen Schalter `--allow-downgrade` und `--allow-unknown-version` h
 
 Die Anwendung muss vor einem Update vollständig beendet sein. Die Abschlussmaske bietet die standardmäßig aktivierte Option **Anwendung starten**.
 
-Die noch nicht veröffentlichte Änderung an **Anwendung beenden** beendet auch die eingerichtete SYSTEM-Überwachung. Windows fordert dafür bei Bedarf eine administrative Bestätigung an. Ein bereits laufender Vorgang wird sicher fertiggestellt; erst nachdem die Serveraufgabe einschließlich ihres Startprozesses beendet ist, schließt sich die Oberfläche. Wird die Bestätigung abgebrochen oder der Stopp nicht innerhalb von 120 Sekunden bestätigt, bleibt die Oberfläche mit einer Fehlermeldung geöffnet. **In Infobereich ausblenden** und das Schließen des Fensters über das Windows-X lassen die SYSTEM-Überwachung weiterhin laufen.
+Die Änderung in Version 0.3.6 an **Anwendung beenden** beendet auch die eingerichtete SYSTEM-Überwachung. Windows fordert dafür bei Bedarf eine administrative Bestätigung an. Ein bereits laufender Vorgang wird sicher fertiggestellt; erst nachdem die Serveraufgabe einschließlich ihres Startprozesses beendet ist, schließt sich die Oberfläche. Wird die Bestätigung abgebrochen oder der Stopp nicht innerhalb von 120 Sekunden bestätigt, bleibt die Oberfläche mit einer Fehlermeldung geöffnet. **In Infobereich ausblenden** und das Schließen des Fensters über das Windows-X lassen die SYSTEM-Überwachung weiterhin laufen.
 
 Ist die SYSTEM-Aufgabe bereits gestoppt, schließt **Anwendung beenden** nach einer Statusprüfung ohne erneute Administratorabfrage. Updates entfernen unveränderte, veraltete Laufzeitdateien anhand der geprüften bisherigen Runtime-Dateiliste mit Rückrollmöglichkeit. Geänderte und unbekannte Dateien bleiben erhalten; bei einem Konflikt mit der neuen Ordnerstruktur wird das Update zurückgerollt.
 
-### Vorbereitete Beschleunigung des ersten Fensterstarts
+### Beschleunigung des ersten Fensterstarts
 
-Die noch nicht veröffentlichte Änderung installiert die Laufzeitdateien dauerhaft im Unterordner `_internal` des Programmordners. Damit muss die installierte Anwendung beim ersten Öffnen nach einem Serverneustart ihr großes OCR-Paket nicht erneut in einen temporären Ordner entpacken. Die Benutzeroberfläche fragt beim Start außerdem keine OCR-Versionen ab; diese bleiben im Infofenster und in den Protokollen der aktiven Überwachung verfügbar. Die tatsächliche Startzeit wird erst mit dem nächsten freigegebenen Build auf dem Server geprüft.
+Version 0.3.6 installiert die Laufzeitdateien dauerhaft im Unterordner `_internal` des Programmordners. Damit muss die installierte Anwendung beim ersten Öffnen nach einem Serverneustart ihr großes OCR-Paket nicht erneut in einen temporären Ordner entpacken. Die Benutzeroberfläche fragt beim Start außerdem keine OCR-Versionen ab; diese bleiben im Infofenster und in den Protokollen der aktiven Überwachung verfügbar. Die tatsächliche Startzeit ist mit Version 0.3.6 auf dem Server zu prüfen.
 
 EXE und `_internal` gehören bei dieser Installation zusammen. Zum Installieren, Aktualisieren oder Übertragen einer Installation wird weiterhin das Setup verwendet. Die portable Einzel-EXE bleibt eigenständig und entpackt ihre Komponenten weiterhin beim Start. Die Serveraufgabe, zentrale Einstellungen und Desktop-Verknüpfung verwenden unverändert ihre bisherigen Einstiegspunkte.
 
 ## Server-Pilot und Freigaben
 
-Die freigegebene Version 0.3.5 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, pypdf 6.19.0 und zxing-cpp 3.1.1. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-, Bohle-, Pauli- und Heitzer-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung, Zeidler-Ausführungsbestätigung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
+Die freigegebene Version 0.3.6 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, pypdf 6.19.0 und zxing-cpp 3.1.1. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-, Bohle-, Pauli- und Heitzer-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung, Zeidler-Ausführungsbestätigung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
 
 ## Mitgelieferte OCR-Komponenten
 
-Die aktuelle Freigabe 0.3.5 enthält:
+Die aktuelle Freigabe 0.3.6 enthält:
 
 - Tesseract OCR 5.5.3
 - Leptonica 1.87.0
@@ -203,7 +203,7 @@ Wird die normale Benutzeroberfläche geöffnet, während diese SYSTEM-Aufgabe de
 
 Das Aktivitätsprotokoll in der Oberfläche zeigt bei eingerichtetem Serverautostart automatisch das zentrale Tagesprotokoll aus `C:\ProgramData\DokumentenScannerSortierung\logs`. Die Benutzeroberfläche schreibt weiterhin ihr eigenes Diagnoseprotokoll unter `%APPDATA%`; dadurch lesen beide Betriebsarten gemeinsam sichtbar aus einer zentralen Quelle, ohne gleichzeitig dieselbe Datei zu verändern.
 
-Über **Diagnosebericht erstellen** kann dieses lokale Protokoll für die letzten 7, 30 oder 90 Tage ausgewertet werden; voreingestellt sind 30 Tage. Das erzeugte ZIP enthält ausschließlich `diagnosebericht.html` und `diagnosebericht.json`. Schema 4 des JSON-Berichts enthält die Durchschnittslaufzeit je Anwendungsversion, Render-, Barcode- und OCR-Statistiken, OCR-Aufruf- und Pixelzahlen, Erkennungspfade sowie Vergleiche nach pfadfreier Tesseract-Laufzeitquelle und wirksamem OCR-Threadlimit. Ältere Logs bleiben auswertbar und erscheinen bei den neuen Messwerten als nicht verfügbar beziehungsweise `legacy_nicht_spezifiziert` oder `nicht_erfasst`. Dateinamen sind standardmäßig deaktiviert und müssen bewusst freigegeben werden, vollständige Pfade werden nie aufgenommen. Rohlogs, PDFs und OCR-Volltexte verlassen den Rechner nicht und sind nicht Teil des Berichts. Die laufende Überwachung muss für den Export nicht beendet werden.
+Über **Diagnosebericht erstellen** kann dieses lokale Protokoll für die letzten 7, 30 oder 90 Tage ausgewertet werden; voreingestellt sind 30 Tage und die aktuelle Anwendungsversion. Wahlweise lassen sich alle Versionen gemeinsam auswerten und vergleichen. Das erzeugte ZIP enthält ausschließlich `diagnosebericht.html` und `diagnosebericht.json`. Schema 5 des JSON-Berichts enthält Durchschnitt, Median und 95. Perzentil der Laufzeit je Anwendungsversion, die Verarbeitungsversion und verständliche Prüfgründe je Problemfall, Render-, Barcode- und OCR-Statistiken, OCR-Aufruf- und Pixelzahlen, Erkennungspfade sowie Vergleiche nach pfadfreier Tesseract-Laufzeitquelle und wirksamem OCR-Threadlimit. Ältere Logs bleiben auswertbar und erscheinen bei den neuen Messwerten als nicht verfügbar beziehungsweise `legacy_nicht_spezifiziert` oder `nicht_erfasst`. Die Protokollqualität wird unabhängig vom Versionsfilter für alle ausgewerteten Logzeilen angegeben. Dateinamen sind standardmäßig deaktiviert und müssen bewusst freigegeben werden, vollständige Pfade werden nie aufgenommen. Rohlogs, PDFs und OCR-Volltexte verlassen den Rechner nicht und sind nicht Teil des Berichts. Die laufende Überwachung muss für den Export nicht beendet werden.
 
 Für Netzwerkfreigaben sind UNC-Pfade wie `\\server\freigabe\scanner\eingang` robuster als benutzerabhängige Laufwerksbuchstaben. Das Dienstkonto benötigt Lesen/Ändern/Löschen im Eingang sowie Lesen/Schreiben/Ändern in Ziel, Archiv, Prüfordner und am Ordner der zentralen `settings.json`.
 
@@ -234,7 +234,7 @@ Nach Abschluss der gesammelten Änderungen das OCR-Paket vorbereiten und den nä
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.3.5
+.\scripts\build-release.ps1 -Version 0.3.6
 ```
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.

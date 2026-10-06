@@ -55,6 +55,66 @@ class DiagnosticReportTests(unittest.TestCase):
             self.assertEqual(2, report["summary"]["application_starts"] + 1)
             self.assertIn("0.3.0", report["grouped_by_version"])
 
+    def test_version_filter_excludes_old_results_and_preserves_log_quality(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_log(
+                directory,
+                "2026-08-19 06:00:00,000 INFO scanner_sorter.app [main]: "
+                "Anwendung gestartet; version=0.3.4\n"
+                "2026-08-19 06:01:00,000 WARNING scanner_sorter.processing [worker]: "
+                "Vorgang abgeschlossen; status=nicht_erkannt; gesamt_s=99; datei=alt.pdf\n"
+                "2026-08-19 06:02:00,000 ERROR scanner_sorter.watcher [worker]: "
+                "Unklassifizierter Fehler\n"
+                "2026-08-19 07:00:00,000 INFO scanner_sorter.app [main]: "
+                "Anwendung gestartet; version=0.3.6\n"
+                "2026-08-19 07:01:00,000 INFO scanner_sorter.processing [worker]: "
+                "Vorgang abgeschlossen; status=erfolgreich; gesamt_s=2; "
+                "erkennungspfade=pauli_belegkopf:1\n"
+                "2026-08-19 07:02:00,000 WARNING scanner_sorter.processing [worker]: "
+                "Vorgang abgeschlossen; status=nicht_erkannt; gesamt_s=5; "
+                "grundcode=angebot_ohne_handschrift; datei=neu.pdf\n",
+            )
+            selected = build_diagnostic_report(
+                directory, days=7, end_date=self.report_day, version_filter="0.3.6"
+            )
+            combined = build_diagnostic_report(directory, days=7, end_date=self.report_day)
+
+        self.assertEqual(2, selected["summary"]["processing_results"]["total"])
+        self.assertEqual({"0.3.6"}, set(selected["grouped_by_version"]))
+        self.assertEqual(1, selected["summary"]["application_starts"])
+        self.assertEqual(5.0, selected["slowest_cases"][0]["duration_seconds"])
+        self.assertEqual("0.3.6", selected["problem_cases"][0]["version"])
+        self.assertIn("handschriftliche", selected["problem_cases"][0]["reason_label"])
+        self.assertEqual(["0.3.4", "0.3.6"], selected["report_filters"]["available_versions"])
+        self.assertEqual("all_versions", selected["report_filters"]["log_quality_scope"])
+        self.assertEqual(1, selected["summary"]["log_health"]["unclassified_error_or_critical_lines"])
+        self.assertEqual(1, selected["summary"]["recognition_diagnostics"]["recognition_path_usage"]["pauli_belegkopf"])
+        self.assertEqual(3, combined["summary"]["processing_results"]["total"])
+        self.assertEqual(3.5, combined["grouped_by_version"]["0.3.6"]["duration_seconds"]["median"])
+        self.assertEqual(5.0, combined["grouped_by_version"]["0.3.6"]["duration_seconds"]["p95"])
+        html = render_diagnostic_html(combined)
+        self.assertIn('class="current-version"', html)
+        self.assertIn("Median (s)", html)
+        self.assertIn("Älteres Protokoll ohne genauen Prüfgrund", html)
+        self.assertIn("Angebot ohne erkennbare handschriftliche Eintragung", html)
+        self.assertNotIn("neu.pdf", html)
+
+    def test_empty_selected_version_and_invalid_filter(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_log(
+                directory,
+                "2026-08-19 06:00:00,000 INFO scanner_sorter.processing [worker]: "
+                "Vorgang abgeschlossen; status=erfolgreich; version=0.3.4; gesamt_s=2\n",
+            )
+            report = build_diagnostic_report(
+                directory, days=7, end_date=self.report_day, version_filter="0.3.6"
+            )
+            self.assertEqual(0, report["summary"]["processing_results"]["total"])
+            self.assertIn("noch keine Vorgänge gefunden", render_diagnostic_html(report))
+            for invalid in ("", "C:\\Geheim", "0.3.6; datei=geheim.pdf", 123):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    build_diagnostic_report(directory, version_filter=invalid)
+
     def test_parser_tolerates_partial_lines_unknown_fields_and_live_append_handle(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = self._write_log(directory, "unvollständige Zeile\n")
@@ -330,6 +390,7 @@ class DiagnosticReportTests(unittest.TestCase):
                 days=7,
                 end_date=self.report_day,
                 created_at=datetime(2026, 8, 19, 12, tzinfo=timezone.utc),
+                version_filter="0.3.6",
             )
 
             self.assertEqual(destination, result)
@@ -339,8 +400,9 @@ class DiagnosticReportTests(unittest.TestCase):
                     set(archive.namelist()),
                 )
                 report = json.loads(archive.read("diagnosebericht.json"))
-                self.assertEqual(4, report["schema_version"])
+                self.assertEqual(5, report["schema_version"])
                 self.assertEqual(7, report["report_period"]["days"])
+                self.assertEqual("0.3.6", report["report_filters"]["application_version"])
                 self.assertIn("<!doctype html>", archive.read("diagnosebericht.html").decode())
 
     def test_failed_export_preserves_existing_file_and_removes_temporary_file(self) -> None:

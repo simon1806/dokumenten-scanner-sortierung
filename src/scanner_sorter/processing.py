@@ -20,6 +20,7 @@ from .config import Settings
 from .event_logging import structured_event
 from .models import DetectedDocument, DocumentGroup, ProcessResult
 from .recognition import PageRecognizer
+from .review_reasons import REVIEW_REASON_LABELS
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ _RECOGNITION_PATHS = {
     "eingebetteter_text",
     "barcode",
     "lieferantenkopf_klein",
+    "pauli_belegkopf",
     "neuma_kopf",
     "bohle_nummer",
     "montage_kopf",
@@ -607,7 +609,20 @@ class DocumentProcessor:
             with pymupdf.open(source) as scan:
                 detections = [self.recognizer.recognise(page) for page in scan]
             source_indexes = list(range(len(detections)))
-        groups = group_page_detections(detections)
+        try:
+            groups = group_page_detections(detections)
+        except RecognitionGroupingError as error:
+            reasons = getattr(self.recognizer, "last_page_reasons", {})
+            if error.page_number is not None and isinstance(reasons, dict):
+                source_index = source_indexes[error.page_number - 1]
+                reason_code = reasons.get(source_index)
+                if isinstance(reason_code, str) and reason_code in REVIEW_REASON_LABELS:
+                    raise RecognitionGroupingError(
+                        f"Seite {source_index + 1}: {REVIEW_REASON_LABELS[reason_code]}.",
+                        reason_code=reason_code,
+                        page_number=source_index + 1,
+                    ) from error
+            raise
         for group in groups:
             group.page_indexes = [source_indexes[index] for index in group.page_indexes]
         return (
