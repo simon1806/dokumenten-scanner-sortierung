@@ -553,6 +553,13 @@ class InstallerTests(unittest.TestCase):
                             break
                         time.sleep(0.2)
                     self.assertIs(True, active, "Ready primary task must not hide a running legacy task")
+                backup_before = (root / "setup-server-task-legacy.xml").read_bytes()
+                with self.assertRaisesRegex(RuntimeError, "nicht bestaetigt"):
+                    installer.create_or_update_server_autostart(target, settings)
+                self.assertIn("noch aktiv", (root / "setup-server-autostart-error.log").read_text(encoding="utf-8"))
+                self.assertEqual(backup_before, (root / "setup-server-task-legacy.xml").read_bytes())
+                query = original_run(["schtasks.exe", "/Query", "/TN", legacy_name], capture_output=True)
+                self.assertEqual(0, query.returncode)
                 original_run(["schtasks.exe", "/End", "/TN", legacy_name], capture_output=True, timeout=30)
 
                 def invalid_readback(command: list[str], **kwargs: object) -> object:
