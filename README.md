@@ -157,6 +157,8 @@ EXE und `_internal` gehören bei dieser Installation zusammen. Zum Installieren,
 
 Version 0.4.0 verwendet Tesseract OCR 5.5.4, PyMuPDF 2.0, pypdf 6.21.4 und zxing-cpp 3.1.1. Vor dem Update werden mit den tatsächlichen Serverpfaden nochmals mindestens je ein Aufmaßschein, eigener Empfangsschein, Neuma-Empfangsschein, Montageinfo mit und ohne Auftragsnummer, Nowak-, Bohle-, Pauli- und Heitzer-Lieferschein, unterschriebenes Angebot, Pauli-Aufmaßanlage, Abtretungserklärung, Zeidler-Ausführungsbestätigung und nicht erkennbarer Scan verarbeitet. Dabei werden Ziel-, Archiv-, Prüf- und Protokollordner, Start und kontrollierter Stopp der SYSTEM-Aufgabe sowie ein Wiederanlauf geprüft. Zusätzlich wird ein Diagnose-ZIP aus dem zentralen Protokoll erzeugt, während die Überwachung weiterläuft.
 
+Version 0.4.1 prüft die SYSTEM-Aufgabe nach der Registrierung auf einen aktivierten Systemstart-Trigger, SYSTEM-ServiceAccount und passende Startparameter. Ein fehlerhafter oder nicht lesbarer Aufgabenbestand wird als unbestätigter Serverautostart gemeldet. Der Abschlussdialog zeigt Meldungen mit Windows-Zeilenumbrüchen in einem markierbaren, scrollbaren Textfeld und bietet „Details kopieren“. Bei unbestätigtem Serverautostart warnt bereits die Überschrift. Vollständige Fehlerdetails einschließlich HRESULT werden im Installationsordner in `setup-server-autostart-error.log` gespeichert. Eine Securepoint-Blockierung ist durch den bisher untersuchten Aufgabenplanungsfehler nicht nachgewiesen; die Anwendung ändert keine Virenschutzeinstellungen. Die Prüfung bestätigt die gespeicherte Konfiguration, nicht bereits einen erfolgreichen Start nach dem nächsten Neustart.
+
 ## Mitgelieferte OCR-Komponenten
 
 Version 0.4.0 verwendet **Python 3.14.10 mit Tcl/Tk 9.0.4**, **Tesseract OCR 5.5.4** mit Leptonica 1.87.0, **PyMuPDF 2.0**, **pypdf 6.21.4** und **Pillow 13.0.0**. Die aktuellen nativen Bildbibliotheken sind in `scripts/tesseract-runtime.lock.json` festgelegt. Die aktualisierten Komponenten sind in Anwendung und Setup enthalten.
@@ -237,7 +239,7 @@ Nach Abschluss der gesammelten Änderungen das OCR-Paket vorbereiten und den nä
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.4.0
+.\scripts\build-release.ps1 -Version 0.4.1
 ```
 
 Die OCR-Vorbereitung baut ausschließlich Tesseract 5.5.4 aus dem per SHA-256 festgelegten offiziellen Quellarchiv, solange noch kein entsprechendes MSYS2-Windows-Paket verfügbar ist. GCC 16.2.0, CMake, Ninja und ihre Abhängigkeiten werden anhand von `scripts/tesseract-build-tools.lock.json` geprüft und ausschließlich unter `.artifacts/tesseract-5.5.4-update` entpackt. Compiler und Buildwerkzeuge werden nicht in die Anwendung übernommen. Der getrennte Laufzeitsatz aus `scripts/tesseract-runtime.lock.json` enthält Leptonica 1.87.0 (Paketrevision 2), libpng 1.6.59, libtiff 4.7.2, libwebp 1.6.0, libjpeg-turbo 3.2.0, OpenJPEG 2.5.4, zlib 1.3.2 sowie ihre Abhängigkeiten und Lizenztexte. Downloads bleiben für weitere Aufrufe zwischengespeichert. `OCR-BUILD-MANIFEST.json` dokumentiert Quellhash, Werkzeug- und Laufzeitlisten, Compiler und Optionen.

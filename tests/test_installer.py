@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import ctypes
+import os
+import subprocess
+from uuid import uuid4
 import hashlib
 import json
 import shutil
@@ -430,7 +434,7 @@ class InstallerTests(unittest.TestCase):
 
     @patch("installer.installer.subprocess.run")
     def test_server_autostart_task_runs_as_system_at_boot(self, run: Mock) -> None:
-        run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        run.return_value = SimpleNamespace(returncode=0, stdout="SERVER_AUTOSTART_VERIFIED\n", stderr="")
         target = Path(r"C:\Program Files\Scanner\DokumentenScannerSortierung.exe")
         settings = Path(r"C:\ProgramData\DokumentenScannerSortierung\settings.json")
 
@@ -441,9 +445,71 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("PT30S", script)
         self.assertIn("-MultipleInstances IgnoreNew", script)
         self.assertIn("-RestartCount 3", script)
-        self.assertIn("-User 'SYSTEM' -RunLevel Highest", script)
+        self.assertIn("-LogonType ServiceAccount -RunLevel Highest", script)
         self.assertIn(installer.SERVER_AUTOSTART_TASK_NAME, script)
         self.assertIn('--run --settings "C:\\ProgramData\\DokumentenScannerSortierung\\settings.json"', script)
+
+    @patch("installer.installer.subprocess.run")
+    def test_server_autostart_keeps_full_conflict_details_in_a_local_log(self, run: Mock) -> None:
+        details = "HRESULT 0x800700B7: Bereits vorhanden; ausführliche Fehlerdetails " + "x" * 2000
+        run.return_value = SimpleNamespace(returncode=1, stdout="Zusatzinformationen", stderr=details)
+        with TemporaryDirectory() as directory:
+            target = Path(directory) / "Scanner.exe"
+            with self.assertRaisesRegex(RuntimeError, "bereits vorhandenen Aufgabenobjekt") as raised:
+                installer.create_or_update_server_autostart(target, Path(directory) / "settings.json")
+            log = target.parent / "setup-server-autostart-error.log"
+            self.assertIn(str(log), str(raised.exception))
+            self.assertNotIn("Administrator erneut", str(raised.exception))
+            self.assertIn(details, log.read_text(encoding="utf-8"))
+            self.assertIn("Zusatzinformationen", log.read_text(encoding="utf-8"))
+
+    @patch("installer.installer.subprocess.run")
+    def test_server_autostart_rejects_unverified_success(self, run: Mock) -> None:
+        run.return_value = SimpleNamespace(returncode=0, stdout="", stderr="")
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "nicht bestaetigt"):
+                installer.create_or_update_server_autostart(Path(directory) / "Scanner.exe", Path("settings.json"))
+            self.assertIn("keine bestaetigte", (Path(directory) / "setup-server-autostart-error.log").read_text())
+
+    @patch("installer.installer.subprocess.run", side_effect=OSError("Start verweigert"))
+    def test_server_autostart_handles_blocked_powershell_start(self, run: Mock) -> None:
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "nicht bestaetigt"):
+                installer.create_or_update_server_autostart(Path(directory) / "Scanner.exe", Path("settings.json"))
+            self.assertIn("Start verweigert", (Path(directory) / "setup-server-autostart-error.log").read_text())
+
+    @unittest.skipUnless(os.name == "nt", "Windows-Aufgabenplanung erforderlich")
+    def test_native_system_task_registration_update_and_verification(self) -> None:
+        if not ctypes.windll.shell32.IsUserAnAdmin():
+            self.skipTest("SYSTEM-Testaufgabe erfordert Windows-Administratorrechte")
+        task_name = "GlasHagen-Installer-Test-" + uuid4().hex
+        original_run = subprocess.run
+        target = Path(os.environ["WINDIR"]) / "System32" / "whoami.exe"
+        with TemporaryDirectory() as directory, patch.object(installer, "SERVER_AUTOSTART_TASK_NAME", task_name):
+            settings = Path(directory) / "settings.json"
+            try:
+                # No task is started. The unique boot task points only to whoami.exe.
+                installer.create_or_update_server_autostart(target, settings)
+                installer.create_or_update_server_autostart(target, settings)
+
+                def invalid_readback(command: list[str], **kwargs: object) -> object:
+                    command = list(command)
+                    command[-1] = command[-1].replace(
+                        "if ($registered.State -eq 'Unknown'", "if ($true -or $registered.State -eq 'Unknown'"
+                    )
+                    return original_run(command, **kwargs)
+
+                # Simulate an unusable readback after a real registration.
+                # Put the expected error log into the disposable test directory.
+                with patch.object(installer.subprocess, "run", side_effect=invalid_readback):
+                    with patch.object(Path, "write_text") as write_log:
+                        with self.assertRaisesRegex(RuntimeError, "nicht bestaetigt"):
+                            installer.create_or_update_server_autostart(target, settings)
+                        self.assertIn("nicht verwendbar", write_log.call_args.args[0])
+            finally:
+                result = original_run(["schtasks.exe", "/Delete", "/TN", task_name, "/F"],
+                                      capture_output=True, text=True, timeout=30)
+                self.assertEqual(0, result.returncode, result.stderr)
 
     def test_server_settings_are_copied_once_and_then_preserved(self) -> None:
         with TemporaryDirectory() as directory:
@@ -555,6 +621,32 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Installation beenden", script)
         self.assertIn("Size(760,430)", script)
         self.assertIn("Size(710,220)", script)
+
+    def test_partial_installation_has_a_clear_server_warning_heading(self) -> None:
+        for action in (installer.INSTALL_ACTION_INSTALL, installer.INSTALL_ACTION_UPDATE,
+                       installer.INSTALL_ACTION_REPAIR, installer.INSTALL_ACTION_DOWNGRADE):
+            with self.subTest(action=action):
+                title, instruction, content = installer.completion_text(
+                    action, "0.4.1", "0.4.0", Path("Scanner.exe"), server_autostart_confirmed=False
+                )
+                self.assertEqual("Serverautostart prüfen", title)
+                self.assertIn("nicht bestätigt", instruction)
+                self.assertNotIn("erfolgreich", instruction)
+                self.assertIn("0.4.1", content)
+
+    @patch("installer.windows_dialog.subprocess.run")
+    def test_long_completion_details_are_selectable_scrollable_and_copyable(self, run: Mock) -> None:
+        run.return_value = SimpleNamespace(returncode=2)
+        details = "Fehlerdetails: " + ("Sehr lange Fehlerzeile mit Umlauten äöü\n" * 100) + "ENDE-DER-DETAILS"
+        windows_dialog.show_completion("Warnung", "Serverautostart prüfen", details, Path("app.ico"))
+        script = run.call_args.args[0][-1]
+        self.assertIn(details.replace("\n", "\r\n"), script)
+        self.assertIn("System.Windows.Forms.TextBox", script)
+        self.assertIn("$contentBox.ReadOnly = $true", script)
+        self.assertIn("$contentBox.Multiline = $true", script)
+        self.assertIn("$contentBox.ScrollBars = 'Vertical'", script)
+        self.assertIn("Details kopieren", script)
+        self.assertIn("Clipboard]::SetText($contentBox.Text)", script)
 
     @patch("installer.windows_dialog.subprocess.Popen")
     def test_installation_progress_dialog_is_modeless_and_cannot_be_closed(self, popen: Mock) -> None:

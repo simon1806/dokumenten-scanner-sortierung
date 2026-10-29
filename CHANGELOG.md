@@ -1,5 +1,13 @@
 # Änderungsprotokoll
 
+## 0.4.1 – 2026-10-29
+
+- Der Abschlussdialog zeigt vollständige Meldungen in einem markierbaren, vertikal scrollbaren Textfeld und bietet „Details kopieren“. Bei unbestätigtem Serverautostart weist bereits die Überschrift darauf hin.
+
+- Der Installer legt die SYSTEM-Anmeldeart ausdrücklich als `ServiceAccount` fest und liest die registrierte Aufgabe erneut aus. Serverautostart wird nur bei verwendbarem Aufgabenstatus, aktiviertem Systemstart-Trigger mit 30 Sekunden Verzögerung und passenden Programm-/Konfigurationsparametern bestätigt.
+- Fehler bei Registrierung, Prüfung oder PowerShell-Start sowie Zeitüberschreitungen werden mit vollständigen technischen Details im Installationsordner unter `setup-server-autostart-error.log` festgehalten. Der Konfliktcode `0x800700B7` wird konkret benannt; die pauschale Aufforderung, jeden Registrierungsfehler durch Administratorstart zu beheben, entfällt.
+- Es werden keine Aufgaben automatisch gelöscht und keine Virenschutz-Ausnahmen oder Einstellungen verändert. Eine Blockierung durch Securepoint ist weiterhin nicht nachgewiesen. Ein echter Neustarttest auf dem betroffenen Server bleibt erforderlich.
+
 ## 0.4.0 – 2026-10-29
 
 - Abtretungserklärungen akzeptieren die beobachtete OCR-Feldbezeichnung `Aufirag/Angebot`, weiterhin nur mit erkannter Dokumentart und vollständiger siebenstelliger Auftrags-/Angebotsnummer mit Präfix 32 oder 52. NEUMA-Aufträge tolerieren Leerzeichen innerhalb der vierstelligen Jahreszahl sowie Tilden anstelle der beiden Bindestriche; die Ausgabe verwendet weiterhin `I-JJJJ-NNNNNN`. Lieferantensignal, Auftragsbezeichnung und sechsstellige laufende Nummer bleiben erforderlich.
