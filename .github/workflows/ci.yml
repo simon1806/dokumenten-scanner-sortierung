@@ -21,10 +21,10 @@ jobs:
       - name: Quellcode auschecken
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - name: Python 3.12 einrichten
+      - name: Python 3.14.10 einrichten
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.14.10"
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -34,7 +34,8 @@ jobs:
 
       - name: Fixierte Abhängigkeiten installieren
         run: |
-          python -m venv .venv
+          .\scripts\prepare-python-runtime.ps1
+          .\vendor\Python-3.14.10\python.exe -m venv .venv
           .\.venv\Scripts\python.exe -m pip install `
             --require-hashes `
             --only-binary=:all: `
@@ -65,10 +66,10 @@ jobs:
       - name: Quellcode auschecken
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - name: Python 3.12 einrichten
+      - name: Python 3.14.10 einrichten
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.12"
+          python-version: "3.14.10"
           cache: pip
           cache-dependency-path: |
             pyproject.toml
@@ -78,7 +79,8 @@ jobs:
 
       - name: Fixierte Abhängigkeiten installieren
         run: |
-          python -m venv .venv
+          .\scripts\prepare-python-runtime.ps1
+          .\vendor\Python-3.14.10\python.exe -m venv .venv
           .\.venv\Scripts\python.exe -m pip install `
             --require-hashes `
             --only-binary=:all: `

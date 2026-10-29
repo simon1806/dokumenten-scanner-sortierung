@@ -591,11 +591,11 @@ def run_self_test() -> int:
         version_output = version_result.stdout + "\n" + version_result.stderr
         if (
             version_result.returncode != 0
-            or re.search(r"(?im)^tesseract\s+v?5\.5\.3\b", version_output) is None
+            or re.search(r"(?im)^tesseract\s+v?5\.5\.4\b", version_output) is None
             or re.search(r"(?im)^\s*leptonica[-\s]+1\.87\.0\b", version_output) is None
         ):
             raise RuntimeError(
-                "Tesseract OCR 5.5.3 mit Leptonica 1.87.0 konnte nicht erfolgreich gestartet werden."
+                "Tesseract OCR 5.5.4 mit Leptonica 1.87.0 konnte nicht erfolgreich gestartet werden."
             )
         language_result = subprocess.run(
             [str(tesseract), "--list-langs"],
@@ -1563,8 +1563,8 @@ class SettingsWindow:
 
         report = collect_version_information(
             self.settings.tesseract_path,
-            str(self.tk.TclVersion),
-            str(self.tk.TkVersion),
+            str(self.root.tk.call("info", "patchlevel")),
+            str(self.root.tk.call("package", "present", "Tk")),
         )
         dialog = self.tk.Toplevel(self.root)
         self._info_dialog = dialog

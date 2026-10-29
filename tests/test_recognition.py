@@ -558,7 +558,7 @@ class RecognitionTests(unittest.TestCase):
                 side_effect=(
                     "Kein Nowak-Lieferschein",
                     "Abtretungserklaerung bei Versicherungsschaeden",
-                    "Auftrag/Angebot 3260569",
+                    "Aufirag/Angebot 3260569",
                 ),
             ) as read_ocr,
         ):
@@ -805,22 +805,29 @@ class RecognitionTests(unittest.TestCase):
         self.assertEqual("ABTRET_5212345.pdf", detected.filename)
 
     def test_assignment_declaration_accepts_scanner_ocr_for_auftrag_label(self) -> None:
-        detected = detect_document_from_text(
-            "Abtretungserkldrung bei Versicherungsschaden\nAuttrag/Angebot 3260569"
-        )
-        self.assertIsNotNone(detected)
-        self.assertEqual("ABTRET_3260569.pdf", detected.filename)
+        for label in ("Auttrag", "Aufirag"):
+            with self.subTest(label=label):
+                detected = detect_document_from_text(
+                    f"Abtretungserkldrung bei Versicherungsschaden\n{label}/Angebot 3260569"
+                )
+                self.assertIsNotNone(detected)
+                self.assertEqual("ABTRET_3260569.pdf", detected.filename)
 
     def test_assignment_declaration_requires_document_type_and_expected_number_prefix(self) -> None:
         self.assertTrue(is_assignment_declaration("Abtretungserklaerung bei Versicherungsschaeden"))
         self.assertTrue(is_assignment_declaration("Abtretungserkldrung bei Versicherungsschaden"))
         self.assertTrue(has_supported_document_signal("Abtretungserklaerung bei Versicherungsschaeden"))
-        self.assertIsNone(detect_document_from_text("Auftrag/Angebot 3260569"))
-        self.assertIsNone(
-            detect_document_from_text(
-                "Abtretungserklaerung bei Versicherungsschaeden\nAuftrag/Angebot 6260569"
-            )
-        )
+        for text in (
+            "Auftrag/Angebot 3260569",
+            "Aufirag/Angebot 3260883",
+            "Abtretungserklaerung Aufirag/Angebot 6260883",
+            "Abtretungserklaerung Aufirag/Angebot 326088",
+            "Abtretungserklaerung Aufirag/Angebot 32608831",
+            "Abtretungserklaerung Aufirag/Angebot 3260883A",
+            "Abtretungserklaerung Schadens-Nr. 3260883",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(detect_document_from_text(text))
 
     def test_neuma_signed_customer_receipt(self) -> None:
         detected = detect_document_from_text(
@@ -839,6 +846,37 @@ class RecognitionTests(unittest.TestCase):
 
     def test_neuma_order_requires_customer_signature(self) -> None:
         self.assertIsNone(detect_document_from_text("Auftrag I-2026-003443 vom 05.06.2026"))
+
+    def test_neuma_order_normalises_spaces_only_in_the_four_digit_year(self) -> None:
+        for year in ("202 6", "20 26", "2 026", "2 0 2 6"):
+            with self.subTest(year=year):
+                text = f"NEUMA Auftrag 1-{year}-005652 vom 24.09.2026"
+                detected = detect_document_from_text(text)
+                self.assertIsNotNone(detected)
+                self.assertEqual("EM-NEUMA-I-2026-005652.pdf", detected.filename)
+                self.assertTrue(is_neuma_order(text))
+
+    def test_neuma_order_normalises_tildes_at_the_printed_separators(self) -> None:
+        for number in ("I~2026~005871", "I ~ 2026 ~ 005871", "I~202 6-005871"):
+            with self.subTest(number=number):
+                detected = detect_document_from_text(f"NEUMA Auftrag {number} vom 01.10.2026")
+                self.assertIsNotNone(detected)
+                self.assertEqual("EM-NEUMA-I-2026-005871.pdf", detected.filename)
+
+    def test_neuma_ocr_tolerance_requires_supplier_label_and_exact_number_format(self) -> None:
+        for text in (
+            "Fremder Lieferant Auftrag I~2026~005871",
+            "NEUMA Kunden-Nr. I~2026~005871",
+            "NEUMA Auftrag I~202~005871",
+            "NEUMA Auftrag I~20266~005871",
+            "NEUMA Auftrag I~202 66~005871",
+            "NEUMA Auftrag I~2026~00587",
+            "NEUMA Auftrag I~2026~0058719",
+            "NEUMA Auftrag I~2026~005 871",
+        ):
+            with self.subTest(text=text):
+                self.assertIsNone(detect_document_from_text(text))
+                self.assertFalse(is_neuma_order(text))
 
     def test_zeidler_execution_confirmation_uses_order_number(self) -> None:
         detected = detect_document_from_text(
@@ -948,25 +986,31 @@ class RecognitionTests(unittest.TestCase):
             def crop(box: tuple[int, int, int, int]) -> object:
                 return ("Ausschnitt", box)
 
-        recognizer = PageRecognizer(Settings())
-        with (
-            patch.object(recognizer, "_render", return_value=ScanImage()),
-            patch.object(recognizer, "_read_barcodes", return_value=()),
-            patch.object(
-                recognizer,
-                "_read_ocr",
-                side_effect=("NEUMA", "NEUMA Auftrag I-2026-005114"),
-            ) as read_ocr,
+        for raw, canonical in (
+            ("I-2026-005114", "I-2026-005114"),
+            ("1-202 6-005652", "I-2026-005652"),
+            ("I~2026~005871", "I-2026-005871"),
         ):
-            detected = recognizer.recognise(ScanPage())
+            with self.subTest(raw=raw):
+                recognizer = PageRecognizer(Settings())
+                with (
+                    patch.object(recognizer, "_render", return_value=ScanImage()),
+                    patch.object(recognizer, "_read_barcodes", return_value=()),
+                    patch.object(
+                        recognizer,
+                        "_read_ocr",
+                        side_effect=("NEUMA", f"NEUMA Auftrag {raw}"),
+                    ) as read_ocr,
+                ):
+                    detected = recognizer.recognise(ScanPage())
 
-        self.assertIsNotNone(detected)
-        self.assertEqual("EM-NEUMA-I-2026-005114.pdf", detected.filename)
-        self.assertEqual(2, read_ocr.call_count)
-        self.assertEqual(
-            ("Ausschnitt", (0, 0, 1000, 490)),
-            read_ocr.call_args_list[1].args[0],
-        )
+                self.assertIsNotNone(detected)
+                self.assertEqual(f"EM-NEUMA-{canonical}.pdf", detected.filename)
+                self.assertEqual(2, read_ocr.call_count)
+                self.assertEqual(
+                    ("Ausschnitt", (0, 0, 1000, 490)),
+                    read_ocr.call_args_list[1].args[0],
+                )
 
     def test_heitzer_delivery_note(self) -> None:
         detected = detect_document_from_text("Heitzer AG\nLIEFERSCHEIN 26060887 vom 16.06.2026")

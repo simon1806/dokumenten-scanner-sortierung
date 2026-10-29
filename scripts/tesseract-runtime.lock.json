@@ -1,0 +1,146 @@
+[
+  {
+    "name": "mingw-w64-x86_64-leptonica",
+    "filename": "mingw-w64-x86_64-leptonica-1.87.0-2-any.pkg.tar.zst",
+    "sha256": "741e6ef13b7994dd2ce166135f32e3c6c1bc4eeb7b657242a8aaf3b479a04d7f",
+    "size": 1317882
+  },
+  {
+    "name": "mingw-w64-x86_64-giflib",
+    "filename": "mingw-w64-x86_64-giflib-6.1.3-1-any.pkg.tar.zst",
+    "sha256": "bfa540ab9892bbc5161e3f81fcfb0ca71f44bd2e00478b5df79f899825c523f5",
+    "size": 124021
+  },
+  {
+    "name": "mingw-w64-x86_64-cc-libs",
+    "filename": "mingw-w64-x86_64-cc-libs-16.2.0-6-any.pkg.tar.zst",
+    "sha256": "0128c6f7fc227e5862351e970e52d42370c72c896db87b8413c2699c6337a13a",
+    "size": 2339
+  },
+  {
+    "name": "mingw-w64-x86_64-libgcc",
+    "filename": "mingw-w64-x86_64-libgcc-16.2.0-6-any.pkg.tar.zst",
+    "sha256": "e0815432c4225892b0eef57055fe507fa0b9a036436f046605f6629696bd1b88",
+    "size": 77153
+  },
+  {
+    "name": "mingw-w64-x86_64-libwinpthread",
+    "filename": "mingw-w64-x86_64-libwinpthread-14.0.0.r569.g34eeafb7d-1-any.pkg.tar.zst",
+    "sha256": "7774d48f1b2727f54c8148e5994a4a8e464dfa2dd5a177e630ebfd522dcbe2c0",
+    "size": 34648
+  },
+  {
+    "name": "mingw-w64-x86_64-libstdc++",
+    "filename": "mingw-w64-x86_64-libstdc++-16.2.0-6-any.pkg.tar.zst",
+    "sha256": "924b47e8c3e20b6448e29d3333acc638a4f4783c1c45230e09673532f9c4f198",
+    "size": 797366
+  },
+  {
+    "name": "mingw-w64-x86_64-tzdata",
+    "filename": "mingw-w64-x86_64-tzdata-2026e-1-any.pkg.tar.zst",
+    "sha256": "6d28805f8fb6517011cc309aa452111565afa1bc9188ad784cb5f62df98f0988",
+    "size": 225999
+  },
+  {
+    "name": "mingw-w64-x86_64-libjpeg-turbo",
+    "filename": "mingw-w64-x86_64-libjpeg-turbo-3.2.0-1-any.pkg.tar.zst",
+    "sha256": "ef3f55cf5238a8045c8f37796d730e4a5ee619d29ca9254aaa62456e5b5b7e51",
+    "size": 792181
+  },
+  {
+    "name": "mingw-w64-x86_64-libpng",
+    "filename": "mingw-w64-x86_64-libpng-1.6.59-2-any.pkg.tar.zst",
+    "sha256": "8cf4e17ed9f592d23a5d1f1f8875c6a8da42eaf7772a997908565e94131cfc20",
+    "size": 404396
+  },
+  {
+    "name": "mingw-w64-x86_64-zlib",
+    "filename": "mingw-w64-x86_64-zlib-1.3.2-3-any.pkg.tar.zst",
+    "sha256": "ffde6f4ed2d879477c93b37ff14c319baf480a2aeafc065edeceafba26b71e90",
+    "size": 110030
+  },
+  {
+    "name": "mingw-w64-x86_64-libtiff",
+    "filename": "mingw-w64-x86_64-libtiff-4.7.2-2-any.pkg.tar.zst",
+    "sha256": "e330307e569ea912f6911d6ceae994d96ac68c27b4860c1f805ce9078439786c",
+    "size": 713542
+  },
+  {
+    "name": "mingw-w64-x86_64-jbigkit",
+    "filename": "mingw-w64-x86_64-jbigkit-2.1-6-any.pkg.tar.zst",
+    "sha256": "3db9e32abca5d208920a096e5ae01952f2d8a361780428b9646b6da6750f7321",
+    "size": 107793
+  },
+  {
+    "name": "mingw-w64-x86_64-lerc",
+    "filename": "mingw-w64-x86_64-lerc-4.1.1-1-any.pkg.tar.zst",
+    "sha256": "5bc170650bc02812a7c674a5f7b8ff2781b4bfa259ab2da2264c3008e2a04c72",
+    "size": 312675
+  },
+  {
+    "name": "mingw-w64-x86_64-libdeflate",
+    "filename": "mingw-w64-x86_64-libdeflate-1.26-1-any.pkg.tar.zst",
+    "sha256": "aa0d9b5e2d0413d5e01745a48ef0c8fa293172d48c13f87b61ada627ab7407ad",
+    "size": 93177
+  },
+  {
+    "name": "mingw-w64-x86_64-libwebp",
+    "filename": "mingw-w64-x86_64-libwebp-1.6.0-1-any.pkg.tar.zst",
+    "sha256": "360b1690d41eb497dfe50526460a2424600a6a806cbb76c5b0fec9f14623ac59",
+    "size": 627180
+  },
+  {
+    "name": "mingw-w64-x86_64-xz",
+    "filename": "mingw-w64-x86_64-xz-5.8.4-1-any.pkg.tar.zst",
+    "sha256": "2de0f26da60b7ff7aa192a226330d7de6b1099cb9b9f9de4145affb80146bbc8",
+    "size": 433655
+  },
+  {
+    "name": "mingw-w64-x86_64-gettext-runtime",
+    "filename": "mingw-w64-x86_64-gettext-runtime-1.0-1-any.pkg.tar.zst",
+    "sha256": "be68d7f260633284b910c588c6d82ee304a81c8817a686d2cd9df83f872c27af",
+    "size": 427276
+  },
+  {
+    "name": "mingw-w64-x86_64-libiconv",
+    "filename": "mingw-w64-x86_64-libiconv-1.19-1-any.pkg.tar.zst",
+    "sha256": "21e334d0911f25de75d3e18e0697648bcecfa9658256d600cad0827d719c2f35",
+    "size": 745957
+  },
+  {
+    "name": "mingw-w64-x86_64-zstd",
+    "filename": "mingw-w64-x86_64-zstd-1.5.7-2-any.pkg.tar.zst",
+    "sha256": "1add6705b344664f6aca108c85f79ab5bdd9e1162662bb06a4cf40a34f6e0907",
+    "size": 669879
+  },
+  {
+    "name": "mingw-w64-x86_64-openjpeg2",
+    "filename": "mingw-w64-x86_64-openjpeg2-2.5.4-2-any.pkg.tar.zst",
+    "sha256": "32f8f5dc7df9f1f2d57157717136fbba431e15bc000420c953c00ffdf76ecde4",
+    "size": 454547
+  },
+  {
+    "name": "mingw-w64-x86_64-lcms2",
+    "filename": "mingw-w64-x86_64-lcms2-2.19.1-1-any.pkg.tar.zst",
+    "sha256": "f9858d910df27d3762590e5da75e2589f9f0216ebbf1b6d58bdddbab3d4f35ad",
+    "size": 404793
+  },
+  {
+    "name": "mingw-w64-x86_64-libatomic",
+    "filename": "mingw-w64-x86_64-libatomic-16.2.0-6-any.pkg.tar.zst",
+    "sha256": "9effb04671f51ceeb46f79362f2f221e4bf12ce1ff103bff5f84e58807581e59",
+    "size": 25641
+  },
+  {
+    "name": "mingw-w64-x86_64-libgomp",
+    "filename": "mingw-w64-x86_64-libgomp-16.2.0-6-any.pkg.tar.zst",
+    "sha256": "2c74bc80f156b9cd3111ee1e773788638b855c1d7e9c9827974f5abd5d01e70f",
+    "size": 312356
+  },
+  {
+    "name": "mingw-w64-x86_64-libquadmath",
+    "filename": "mingw-w64-x86_64-libquadmath-16.2.0-6-any.pkg.tar.zst",
+    "sha256": "4d6aca79ea4e0dcdfb67c1421dce8b064b99a8ca4076b8bfe10a03d6ba039026",
+    "size": 179377
+  }
+]

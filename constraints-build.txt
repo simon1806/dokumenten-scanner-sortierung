@@ -1,8 +1,8 @@
 # Reproduzierbare Python-Laufzeit fuer Release-Builds.
-# Aktualisierungen bewusst gemeinsam mit Tests und einem neuen Release vornehmen.
-Pillow==12.3.0
-PyMuPDF==1.28.2
-pypdf==6.19.0
+# Aktualisierungen vor einer spaeteren Release in der lokalen Umgebung pruefen.
+Pillow==13.0.0
+PyMuPDF==2.0
+pypdf==6.21.4
 pytesseract==0.3.13
 pystray==0.19.5
 zxing-cpp==3.1.1
@@ -10,10 +10,23 @@ six==1.17.0
 
 # Build- und Paketierungswerkzeuge einschliesslich relevanter Transitiver.
 PyInstaller==6.22.3
-pyinstaller-hooks-contrib==2026.7
+pyinstaller-hooks-contrib==2026.9
 altgraph==0.17.5
 packaging==26.3
 pefile==2024.8.26
 pywin32-ctypes==0.2.3
-setuptools==84.0.0
-ruff==0.16.9
+setuptools==84.2.1
+ruff==0.17.3
+pip==26.2.2
+
+# Vollstaendige transitive Abhaengigkeiten von PyMuPDF 2.0.
+flatbuffers==25.12.19
+networkx==3.7
+numpy==2.5.4
+onnxruntime==1.31.1
+protobuf==7.36.2
+psutil==7.2.2
+pymupdf4llm==2.0
+pymupdf_layout==2.0
+PyYAML==6.0.3
+tabulate==0.10.0

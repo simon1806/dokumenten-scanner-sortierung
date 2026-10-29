@@ -78,15 +78,18 @@ class BuildReleaseTests(unittest.TestCase):
         self.assertIn('"--add-data", "$InstalledRuntimeManifest;payload"', self.script)
         self.assertIn('Copy-Item -LiteralPath $MainExecutable -Destination (Join-Path $readyDirectory $portableName)', self.script)
 
-    def test_tcl_runtime_is_prepared_for_the_embedded_interpreter(self) -> None:
-        self.assertIn('$PreparedTclLibrary = Join-Path $BuildRoot "tcl8.6"', self.script)
-        self.assertIn('$exactTclRequirement = "package require -exact Tcl 8.6.12"', self.script)
-        self.assertIn('$tclInitText.Replace($exactTclRequirement, "package require Tcl 8.6")', self.script)
-        self.assertIn('"--add-data", "$PreparedTclLibrary;_tcl_data"', self.script)
+    def test_tcl_runtime_uses_the_checked_python_bundle_and_embedded_archives(self) -> None:
+        self.assertIn('$PythonVersion -ne "3.14.10"', self.script)
+        self.assertIn("'tcl90.dll'", self.script)
+        self.assertIn("'tcl9tk90.dll'", self.script)
+        self.assertNotIn("$exactTclRequirement", self.script)
+        self.assertNotIn("tcl86t.dll", self.script)
+        hook = (PROJECT_ROOT / "scripts" / "pyinstaller_tkinter_hook.py").read_text(encoding="utf-8")
+        self.assertIn("if path.is_dir():", hook)
 
     def test_release_requires_and_validates_expected_ocr_runtime(self) -> None:
         self.assertIn('[switch]$WithoutBundledTesseract', self.script)
-        self.assertIn('$ExpectedTesseractVersion = "5.5.3"', self.script)
+        self.assertIn('$ExpectedTesseractVersion = "5.5.4"', self.script)
         self.assertIn('$ExpectedLeptonicaVersion = "1.87.0"', self.script)
         self.assertIn('foreach ($language in @("deu", "eng", "osd"))', self.script)
 
@@ -131,7 +134,7 @@ class BuildReleaseTests(unittest.TestCase):
                 packages.append(stripped)
                 self.assertIn(f"{stripped} \\", lock)
         self.assertIn("PyInstaller==6.22.3", constraints)
-        self.assertIn("ruff==0.16.9", constraints)
+        self.assertIn("ruff==0.17.3", constraints)
         self.assertEqual(len(packages), lock.count("--hash=sha256:"))
         self.assertIn("$LockFile", self.script)
         self.assertIn("dependency_lock_sha256 = Get-Sha256 $LockFile", self.script)
@@ -157,8 +160,9 @@ class BuildReleaseTests(unittest.TestCase):
         self.assertIn("push:\n    branches:\n      - main", workflow)
         self.assertIn("pull_request:\n    branches:\n      - main", workflow)
         self.assertIn("workflow_dispatch:", workflow)
-        self.assertEqual(workflow.count("python -m venv .venv"), 2)
-        self.assertEqual(workflow.count('python-version: "3.12"'), 2)
+        self.assertEqual(workflow.count(r".\vendor\Python-3.14.10\python.exe -m venv .venv"), 2)
+        self.assertEqual(workflow.count('python-version: "3.14.10"'), 2)
+        self.assertEqual(workflow.count(r".\scripts\prepare-python-runtime.ps1"), 2)
         self.assertIn(r".\.venv\Scripts\python.exe -m unittest", workflow)
         self.assertIn(r".\.venv\Scripts\ruff.exe check", workflow)
         self.assertIn(r".\scripts\build-release.ps1 -Version 0.3.6", workflow)
