@@ -23,7 +23,6 @@ $WorkInstalled = Join-Path $BuildRoot "work-installed"
 $WorkOpenLauncher = Join-Path $BuildRoot "work-open-launcher"
 $WorkSetup = Join-Path $BuildRoot "work-setup"
 $SpecRoot = Join-Path $BuildRoot "spec"
-$PreparedTclLibrary = Join-Path $BuildRoot "tcl8.6"
 $ReleaseRoot = Join-Path $ProjectRoot "release"
 $VersionRelease = Join-Path $ReleaseRoot $Version
 $MainName = "DokumentenScannerSortierung"
@@ -50,7 +49,7 @@ $OpenLauncherVersionResource = Join-Path $BuildRoot "version-open-launcher.txt"
 $SetupVersionResource = Join-Path $BuildRoot "version-setup.txt"
 $ConstraintsFile = Join-Path $ProjectRoot "constraints-build.txt"
 $LockFile = Join-Path $ProjectRoot "requirements-build.lock"
-$ExpectedTesseractVersion = "5.5.3"
+$ExpectedTesseractVersion = "5.5.4"
 $ExpectedLeptonicaVersion = "1.87.0"
 
 function Assert-ProjectChildPath([string]$Path) {
@@ -492,11 +491,13 @@ Invoke-QualityGates
 
 $BasePython = Invoke-PythonCapture @("-c", "import sys; print(sys.base_prefix)") "Ermittlung der Python-Laufzeit"
 $PythonVersion = Invoke-PythonCapture @("-c", "import platform; print(platform.python_version())") "Ermittlung der Python-Version"
+if ($PythonVersion -ne "3.14.10") {
+    throw "Release-Build erwartet die gepruefte Python-Laufzeit 3.14.10, erhalten: $PythonVersion"
+}
 $PyInstallerVersion = Invoke-PythonCapture @(
     "-c",
     "import importlib.metadata; print(importlib.metadata.version('PyInstaller'))"
 ) "Ermittlung der PyInstaller-Version"
-$TclRoot = Join-Path $BasePython "tcl"
 $DllRoot = Join-Path $BasePython "DLLs"
 $TkinterPackage = Join-Path $BasePython "Lib\tkinter"
 $TkinterHook = Join-Path $PSScriptRoot "pyinstaller_tkinter_hook.py"
@@ -556,20 +557,8 @@ if ($WithoutBundledTesseract) {
 
 Reset-BuildDirectory $BuildRoot
 New-Item -ItemType Directory -Force -Path $MainDist, $InstalledDist, $OpenLauncherDist, $SetupDist, $SpecRoot | Out-Null
-[System.IO.Directory]::CreateDirectory($PreparedTclLibrary) | Out-Null
-Copy-Item -Path (Join-Path $TclRoot "tcl8.6\*") -Destination $PreparedTclLibrary -Recurse
-$preparedTclInit = Join-Path $PreparedTclLibrary "init.tcl"
-$tclInitText = [System.IO.File]::ReadAllText($preparedTclInit, [System.Text.Encoding]::UTF8)
-$exactTclRequirement = "package require -exact Tcl 8.6.12"
-if (-not $tclInitText.Contains($exactTclRequirement)) {
-    throw "Unerwartete Tcl-Initialisierung; Versionsanforderung fehlt: $preparedTclInit"
-}
-$tclInitText = $tclInitText.Replace($exactTclRequirement, "package require Tcl 8.6")
-[System.IO.File]::WriteAllText(
-    $preparedTclInit,
-    $tclInitText,
-    [System.Text.UTF8Encoding]::new($false)
-)
+# Python 3.14.10 ships Tcl/Tk 9.0.4 with DLL-embedded script archives.
+# PyInstaller's tkinter hook handles these archives without patched init.tcl files.
 [System.IO.File]::WriteAllText($VersionPayload, "$Version`n", [System.Text.UTF8Encoding]::new($false))
 
 $displayName = Get-PythonStringConstant $ProductSource "DISPLAY_NAME"
@@ -589,14 +578,14 @@ $mainArguments = @(
     "--icon", $AppIcon,
     "--version-file", $MainVersionResource,
     "--paths", (Join-Path $ProjectRoot "src"),
-    "--hidden-import", "fitz",
+    "--hidden-import", "pymupdf",
     "--hidden-import", "zxingcpp",
     "--hidden-import", "pytesseract",
     "--hidden-import", "pystray",
     "--hidden-import", "pystray._win32",
     "--hidden-import", "tkinter",
     "--hidden-import", "_tkinter",
-    "--collect-all", "fitz",
+    "--collect-all", "pymupdf",
     "--collect-all", "zxingcpp",
     "--collect-all", "pystray",
     "--copy-metadata", "Pillow",
@@ -606,11 +595,9 @@ $mainArguments = @(
     "--copy-metadata", "pystray",
     "--copy-metadata", "zxing-cpp",
     "--add-binary", "$(Join-Path $DllRoot '_tkinter.pyd');.",
-    "--add-binary", "$(Join-Path $DllRoot 'tcl86t.dll');.",
-    "--add-binary", "$(Join-Path $DllRoot 'tk86t.dll');.",
+    "--add-binary", "$(Join-Path $DllRoot 'tcl90.dll');.",
+    "--add-binary", "$(Join-Path $DllRoot 'tcl9tk90.dll');.",
     "--add-data", "$TkinterPackage;tkinter",
-    "--add-data", "$PreparedTclLibrary;_tcl_data",
-    "--add-data", "$(Join-Path $TclRoot 'tk8.6');_tk_data",
     "--add-data", "$IconAssets;scanner_sorter/assets/icons/tabler",
     "--add-data", "$AppAssets;scanner_sorter/assets/app"
 )

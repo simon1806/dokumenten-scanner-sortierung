@@ -42,7 +42,9 @@ SIGNED_OFFER_INK_ABOVE_LINE = (0.065, 0.004)
 SIGNED_OFFER_MIN_LINE_DARK_RATIO = 0.18
 SIGNED_OFFER_MIN_INK_RATIO = 0.003
 SCANNER_TIMESTAMP = re.compile(r"(?<!\d)(\d{2})(\d{2})(\d{2})\d{4,6}(?!\d)")
-NEUMA_ORDER = r"(?:I|1|\|)\s*[-–—]\s*(20\d{2})\s*[-–—]\s*(\d{6})"
+# Fax OCR can split the four-digit year or read a printed dash as a tilde.
+# Keep the 20xx year and six-digit sequence mandatory; only NEUMA uses this pattern.
+NEUMA_ORDER = r"(?:I|1|\|)\s*[-–—~]\s*(2\s*0\s*\d\s*\d)\s*[-–—~]\s*(\d{6})"
 ZEIDLER_EXECUTION_SIGNAL = "AUSFUHRUNGSBESTATIGUNG"
 ZEIDLER_FAX_DIGITS = "03420238724"
 SUPPORTED_DOCUMENT_SIGNALS = (
@@ -372,7 +374,7 @@ def detect_document_from_text(
 
     if is_assignment_declaration(normalised):
         match = re.search(
-            rf"AUF?T{{1,2}}RAG\s*/\s*ANGEBOT\s*(?:NR\.?\s*)?(?::\s*)?{ASSIGNMENT_NUMBER}",
+            rf"\b(?:AUF?T{{1,2}}RAG|AUFIRAG)\s*/\s*ANGEBOT\s*(?:NR\.?\s*)?(?::\s*)?{ASSIGNMENT_NUMBER}\b",
             normalised,
         )
         if match:
@@ -382,6 +384,7 @@ def detect_document_from_text(
         match = re.search(rf"\bAUFTRAG\s+{NEUMA_ORDER}\b", normalised)
         if match:
             year, sequence = match.groups()
+            year = year.replace(" ", "")
             return DetectedDocument("EM", f"I-{year}-{sequence}", "NEUMA")
 
     if is_zeidler_execution_confirmation(normalised):

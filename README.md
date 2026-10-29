@@ -159,6 +159,8 @@ Die freigegebene Version 0.3.6 verwendet Tesseract OCR 5.5.3, PyMuPDF 1.28.2, py
 
 ## Mitgelieferte OCR-Komponenten
 
+Der Entwicklungsstand verwendet **Python 3.14.10 mit Tcl/Tk 9.0.4**, **Tesseract OCR 5.5.4** mit Leptonica 1.87.0, **PyMuPDF 2.0**, **pypdf 6.21.4** und **Pillow 13.0.0**. Die aktuellen nativen Bildbibliotheken sind in `scripts/tesseract-runtime.lock.json` festgelegt. Dafür wurde noch keine neue Anwendungsrelease erstellt; vorhandene Installationen und Release-Dateien verwenden weiterhin ihre bisherige Laufzeit.
+
 Die aktuelle Freigabe 0.3.6 enthält:
 
 - Tesseract OCR 5.5.3
@@ -219,10 +221,11 @@ SHA-256-Prüfsummen erkennen beschädigte Release-Dateien, ersetzen aber keine H
 
 ## Entwicklung, Tests und Release-Build
 
-Voraussetzung ist Python 3.12 auf Windows x64. Die Build-Abhängigkeiten sind in `constraints-build.txt` exakt fixiert; `requirements-build.lock` bindet zusätzlich die geprüften Windows-Wheels an SHA-256-Hashes.
+Die geprüfte Umgebung ist Python 3.14.10 auf Windows x64 mit dem zugehörigen Tcl/Tk 9.0.4. Das Vorbereitungsskript entpackt das vollständige offizielle Python-ZIP anhand der veröffentlichten SHA-256-Prüfsumme ausschließlich nach `vendor/Python-3.14.10`; es verändert keine globale Python-Installation. Die 26 direkten und transitiven Pakete sind in `constraints-build.txt` exakt fixiert; `requirements-build.lock` bindet zusätzlich die geprüften Windows-Wheels an SHA-256-Hashes. ONNX Runtime 1.31.1 bietet noch keine Windows-Wheels für Python 3.15, daher wird dessen Einführung nicht mit diesem Update vermischt.
 
 ```powershell
-py -3.12 -m venv .venv
+.\scripts\prepare-python-runtime.ps1
+.\vendor\Python-3.14.10\python.exe -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --require-hashes --only-binary=:all: --requirement requirements-build.lock
 .\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation --editable .
 .\.venv\Scripts\python.exe -m pip check
@@ -236,6 +239,12 @@ Nach Abschluss der gesammelten Änderungen das OCR-Paket vorbereiten und den nä
 .\scripts\prepare-tesseract-vendor.ps1
 .\scripts\build-release.ps1 -Version 0.3.6
 ```
+
+Die OCR-Vorbereitung baut ausschließlich Tesseract 5.5.4 aus dem per SHA-256 festgelegten offiziellen Quellarchiv, solange noch kein entsprechendes MSYS2-Windows-Paket verfügbar ist. GCC 16.2.0, CMake, Ninja und ihre Abhängigkeiten werden anhand von `scripts/tesseract-build-tools.lock.json` geprüft und ausschließlich unter `.artifacts/tesseract-5.5.4-update` entpackt. Compiler und Buildwerkzeuge werden nicht in die Anwendung übernommen. Der getrennte Laufzeitsatz aus `scripts/tesseract-runtime.lock.json` enthält Leptonica 1.87.0 (Paketrevision 2), libpng 1.6.59, libtiff 4.7.2, libwebp 1.6.0, libjpeg-turbo 3.2.0, OpenJPEG 2.5.4, zlib 1.3.2 sowie ihre Abhängigkeiten und Lizenztexte. Downloads bleiben für weitere Aufrufe zwischengespeichert. `OCR-BUILD-MANIFEST.json` dokumentiert Quellhash, Werkzeug- und Laufzeitlisten, Compiler und Optionen.
+
+Die Laufzeit behält OpenMP und die Sprachmodelle `deu`, `eng` und `osd`. Hostabhängige CPU-Optimierung bleibt ausgeschaltet. Die zusätzlichen Tesseract-Eingabepfade für URLs, Archive und direkte mehrseitige TIFF-Verarbeitung sind ausgeschaltet; der Scanner übergibt weiterhin lokal gerenderte PNG-Bilder an OCR. Leptonica behält seine Bildformatunterstützung. Vor dem Austausch prüft das Skript einen vollständigen Kandidaten ohne Compiler auf `PATH` und sichert den bisherigen Vendorordner unter `.artifacts/tesseract-backups`.
+
+PyMuPDF 2.0 bringt zusätzliche Layout-/LLM-Paketmetadaten und Abhängigkeiten wie NumPy und ONNX Runtime mit. Diese sind vollständig in der Hash-Lockdatei erfasst; der Scanner nutzt weiterhin seine bestehende PDF-Verarbeitung. Die Buildvorbereitung berücksichtigt die in den Tcl/Tk-9-DLLs eingebetteten Skriptarchive. Das Infofenster zeigt die vollständigen Tcl-/Tk-Patchversionen, beispielsweise `9.0.4 / 9.0.4`.
 
 Der Build bricht bei Tests, Versionsabweichungen, fehlenden Sprachmodellen, falscher Tesseract-/Leptonica-Version, inkonsistenten Python-Paketen oder fehlenden Artefakten ab. Alte Release-Ordner bleiben erhalten. Optional können Anwendung und Setup mit einem vorhandenen Authenticode-Zertifikat signiert werden; ohne Zertifikat weist das Release-Manifest `signed: false` aus.
 

@@ -9,5 +9,9 @@ from pathlib import Path
 
 if getattr(sys, "frozen", False):
     bundle = Path(sys._MEIPASS)
-    os.environ.setdefault("TCL_LIBRARY", str(bundle / "_tcl_data"))
-    os.environ.setdefault("TK_LIBRARY", str(bundle / "_tk_data"))
+    # Tcl/Tk 9 can load its scripts from DLL-embedded zipfs archives.
+    # Only override paths when PyInstaller collected external script directories.
+    for variable, directory in (("TCL_LIBRARY", "_tcl_data"), ("TK_LIBRARY", "_tk_data")):
+        path = bundle / directory
+        if path.is_dir():
+            os.environ.setdefault(variable, str(path))

@@ -27,6 +27,7 @@ from scanner_sorter.app import (
     release_single_instance,
     request_server_task_action,
     run_headless,
+    run_self_test,
     server_autostart_task_exists,
     server_autostart_task_running,
     server_settings_path,
@@ -879,6 +880,20 @@ class AppTests(unittest.TestCase):
         self.assertEqual(0, result)
         self_test.assert_called_once_with()
         acquire.assert_not_called()
+
+    def test_runtime_self_test_accepts_updated_ocr_and_rejects_previous_version(self) -> None:
+        for version, expected in (("5.5.4", 0), ("5.5.3", 4)):
+            with (
+                self.subTest(version=version),
+                patch("scanner_sorter.app.find_tesseract_executable", return_value=Path("tesseract.exe")),
+                patch("scanner_sorter.app.subprocess.run", side_effect=[
+                    SimpleNamespace(returncode=0, stdout=f"tesseract {version}\n leptonica-1.87.0", stderr=""),
+                    SimpleNamespace(returncode=0, stdout="deu\neng\nosd\n", stderr=""),
+                ]),
+                patch("scanner_sorter.app.logging.exception"),
+                redirect_stderr(StringIO()),
+            ):
+                self.assertEqual(expected, run_self_test())
 
     def test_self_test_writes_result_marker_for_packaged_build_check(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
