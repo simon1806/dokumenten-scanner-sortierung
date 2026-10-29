@@ -5,7 +5,7 @@
 Die Windows-Anwendung enthaelt die Python-Laufzeit, Tcl/Tk sowie den
 PyInstaller-Bootloader.
 
-Die vorbereitete Entwicklungs- und Buildlaufzeit verwendet Python 3.14.10 mit Tcl/Tk 9.0.4 aus dem offiziellen Windows-ZIP. Eine neue Anwendungsrelease wurde noch nicht erstellt.
+Version 0.4.0 verwendet Python 3.14.10 mit Tcl/Tk 9.0.4 aus dem offiziellen Windows-ZIP.
 
 - Python: Python Software Foundation License 2.0
 - Tcl/Tk: Tcl/Tk License
@@ -41,7 +41,7 @@ eingehalten wird. Weitere Informationen: https://pymupdf.readthedocs.io/en/lates
 
 ## Tesseract OCR
 
-Die vorbereitete OCR-Laufzeit verwendet Tesseract OCR `5.5.4` mit Leptonica `1.87.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd`. Die bestehende Freigabe 0.3.6 enthaelt weiterhin Tesseract 5.5.3; das Update wird erst mit einer spaeteren Anwendungsrelease verteilt.
+Version 0.4.0 verwendet Tesseract OCR `5.5.4` mit Leptonica `1.87.0`, OpenMP-Unterstuetzung und den Sprachmodellen `deu`, `eng` und `osd`. Die vorherige Freigabe 0.3.6 enthaelt Tesseract 5.5.3.
 
 - Tesseract OCR: Apache License 2.0
 - Leptonica: BSD 2-Clause License
