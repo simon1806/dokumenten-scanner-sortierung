@@ -1297,37 +1297,71 @@ def create_or_update_server_autostart(target: Path, settings_path: Path) -> None
     arguments = f'--run --settings "{settings_path}"'
     script = (
         "$ErrorActionPreference = 'Stop'; "
-        f"$action = New-ScheduledTaskAction -Execute {powershell_quote(str(target))} "
-        f"-Argument {powershell_quote(arguments)} -WorkingDirectory {powershell_quote(str(target.parent))}; "
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+        "try { "
+        f"$taskName = {powershell_quote(SERVER_AUTOSTART_TASK_NAME)}; "
+        f"$execute = {powershell_quote(str(target))}; "
+        f"$arguments = {powershell_quote(arguments)}; "
+        f"$workingDirectory = {powershell_quote(str(target.parent))}; "
+        "$action = New-ScheduledTaskAction -Execute $execute "
+        "-Argument $arguments -WorkingDirectory $workingDirectory; "
         "$trigger = New-ScheduledTaskTrigger -AtStartup; $trigger.Delay = 'PT30S'; "
+        "$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' "
+        "-LogonType ServiceAccount -RunLevel Highest; "
         "$settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -StartWhenAvailable "
         "-RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) "
         "-ExecutionTimeLimit (New-TimeSpan -Seconds 0); "
-        f"Register-ScheduledTask -TaskName {powershell_quote(SERVER_AUTOSTART_TASK_NAME)} "
-        "-Action $action -Trigger $trigger -Settings $settings -User 'SYSTEM' -RunLevel Highest -Force | Out-Null"
+        "Register-ScheduledTask -TaskName $taskName -TaskPath '\\' "
+        "-Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force | Out-Null; "
+        "$registered = Get-ScheduledTask -TaskName $taskName -TaskPath '\\'; "
+        "$bootTriggers = @($registered.Triggers | Where-Object { "
+        "$_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' -and $_.Enabled "
+        "-and $_.Delay -eq 'PT30S' }); "
+        "if ($registered.State -eq 'Unknown' -or -not $registered.Settings.Enabled "
+        "-or $bootTriggers.Count -ne 1 -or $registered.Triggers.Count -ne 1 "
+        "-or $registered.Principal.UserId -notin @('SYSTEM', 'NT AUTHORITY\\SYSTEM', 'S-1-5-18') "
+        "-or $registered.Principal.LogonType -ne 'ServiceAccount' "
+        "-or $registered.Actions.Count -ne 1 -or $registered.Actions[0].Execute -ne $execute "
+        "-or $registered.Actions[0].Arguments -ne $arguments "
+        "-or $registered.Actions[0].WorkingDirectory -ne $workingDirectory) { "
+        "throw 'Die gespeicherte SYSTEM-Aufgabe oder ihr Systemstart-Trigger ist nicht verwendbar.' }; "
+        "Write-Output 'SERVER_AUTOSTART_VERIFIED' "
+        "} catch { "
+        "[Console]::Error.WriteLine(('HRESULT: 0x{0:X8}' -f $_.Exception.HResult)); "
+        "[Console]::Error.WriteLine(($_ | Format-List * -Force | Out-String -Width 4096)); exit 1 }"
     )
-    result = subprocess.run(
-        [
-            "powershell.exe",
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script,
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    if result.returncode != 0:
-        details = (result.stderr or result.stdout or "unbekannter Fehler").strip()
-        raise RuntimeError(
-            "Die SYSTEM-Startaufgabe konnte nicht eingerichtet werden. "
-            "Starten Sie das Setup als Administrator erneut. "
-            f"Technische Details: {details}"
+    try:
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
+        details = "\n".join(part.strip() for part in (result.stderr, result.stdout) if part and part.strip())
+        if result.returncode == 0 and "SERVER_AUTOSTART_VERIFIED" in result.stdout.splitlines():
+            return
+        if result.returncode == 0:
+            details = "Windows lieferte keine bestaetigte Aufgabendefinition.\n" + details
+    except (OSError, subprocess.TimeoutExpired) as error:
+        details = f"Aufgabenregistrierung konnte nicht abgeschlossen werden: {error}"
+
+    log_path = target.parent / "setup-server-autostart-error.log"
+    try:
+        log_path.write_text(f"{datetime.now().astimezone().isoformat()}\n{details}\n", encoding="utf-8")
+        log_hint = f"Vollstaendige technische Details: {log_path}"
+    except OSError:
+        log_hint = f"Technische Details (Logdatei konnte nicht geschrieben werden): {details}"
+    if re.search(r"800700b7|2147942583", details, re.IGNORECASE):
+        reason = "Windows meldet einen Konflikt mit einem bereits vorhandenen Aufgabenobjekt (0x800700B7)."
+    elif re.search(r"80070005|80041003", details, re.IGNORECASE):
+        reason = "Windows verweigert den Zugriff. Administratorrechte und lokale Sicherheitsmeldungen pruefen."
+    else:
+        reason = "Die Windows-Aufgabenregistrierung oder ihre anschliessende Pruefung ist fehlgeschlagen."
+    raise RuntimeError(f"SYSTEM-Serverautostart nicht bestaetigt. {reason}\n{log_hint}")
 
 
 def remove_startup_shortcut() -> None:
