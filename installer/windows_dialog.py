@@ -374,6 +374,8 @@ def show_completion(
     start_application: bool = True,
     previous_dialog: ProgressDialog | None = None,
 ) -> bool:
+    # Native multiline edit controls need CRLF rather than bare LF.
+    content = content.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
     checked = "$true" if start_application else "$false"
     script = (
         "Add-Type -AssemblyName System.Windows.Forms; "
@@ -393,17 +395,26 @@ def show_completion(
         "$titleLabel.ForeColor = [System.Drawing.Color]::White; "
         "$titleLabel.Font = New-Object System.Drawing.Font('Segoe UI Semibold',14); "
         f"$titleLabel.Text = {powershell_quote(instruction)}; $header.Controls.Add($titleLabel); "
-        "$contentLabel = New-Object System.Windows.Forms.Label; $contentLabel.AutoSize = $false; "
-        "$contentLabel.Location = New-Object System.Drawing.Point(24,91); "
-        "$contentLabel.Size = New-Object System.Drawing.Size(710,220); "
-        "$contentLabel.Font = New-Object System.Drawing.Font('Segoe UI',9); "
-        f"$contentLabel.Text = {powershell_quote(content)}; $form.Controls.Add($contentLabel); "
+        "$contentBox = New-Object System.Windows.Forms.TextBox; "
+        "$contentBox.Multiline = $true; $contentBox.ReadOnly = $true; "
+        "$contentBox.WordWrap = $true; $contentBox.ScrollBars = 'Vertical'; "
+        "$contentBox.TabIndex = 0; $contentBox.HideSelection = $false; "
+        "$contentBox.Location = New-Object System.Drawing.Point(24,91); "
+        "$contentBox.Size = New-Object System.Drawing.Size(710,220); "
+        "$contentBox.Font = New-Object System.Drawing.Font('Segoe UI',9); "
+        f"$contentBox.Text = {powershell_quote(content)}; $form.Controls.Add($contentBox); "
         "$launch = New-Object System.Windows.Forms.CheckBox; "
         "$launch.Location = New-Object System.Drawing.Point(24,328); "
         "$launch.Size = New-Object System.Drawing.Size(250,28); "
         "$launch.Font = New-Object System.Drawing.Font('Segoe UI',9); "
         "$launch.Text = 'Anwendung starten'; "
         f"$launch.Checked = {checked}; $form.Controls.Add($launch); "
+        "$copy = New-Object System.Windows.Forms.Button; "
+        "$copy.Location = New-Object System.Drawing.Point(550,328); "
+        "$copy.Size = New-Object System.Drawing.Size(180,28); "
+        "$copy.Text = 'Details kopieren'; "
+        "$copy.Add_Click({ [System.Windows.Forms.Clipboard]::SetText($contentBox.Text) }); "
+        "$form.Controls.Add($copy); "
         "$finish = New-Object System.Windows.Forms.Button; "
         "$finish.Location = New-Object System.Drawing.Point(550,375); "
         "$finish.Size = New-Object System.Drawing.Size(180,36); "

@@ -1729,6 +1729,8 @@ def completion_text(
     version: str,
     installed_version: str | None,
     target: Path,
+    *,
+    server_autostart_confirmed: bool | None = None,
 ) -> tuple[str, str, str]:
     action = _normalise_action(action)
     if action in {INSTALL_ACTION_UPDATE, INSTALL_ACTION_REPAIR, INSTALL_ACTION_DOWNGRADE}:
@@ -1748,16 +1750,17 @@ def completion_text(
         }
         title, instruction, transition_label = labels[action]
         return (
-            title,
-            instruction,
+            title if server_autostart_confirmed is not False else "Serverautostart prüfen",
+            instruction if server_autostart_confirmed is not False else "Anwendung installiert – Serverautostart nicht bestätigt",
             f"Installierte Version: {current_version}\n"
             f"Neue Version: {version}\n"
             f"{transition_label}: {current_version} → {version}\n\n"
             f"Installationsordner:\n{target.parent}",
         )
     return (
-        "Installation abgeschlossen",
-        "Installation erfolgreich abgeschlossen",
+        "Installation abgeschlossen" if server_autostart_confirmed is not False else "Serverautostart prüfen",
+        "Installation erfolgreich abgeschlossen" if server_autostart_confirmed is not False
+        else "Anwendung installiert – Serverautostart nicht bestätigt",
         f"Installierte Version: {version}\n\n"
         f"Installationsordner:\n{target.parent}\n"
         "Eine Verknüpfung wurde auf dem Desktop erstellt.",
@@ -2048,7 +2051,9 @@ def run_installation() -> int:
             f"Version {version} wurde erfolgreich installiert.",
         )
     else:
-        title, instruction, content = completion_text(action, version, installed_version, target)
+        title, instruction, content = completion_text(
+            action, version, installed_version, target, server_autostart_confirmed=not bool(server_autostart_warning)
+        )
         if selection.configure_server_autostart:
             if server_autostart_warning:
                 content += (

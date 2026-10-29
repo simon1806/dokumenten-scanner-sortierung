@@ -622,6 +622,32 @@ class InstallerTests(unittest.TestCase):
         self.assertIn("Size(760,430)", script)
         self.assertIn("Size(710,220)", script)
 
+    def test_partial_installation_has_a_clear_server_warning_heading(self) -> None:
+        for action in (installer.INSTALL_ACTION_INSTALL, installer.INSTALL_ACTION_UPDATE,
+                       installer.INSTALL_ACTION_REPAIR, installer.INSTALL_ACTION_DOWNGRADE):
+            with self.subTest(action=action):
+                title, instruction, content = installer.completion_text(
+                    action, "0.4.1", "0.4.0", Path("Scanner.exe"), server_autostart_confirmed=False
+                )
+                self.assertEqual("Serverautostart prüfen", title)
+                self.assertIn("nicht bestätigt", instruction)
+                self.assertNotIn("erfolgreich", instruction)
+                self.assertIn("0.4.1", content)
+
+    @patch("installer.windows_dialog.subprocess.run")
+    def test_long_completion_details_are_selectable_scrollable_and_copyable(self, run: Mock) -> None:
+        run.return_value = SimpleNamespace(returncode=2)
+        details = "Fehlerdetails: " + ("Sehr lange Fehlerzeile mit Umlauten äöü\n" * 100) + "ENDE-DER-DETAILS"
+        windows_dialog.show_completion("Warnung", "Serverautostart prüfen", details, Path("app.ico"))
+        script = run.call_args.args[0][-1]
+        self.assertIn(details.replace("\n", "\r\n"), script)
+        self.assertIn("System.Windows.Forms.TextBox", script)
+        self.assertIn("$contentBox.ReadOnly = $true", script)
+        self.assertIn("$contentBox.Multiline = $true", script)
+        self.assertIn("$contentBox.ScrollBars = 'Vertical'", script)
+        self.assertIn("Details kopieren", script)
+        self.assertIn("Clipboard]::SetText($contentBox.Text)", script)
+
     @patch("installer.windows_dialog.subprocess.Popen")
     def test_installation_progress_dialog_is_modeless_and_cannot_be_closed(self, popen: Mock) -> None:
         process = Mock()
