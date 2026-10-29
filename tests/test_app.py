@@ -78,7 +78,7 @@ class AppTests(unittest.TestCase):
         self.assertIn("schema=2", start_message)
         self.assertIn("ereignis=application_started", start_message)
         self.assertRegex(start_message, r"sitzung=[0-9a-f]{32}")
-        self.assertIn("version=0.4.1", start_message)
+        self.assertIn("version=0.4.2", start_message)
         self.assertIn("modus=SYSTEM/Headless", start_message)
 
     def test_access_denied_mutex_is_recognized_as_cross_session_monitor(self) -> None:
@@ -93,7 +93,18 @@ class AppTests(unittest.TestCase):
         self.assertTrue(exists)
         command = runner.call_args.args[0]
         self.assertIn("/Query", command)
-        self.assertIn("GlasHagen Dokumenten-Scanner-Sortierung", command)
+        self.assertIn("GlasHagen DokumentenScannerSortierung Server", command)
+
+    def test_legacy_task_is_detected_when_current_identity_is_absent(self) -> None:
+        runner = Mock(side_effect=[SimpleNamespace(returncode=1), SimpleNamespace(returncode=0)])
+        self.assertTrue(server_autostart_task_exists(platform_name="nt", runner=runner))
+        self.assertEqual("GlasHagen Dokumenten-Scanner-Sortierung", runner.call_args.args[0][-1])
+
+    def test_start_control_uses_the_detected_legacy_identity(self) -> None:
+        shell = Mock(return_value=33)
+        with patch("scanner_sorter.app.find_server_autostart_task_name", return_value="GlasHagen Dokumenten-Scanner-Sortierung"):
+            request_server_task_action("start", platform_name="nt", shell_execute=shell)
+        self.assertIn('/Run /TN "GlasHagen Dokumenten-Scanner-Sortierung"', shell.call_args.args[3])
 
     def test_server_task_control_requests_elevation_for_stop(self) -> None:
         shell_execute = Mock(return_value=33)

@@ -57,9 +57,9 @@ class UninstallerTests(unittest.TestCase):
         self.assertIn("$RegistryPath", script)
         self.assertIn("Remove-Item -LiteralPath $installedFile -Force -ErrorAction Stop", script)
         self.assertIn('$VersionFilename = "version.txt"', script)
-        self.assertIn('$ServerAutostartTaskName = "GlasHagen Dokumenten-Scanner-Sortierung"', script)
-        self.assertIn("Get-ScheduledTask -TaskName $ServerAutostartTaskName", script)
-        self.assertIn("Unregister-ScheduledTask -TaskName $ServerAutostartTaskName", script)
+        self.assertIn('$ServerAutostartTaskNames = @("GlasHagen DokumentenScannerSortierung Server", "GlasHagen Dokumenten-Scanner-Sortierung")', script)
+        self.assertIn("foreach ($taskName in $ServerAutostartTaskNames)", script)
+        self.assertIn("$taskFolder.DeleteTask($taskName, 0)", script)
 
     def test_windows_uninstall_command_uses_hidden_powershell_script(self) -> None:
         self.assertTrue(product.UNINSTALLER_FILENAME.endswith(".ps1"))

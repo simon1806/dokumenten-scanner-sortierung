@@ -13,7 +13,7 @@ $VersionFilename = "version.txt"
 $RuntimeManifestFilename = "runtime-files.json"
 $LegacyUninstallerFilename = "DokumentenScannerSortierung-Deinstallieren.exe"
 $ShortcutFilename = "Dokumenten-Scanner-Sortierung.lnk"
-$ServerAutostartTaskName = "GlasHagen Dokumenten-Scanner-Sortierung"
+$ServerAutostartTaskNames = @("GlasHagen DokumentenScannerSortierung Server", "GlasHagen Dokumenten-Scanner-Sortierung")
 $RegistryPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\DokumentenScannerSortierung"
 $ExpectedFolder = Join-Path $env:LOCALAPPDATA "Programs\$ApplicationFolder"
 $InstallFolder = $PSScriptRoot
@@ -199,14 +199,20 @@ try {
     $startup = [Environment]::GetFolderPath("Startup")
     Remove-Item -LiteralPath (Join-Path $startup $ShortcutFilename) -Force -ErrorAction SilentlyContinue
     try {
-        $serverTask = Get-ScheduledTask -TaskName $ServerAutostartTaskName -ErrorAction SilentlyContinue
-        if ($serverTask) {
-            Unregister-ScheduledTask -TaskName $ServerAutostartTaskName -Confirm:$false -ErrorAction Stop
+        $scheduler = New-Object -ComObject Schedule.Service
+        $scheduler.Connect()
+        $taskFolder = $scheduler.GetFolder('\')
+        foreach ($taskName in $ServerAutostartTaskNames) {
+            try {
+                $taskFolder.DeleteTask($taskName, 0)
+            } catch {
+                $cause = $_.Exception
+                while ($cause.InnerException) { $cause = $cause.InnerException }
+                if ($cause.HResult -ne -2147024894) { throw }
+            }
         }
     } catch {
-        # Die Aufgabe ist optional. Ohne Administratorrechte darf die reguläre
-        # Benutzer-Deinstallation trotzdem die eigenen Programmdateien entfernen.
-        $serverAutostartWarning = "Die optionale Serverstartaufgabe konnte nicht entfernt werden. Starten Sie die Deinstallation bei Bedarf als Administrator."
+        $serverAutostartWarning = "Eine Serverstartaufgabe konnte nicht entfernt werden. Starten Sie die Deinstallation bei Bedarf als Administrator."
     }
     Remove-Item -LiteralPath $RegistryPath -Force -ErrorAction SilentlyContinue
 } catch [System.UnauthorizedAccessException] {
