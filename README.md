@@ -201,7 +201,7 @@ Falls die Aufgabe ausnahmsweise manuell in der Windows-Aufgabenplanung eingerich
 - Bei bereits laufender Aufgabe: **Keine neue Instanz starten**
 - Bei Fehlern: Neustart nach einer kurzen Wartezeit aktivieren
 
-Die automatisch erstellte Aufgabe heißt `GlasHagen Dokumenten-Scanner-Sortierung`, läuft als `SYSTEM`, startet nach 30 Sekunden und verwendet die zentrale Einstellungsdatei. Bei der Deinstallation wird sie entfernt, sofern die Deinstallation mit Administratorrechten ausgeführt wird.
+Die ab Version 0.4.2 erstellte Aufgabe heißt `GlasHagen DokumentenScannerSortierung Server`, läuft als `SYSTEM`, startet nach 30 Sekunden und verwendet die zentrale Einstellungsdatei. Der Installer bestätigt zuerst die neue Aufgabe, sichert eine vorhandene alte Aufgabe `GlasHagen Dokumenten-Scanner-Sortierung` im Installationsordner als `setup-server-task-legacy.xml` und entfernt danach den alten Eintrag. Bestehende Installationen mit alter Kennung bleiben in der Oberfläche steuerbar. Bei der Deinstallation werden beide bekannten Kennungen entfernt, sofern die Deinstallation mit Administratorrechten ausgeführt wird. Ein tatsächlicher Start unter SYSTEM und ein Neustarttest auf dem Server sind zusätzlich zu prüfen.
 
 Wird die normale Benutzeroberfläche geöffnet, während diese SYSTEM-Aufgabe den Eingangsordner bereits überwacht, zeigt sie **Serverüberwachung aktiv** an und startet keine zweite Verarbeitung. **Überwachung starten** und **Überwachung beenden** steuern in diesem Betriebsmodus die SYSTEM-Aufgabe; Windows fordert dafür bei Bedarf eine administrative Bestätigung an. Beim Beenden schreibt die Oberfläche ein privilegiertes Stoppsignal. Der SYSTEM-Worker startet danach keinen neuen Scan, schließt einen bereits laufenden Vorgang sicher ab und beendet sich selbst. Das manuelle Archivleeren wird erst nach dem bestätigten Stopp wieder freigegeben.
 
@@ -239,7 +239,7 @@ Nach Abschluss der gesammelten Änderungen das OCR-Paket vorbereiten und den nä
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.4.1
+.\scripts\build-release.ps1 -Version 0.4.2
 ```
 
 Die OCR-Vorbereitung baut ausschließlich Tesseract 5.5.4 aus dem per SHA-256 festgelegten offiziellen Quellarchiv, solange noch kein entsprechendes MSYS2-Windows-Paket verfügbar ist. GCC 16.2.0, CMake, Ninja und ihre Abhängigkeiten werden anhand von `scripts/tesseract-build-tools.lock.json` geprüft und ausschließlich unter `.artifacts/tesseract-5.5.4-update` entpackt. Compiler und Buildwerkzeuge werden nicht in die Anwendung übernommen. Der getrennte Laufzeitsatz aus `scripts/tesseract-runtime.lock.json` enthält Leptonica 1.87.0 (Paketrevision 2), libpng 1.6.59, libtiff 4.7.2, libwebp 1.6.0, libjpeg-turbo 3.2.0, OpenJPEG 2.5.4, zlib 1.3.2 sowie ihre Abhängigkeiten und Lizenztexte. Downloads bleiben für weitere Aufrufe zwischengespeichert. `OCR-BUILD-MANIFEST.json` dokumentiert Quellhash, Werkzeug- und Laufzeitlisten, Compiler und Optionen.

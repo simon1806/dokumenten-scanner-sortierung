@@ -3,6 +3,7 @@ from __future__ import annotations
 import ctypes
 import os
 import subprocess
+import time
 from uuid import uuid4
 import hashlib
 import json
@@ -483,14 +484,67 @@ class InstallerTests(unittest.TestCase):
         if not ctypes.windll.shell32.IsUserAnAdmin():
             self.skipTest("SYSTEM-Testaufgabe erfordert Windows-Administratorrechte")
         task_name = "GlasHagen-Installer-Test-" + uuid4().hex
+        legacy_name = "GlasHagen-Legacy-Test-" + uuid4().hex
         original_run = subprocess.run
-        target = Path(os.environ["WINDIR"]) / "System32" / "whoami.exe"
-        with TemporaryDirectory() as directory, patch.object(installer, "SERVER_AUTOSTART_TASK_NAME", task_name):
-            settings = Path(directory) / "settings.json"
+        with TemporaryDirectory() as directory, patch.object(installer, "SERVER_AUTOSTART_TASK_NAME", task_name), \
+                patch.object(installer, "LEGACY_SERVER_AUTOSTART_TASK_NAME", legacy_name):
+            root = Path(directory)
+            target = root / "test.exe"
+            shutil.copy2(Path(os.environ["WINDIR"]) / "System32" / "whoami.exe", target)
+            settings = root / "settings.json"
+
+            def create_legacy() -> None:
+                script = (
+                    "$ErrorActionPreference='Stop'; "
+                    f"$action=New-ScheduledTaskAction -Execute {windows_dialog.powershell_quote(str(target))}; "
+                    "$principal=New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount; "
+                    "$settings=New-ScheduledTaskSettingsSet -Disable; "
+                    f"Register-ScheduledTask -TaskName '{legacy_name}' -Action $action "
+                    "-Principal $principal -Settings $settings -Trigger (New-ScheduledTaskTrigger -AtStartup) | Out-Null"
+                )
+                result = original_run(["powershell.exe", "-NoProfile", "-Command", script],
+                                      capture_output=True, text=True, timeout=30)
+                self.assertEqual(0, result.returncode, result.stderr)
+
             try:
-                # No task is started. The unique boot task points only to whoami.exe.
+                from scanner_sorter import app
+
+                create_legacy()
+                with patch.object(app, "SERVER_AUTOSTART_TASK_NAME", task_name), \
+                        patch.object(app, "LEGACY_SERVER_AUTOSTART_TASK_NAME", legacy_name):
+                    self.assertEqual(legacy_name, app.find_server_autostart_task_name())
+                    self.assertIs(False, app.server_autostart_task_running())
+                # The production migration must verify the new task before retiring the old one.
                 installer.create_or_update_server_autostart(target, settings)
+                self.assertIn(legacy_name, (root / "setup-server-task-legacy.xml").read_text(encoding="utf-16"))
+                query = original_run(["schtasks.exe", "/Query", "/TN", legacy_name], capture_output=True)
+                self.assertNotEqual(0, query.returncode)
                 installer.create_or_update_server_autostart(target, settings)
+
+                create_legacy()
+                powershell = str(Path(os.environ["WINDIR"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
+                script = (
+                    "$ErrorActionPreference='Stop'; "
+                    f"$action=New-ScheduledTaskAction -Execute {windows_dialog.powershell_quote(powershell)} "
+                    "-Argument '-NoProfile -NonInteractive -Command Start-Sleep -Seconds 30'; "
+                    f"Set-ScheduledTask -TaskName '{legacy_name}' -Action $action | Out-Null; "
+                    f"Enable-ScheduledTask -TaskName '{legacy_name}' | Out-Null; "
+                    f"Start-ScheduledTask -TaskName '{legacy_name}'"
+                )
+                result = original_run(["powershell.exe", "-NoProfile", "-Command", script],
+                                      capture_output=True, text=True, timeout=30)
+                self.assertEqual(0, result.returncode, result.stderr)
+                with patch.object(app, "SERVER_AUTOSTART_TASK_NAME", task_name), \
+                        patch.object(app, "LEGACY_SERVER_AUTOSTART_TASK_NAME", legacy_name):
+                    self.assertEqual(task_name, app.find_server_autostart_task_name())
+                    active = False
+                    for _ in range(10):
+                        active = app.server_autostart_task_running()
+                        if active is True:
+                            break
+                        time.sleep(0.2)
+                    self.assertIs(True, active, "Ready primary task must not hide a running legacy task")
+                original_run(["schtasks.exe", "/End", "/TN", legacy_name], capture_output=True, timeout=30)
 
                 def invalid_readback(command: list[str], **kwargs: object) -> object:
                     command = list(command)
@@ -499,17 +553,34 @@ class InstallerTests(unittest.TestCase):
                     )
                     return original_run(command, **kwargs)
 
-                # Simulate an unusable readback after a real registration.
-                # Put the expected error log into the disposable test directory.
                 with patch.object(installer.subprocess, "run", side_effect=invalid_readback):
-                    with patch.object(Path, "write_text") as write_log:
-                        with self.assertRaisesRegex(RuntimeError, "nicht bestaetigt"):
-                            installer.create_or_update_server_autostart(target, settings)
-                        self.assertIn("nicht verwendbar", write_log.call_args.args[0])
-            finally:
-                result = original_run(["schtasks.exe", "/Delete", "/TN", task_name, "/F"],
+                    with self.assertRaisesRegex(RuntimeError, "nicht bestaetigt"):
+                        installer.create_or_update_server_autostart(target, settings)
+                self.assertIn("nicht verwendbar", (root / "setup-server-autostart-error.log").read_text(encoding="utf-8"))
+                query = original_run(["schtasks.exe", "/Query", "/TN", legacy_name], capture_output=True)
+                self.assertEqual(0, query.returncode, "Failed readback must preserve the legacy task")
+
+                # Execute only the uninstaller's task cleanup against our disposable identities.
+                uninstall = (Path(__file__).parents[1] / "installer" / "uninstall.ps1").read_text(encoding="utf-8")
+                begin = uninstall.index("    try {\n        $scheduler = New-Object -ComObject Schedule.Service")
+                cleanup = uninstall[begin:uninstall.index("    Remove-Item -LiteralPath $RegistryPath", begin)]
+                script = (f"$ServerAutostartTaskNames=@('{task_name}','{legacy_name}'); "
+                          "$serverAutostartWarning=$null; " + cleanup +
+                          "; if ($serverAutostartWarning) { throw $serverAutostartWarning }")
+                result = original_run(["powershell.exe", "-NoProfile", "-Command", script],
                                       capture_output=True, text=True, timeout=30)
                 self.assertEqual(0, result.returncode, result.stderr)
+                for name in (task_name, legacy_name):
+                    query = original_run(["schtasks.exe", "/Query", "/TN", name], capture_output=True)
+                    self.assertNotEqual(0, query.returncode)
+            finally:
+                for name in (task_name, legacy_name):
+                    query = original_run(["schtasks.exe", "/Query", "/TN", name], capture_output=True)
+                    if query.returncode == 0:
+                        original_run(["schtasks.exe", "/End", "/TN", name], capture_output=True, timeout=30)
+                        result = original_run(["schtasks.exe", "/Delete", "/TN", name, "/F"],
+                                              capture_output=True, text=True, timeout=30)
+                        self.assertEqual(0, result.returncode, result.stderr)
 
     def test_server_settings_are_copied_once_and_then_preserved(self) -> None:
         with TemporaryDirectory() as directory:

@@ -1,5 +1,11 @@
 # Änderungsprotokoll
 
+## 0.4.2 – 2026-10-29
+
+- Die neue SYSTEM-Aufgabenkennung lautet `GlasHagen DokumentenScannerSortierung Server`. Sie vermeidet den auf dem betroffenen Server unbrauchbaren bisherigen Aufgabeneintrag. Vergleichstests auf dem Server konnten unter neuen Namen sowohl deaktivierte als auch aktivierte Aufgaben mit identischen Startparametern registrieren; eine Securepoint-Blockierung ist weiterhin nicht nachgewiesen.
+- Der Installer prüft zuerst die neue Aufgabe vollständig. Anschließend sichert er die alte Definition als `setup-server-task-legacy.xml` im Installationsordner und entfernt nur den alten Aufgabeneintrag über die Windows-Aufgabenplanung. Bei fehlgeschlagener Prüfung bleibt der alte Eintrag erhalten. Es erfolgen keine Registry-Reparaturen oder Änderungen am Virenschutz.
+- Die Oberfläche bevorzugt die neue Aufgabenkennung und unterstützt bestehende alte Installationen weiterhin. Start, Statusprüfung und kontrollierter Stopp berücksichtigen die Migration. Der Uninstaller entfernt beide bekannten Aufgabenkennungen.
+
 ## 0.4.1 – 2026-10-29
 
 - Der Abschlussdialog zeigt vollständige Meldungen in einem markierbaren, vertikal scrollbaren Textfeld und bietet „Details kopieren“. Bei unbestätigtem Serverautostart weist bereits die Überschrift darauf hin.

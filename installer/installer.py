@@ -35,6 +35,7 @@ if __package__:
         INSTALL_ACTION_UNKNOWN_VERSION_BLOCKED,
         INSTALL_ACTION_UPDATE,
         LEGACY_UNINSTALLER_FILENAME,
+        LEGACY_SERVER_AUTOSTART_TASK_NAME,
         NOTICE_FILENAME,
         OPEN_LAUNCHER_FILENAME,
         PAYLOAD_ICON_FILENAME,
@@ -73,6 +74,7 @@ else:
         INSTALL_ACTION_UNKNOWN_VERSION_BLOCKED,
         INSTALL_ACTION_UPDATE,
         LEGACY_UNINSTALLER_FILENAME,
+        LEGACY_SERVER_AUTOSTART_TASK_NAME,
         NOTICE_FILENAME,
         OPEN_LAUNCHER_FILENAME,
         PAYLOAD_ICON_FILENAME,
@@ -1325,6 +1327,17 @@ def create_or_update_server_autostart(target: Path, settings_path: Path) -> None
         "-or $registered.Actions[0].Arguments -ne $arguments "
         "-or $registered.Actions[0].WorkingDirectory -ne $workingDirectory) { "
         "throw 'Die gespeicherte SYSTEM-Aufgabe oder ihr Systemstart-Trigger ist nicht verwendbar.' }; "
+        # Retire the old identity only after the new task passed readback.
+        "$scheduler = New-Object -ComObject Schedule.Service; $scheduler.Connect(); "
+        "$taskFolder = $scheduler.GetFolder('\\'); $legacy = $null; "
+        f"$legacyName = {powershell_quote(LEGACY_SERVER_AUTOSTART_TASK_NAME)}; "
+        "try { $legacy = $taskFolder.GetTask($legacyName) } catch { "
+        "$cause = $_.Exception; while ($cause.InnerException) { $cause = $cause.InnerException }; "
+        "if ($cause.HResult -ne -2147024894) { throw } }; "
+        "if ($legacy) { "
+        f"$backupPath = {powershell_quote(str(target.parent / 'setup-server-task-legacy.xml'))}; "
+        "[System.IO.File]::WriteAllText($backupPath, $legacy.Xml, [System.Text.Encoding]::Unicode); "
+        "$taskFolder.DeleteTask($legacyName, 0) }; "
         "Write-Output 'SERVER_AUTOSTART_VERIFIED' "
         "} catch { "
         "[Console]::Error.WriteLine(('HRESULT: 0x{0:X8}' -f $_.Exception.HResult)); "

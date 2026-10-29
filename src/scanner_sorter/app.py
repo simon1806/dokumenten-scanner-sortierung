@@ -41,7 +41,8 @@ from .window_launcher import activate_existing_window
 ERROR_ACCESS_DENIED = 5
 ERROR_ALREADY_EXISTS = 183
 WINDOWS_APP_ID = "GlasHagen.DokumentenScannerSortierung"
-SERVER_AUTOSTART_TASK_NAME = "GlasHagen Dokumenten-Scanner-Sortierung"
+SERVER_AUTOSTART_TASK_NAME = "GlasHagen DokumentenScannerSortierung Server"
+LEGACY_SERVER_AUTOSTART_TASK_NAME = "GlasHagen Dokumenten-Scanner-Sortierung"
 SERVER_SETTINGS_FOLDER = "DokumentenScannerSortierung"
 SERVER_SETTINGS_FILENAME = "settings.json"
 SERVER_STOP_REQUEST_FILENAME = "server-stop.request"
@@ -244,29 +245,36 @@ def is_single_instance_access_denied(error: OSError) -> bool:
     }
 
 
-def server_autostart_task_exists(
+def find_server_autostart_task_name(
     *,
     platform_name: str | None = None,
     runner: Callable[..., object] | None = None,
-) -> bool:
-    """Return whether the installer-managed SYSTEM task exists."""
+) -> str | None:
+    """Prefer the current task identity, retaining compatibility with old installers."""
     effective_platform = os.name if platform_name is None else platform_name
     if effective_platform != "nt":
-        return False
+        return None
     effective_runner = subprocess.run if runner is None else runner
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
     schtasks = ntpath.join(system_root, "System32", "schtasks.exe")
-    try:
-        completed = effective_runner(
-            [schtasks, "/Query", "/TN", SERVER_AUTOSTART_TASK_NAME],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-            creationflags=0x08000000,
-        )
-    except OSError:
-        return False
-    return getattr(completed, "returncode", 1) == 0
+    for task_name in (SERVER_AUTOSTART_TASK_NAME, LEGACY_SERVER_AUTOSTART_TASK_NAME):
+        try:
+            completed = effective_runner(
+                [schtasks, "/Query", "/TN", task_name],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                check=False, timeout=5, creationflags=0x08000000,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if getattr(completed, "returncode", 1) == 0:
+            return task_name
+    return None
+
+
+def server_autostart_task_exists(
+    *, platform_name: str | None = None, runner: Callable[..., object] | None = None,
+) -> bool:
+    return find_server_autostart_task_name(platform_name=platform_name, runner=runner) is not None
 
 
 def server_settings_path() -> Path:
@@ -286,12 +294,20 @@ def server_autostart_task_running(
         return False
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
     executable = ntpath.join(system_root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe")
-    task_name = "'" + SERVER_AUTOSTART_TASK_NAME.replace("'", "''") + "'"
+    task_names = ",".join("'" + name.replace("'", "''") + "'"
+                          for name in (SERVER_AUTOSTART_TASK_NAME, LEGACY_SERVER_AUTOSTART_TASK_NAME))
     script = (
         "$ErrorActionPreference='Stop'; try { "
         "$scheduler=New-Object -ComObject Schedule.Service; $scheduler.Connect(); "
-        f"$task=$scheduler.GetFolder('\\').GetTask({task_name}); "
-        "if ([int]$task.State -in @(2,4)) { exit 0 } else { exit 1 } "
+        "$known=$false; $unknown=$false; "
+        f"foreach ($name in @({task_names})) {{ try {{ "
+        "$task=$scheduler.GetFolder('\\').GetTask($name); $state=[int]$task.State; "
+        "if ($state -in @(2,4)) { exit 0 }; "
+        "if ($state -eq 0) { $unknown=$true } else { $known=$true } "
+        "} catch { $cause=$_.Exception; "
+        "while ($cause.InnerException) { $cause=$cause.InnerException }; "
+        "if ($cause.HResult -ne -2147024894) { $unknown=$true } } }; "
+        "if ($known -and -not $unknown) { exit 1 } else { exit 2 } "
         "} catch { exit 2 }"
     )
     try:
@@ -342,7 +358,8 @@ def request_server_task_action(
     system_root = os.environ.get("SystemRoot", r"C:\Windows")
     if action == "start":
         executable = ntpath.join(system_root, "System32", "schtasks.exe")
-        arguments = f'/Run /TN "{SERVER_AUTOSTART_TASK_NAME}"'
+        task_name = find_server_autostart_task_name(platform_name=effective_platform) or SERVER_AUTOSTART_TASK_NAME
+        arguments = f'/Run /TN "{task_name}"'
     else:
         # PyInstaller's one-file bootloader creates a child process. `schtasks /End`
         # can terminate only the registered parent and leave that worker alive.
