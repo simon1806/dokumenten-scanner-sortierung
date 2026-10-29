@@ -515,10 +515,19 @@ class InstallerTests(unittest.TestCase):
                     self.assertEqual(legacy_name, app.find_server_autostart_task_name())
                     self.assertIs(False, app.server_autostart_task_running())
                 # The production migration must verify the new task before retiring the old one.
-                installer.create_or_update_server_autostart(target, settings)
+                def legacy_com_failure(command: list[str], **kwargs: object) -> object:
+                    command = list(command)
+                    command[-1] = command[-1].replace(
+                        "$legacy = $taskFolder.GetTask($legacyName)", "throw 'Simulierter COM-Altaufgabenfehler'"
+                    )
+                    return original_run(command, **kwargs)
+
+                with patch.object(installer.subprocess, "run", side_effect=legacy_com_failure):
+                    installer.create_or_update_server_autostart(target, settings)
                 self.assertIn(legacy_name, (root / "setup-server-task-legacy.xml").read_text(encoding="utf-16"))
                 query = original_run(["schtasks.exe", "/Query", "/TN", legacy_name], capture_output=True)
                 self.assertNotEqual(0, query.returncode)
+                create_legacy()
                 installer.create_or_update_server_autostart(target, settings)
 
                 create_legacy()
