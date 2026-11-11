@@ -753,7 +753,7 @@ class InstallerTests(unittest.TestCase):
 
         script = popen.call_args.args[0][-1]
         self.assertIn("$form.ControlBox = $false", script)
-        self.assertIn("$progress.Style = 'Marquee'", script)
+        self.assertIn("$progress.Style = 'Continuous'", script)
         self.assertIn("Application]::Run($form)", script)
         process.terminate.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=3)
@@ -770,7 +770,7 @@ class InstallerTests(unittest.TestCase):
             ready_path.write_text("ready", encoding="utf-8")
             with patch(
                 "installer.windows_dialog._dialog_response_path",
-                side_effect=[selection_path, ready_path],
+                side_effect=[selection_path, ready_path, Path(directory) / "progress.json"],
             ):
                 confirmed, server_autostart, progress = (
                     windows_dialog.show_confirmation_with_server_autostart_and_progress(
@@ -900,7 +900,7 @@ class InstallerTests(unittest.TestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             sources = {
-                installer.APPLICATION_FILENAME: b"MZapplication",
+                installer.APPLICATION_FILENAME: b"MZ" + b"x" * (3 * 1024 * 1024),
                 installer.OPEN_LAUNCHER_FILENAME: b"MZlauncher",
                 installer.NOTICE_FILENAME: b"notices",
                 installer.PAYLOAD_ICON_FILENAME: b"icon",
@@ -928,7 +928,10 @@ class InstallerTests(unittest.TestCase):
                 patch("installer.installer.payload_manifest_path", return_value=manifest),
                 patch("installer.installer.version_payload_path", return_value=version_file),
             ):
-                validated = installer.validate_payload_bundle("0.1.24", tuple(files))
+                progress_events = []
+                validated = installer.validate_payload_bundle("0.1.24", tuple(files), lambda *event: progress_events.append(event))
+                self.assertTrue(any(0 < done < total for _phase, done, total, _detail in progress_events))
+                self.assertEqual(progress_events[-1][1], progress_events[-1][2])
                 self.assertTrue(all(payload.expected_size is not None for payload in validated))
                 self.assertTrue(all(payload.expected_sha256 for payload in validated))
                 (root / installer.NOTICE_FILENAME).write_bytes(b"manipuliert")

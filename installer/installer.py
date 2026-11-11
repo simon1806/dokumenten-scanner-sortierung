@@ -283,11 +283,41 @@ class InstallationTransaction:
         )
 
 
-def sha256_file(path: Path) -> str:
+ProgressCallback = Callable[[str, int, int, str], None]
+
+
+PROGRESS_STEPS = {
+    "verify": (0, 25, "1/8: Programmdateien prüfen"),
+    "inventory": (25, 35, "2/8: Vorhandene Installation prüfen"),
+    "stage": (35, 65, "3/8: Neue Version vorbereiten"),
+    "replace": (65, 85, "4/8: Programmdateien ersetzen"),
+    "integrate": (85, 92, "5/8: Windows-Verknüpfungen und App-Eintrag"),
+    "commit": (92, 96, "6/8: Installation abschließen und bereinigen"),
+    "autostart": (96, 99, "7/8: Autostart einrichten"),
+    "finish": (99, 100, "8/8: Abschluss vorbereiten"),
+}
+
+
+def progress_counter(callback: ProgressCallback | None, phase: str, total: int) -> Callable[[int, str], None]:
+    completed = 0
+
+    def advance(amount: int, detail: str = "") -> None:
+        nonlocal completed
+        completed += amount
+        if callback is not None:
+            callback(phase, completed, max(1, total), detail)
+
+    advance(0)
+    return advance
+
+
+def sha256_file(path: Path, on_bytes: Callable[[int], None] | None = None) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
+            if on_bytes is not None:
+                on_bytes(len(chunk))
     return digest.hexdigest().upper()
 
 
@@ -368,13 +398,16 @@ def check_recovery_destination_names(names: set[str]) -> None:
         raise RuntimeError("Recovery-Journal enthält eine unvollständige Runtime-Dateiliste.")
 
 
-def file_matches(path: Path, expected_size: int | None, expected_sha256: str | None) -> bool:
+def file_matches(
+    path: Path, expected_size: int | None, expected_sha256: str | None,
+    on_bytes: Callable[[int], None] | None = None,
+) -> bool:
     if expected_size is None or expected_sha256 is None:
         return False
     try:
         if is_reparse_point(path):
             return False
-        return path.is_file() and path.stat().st_size == expected_size and sha256_file(path) == expected_sha256
+        return path.is_file() and path.stat().st_size == expected_size and sha256_file(path, on_bytes) == expected_sha256
     except OSError:
         return False
 
@@ -476,7 +509,9 @@ def assert_removed_destination_state(destination: Path) -> None:
         raise OSError(f"Veraltete Runtime-Datei wurde nicht sicher entfernt: {destination}")
 
 
-def obsolete_runtime_files(files: tuple[PayloadFile, ...], root: Path) -> tuple[RuntimeRemoval, ...]:
+def obsolete_runtime_files(
+    files: tuple[PayloadFile, ...], root: Path, progress: ProgressCallback | None = None,
+) -> tuple[RuntimeRemoval, ...]:
     """Plan hash-verified obsolete files from the previous ownership manifest."""
     if not any(payload.manifest_name == RUNTIME_MANIFEST_FILENAME for payload in files):
         return ()
@@ -490,6 +525,7 @@ def obsolete_runtime_files(files: tuple[PayloadFile, ...], root: Path) -> tuple[
         raise RuntimeError(f"Vorherige Runtime-Dateiliste ist ungültig: {error}") from error
     if not isinstance(entries, dict):
         raise RuntimeError("Vorherige Runtime-Dateiliste muss ein Objekt enthalten.")
+    advance = progress_counter(progress, "inventory", len(entries))
     new_names = {payload.manifest_name.casefold() for payload in files}
     previous_names: set[str] = set()
     removals = []
@@ -507,6 +543,7 @@ def obsolete_runtime_files(files: tuple[PayloadFile, ...], root: Path) -> tuple[
         assert_payload_path(root, destination, "vorherige Runtime-Datei")
         if relative.casefold() not in new_names and file_matches(destination, size, digest):
             removals.append(RuntimeRemoval(destination, size, digest))
+        advance(1, Path(relative).name)
     return tuple(removals)
 
 
@@ -1119,7 +1156,9 @@ def payload_files(target: Path) -> tuple[PayloadFile, ...]:
     return fixed_files + tuple(additional)
 
 
-def validate_payload_bundle(version: str, files: tuple[PayloadFile, ...]) -> tuple[PayloadFile, ...]:
+def validate_payload_bundle(
+    version: str, files: tuple[PayloadFile, ...], progress: ProgressCallback | None = None,
+) -> tuple[PayloadFile, ...]:
     if len(files) < len(PAYLOAD_LAYOUT):
         raise RuntimeError(f"Payload muss mindestens {len(PAYLOAD_LAYOUT)} Installationsdateien enthalten.")
     manifest_names = {payload.manifest_name for payload in files}
@@ -1168,6 +1207,7 @@ def validate_payload_bundle(version: str, files: tuple[PayloadFile, ...]) -> tup
             raise RuntimeError("Runtime-Dateiliste stimmt nicht mit dem Payload-Manifest überein.")
 
     validated_files: list[PayloadFile] = []
+    advance = progress_counter(progress, "verify", sum(item.source.stat().st_size + 1 for item in files))
     for payload in files:
         entry = manifest_files.get(payload.manifest_name)
         if not isinstance(entry, dict):
@@ -1178,8 +1218,10 @@ def validate_payload_bundle(version: str, files: tuple[PayloadFile, ...]) -> tup
             actual_size = payload.source.stat().st_size
         except (KeyError, OSError, TypeError, ValueError) as error:
             raise RuntimeError(f"Payload-Datei ist ungültig: {payload.manifest_name}: {error}") from error
-        if expected_size != actual_size or expected_hash != sha256_file(payload.source):
+        detail = Path(payload.manifest_name).name
+        if expected_size != actual_size or expected_hash != sha256_file(payload.source, lambda size: advance(size, detail)):
             raise RuntimeError(f"Payload-Prüfung fehlgeschlagen: {payload.manifest_name}")
+        advance(1, detail)
         validated_files.append(
             PayloadFile(
                 payload.manifest_name,
@@ -1202,7 +1244,9 @@ def validate_payload_bundle(version: str, files: tuple[PayloadFile, ...]) -> tup
     return tuple(validated_files)
 
 
-def install_files_transactionally(files: tuple[PayloadFile, ...]) -> InstallationTransaction:
+def install_files_transactionally(
+    files: tuple[PayloadFile, ...], progress: ProgressCallback | None = None,
+) -> InstallationTransaction:
     if not files:
         raise ValueError("Keine Installationsdateien angegeben.")
     unverified = [payload.manifest_name for payload in files if payload.expected_size is None or not payload.expected_sha256]
@@ -1234,12 +1278,20 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(marker_temporary, staging_marker)
-        removals = obsolete_runtime_files(files, installation_directory)
+        if progress is not None:
+            progress("inventory", 0, 1, "Bisherige Laufzeit-Dateiliste prüfen")
+        removals = obsolete_runtime_files(files, installation_directory, progress)
         # Keep fixed root entries first for legacy recovery. Remove old runtime
         # files before adding the new runtime so file/directory changes work;
         # reversing the journal restores the old layout after removing new files.
         split = min(len(PAYLOAD_DESTINATION_NAMES), len(files))
         operations = (*files[:split], *removals, *files[split:])
+        stage_work = sum(
+            2 * (payload.expected_size or 0) + 1
+            + (payload.destination.stat().st_size if payload.destination.is_file() else 0)
+            for payload in files
+        )
+        advance_stage = progress_counter(progress, "stage", stage_work)
         for index, operation in enumerate(operations):
             destination = operation.destination
             stage_path = stage_directory / f"{index:02d}-{destination.name}"
@@ -1252,9 +1304,14 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
                 ))
                 continue
             payload = operation
-            shutil.copy2(payload.source, stage_path)
+            detail = Path(payload.manifest_name).name
+            with payload.source.open("rb") as source, stage_path.open("xb") as destination_stream:
+                for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                    destination_stream.write(chunk)
+                    advance_stage(len(chunk), detail)
+            shutil.copystat(payload.source, stage_path)
             assert_not_reparse(stage_path, "Stage-Datei")
-            if not file_matches(stage_path, payload.expected_size, payload.expected_sha256):
+            if not file_matches(stage_path, payload.expected_size, payload.expected_sha256, lambda size: advance_stage(size, detail)):
                 raise OSError(
                     "Payload nach Staging nicht mehr manifestkonform: "
                     f"{payload.manifest_name}; erwartet {payload.expected_size} Bytes / {payload.expected_sha256}"
@@ -1266,30 +1323,38 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
             transaction.replacements.append(FileReplacement(
                 destination, backup_path, had_original, stage=stage_path,
                 original_size=destination.stat().st_size if had_original else None,
-                original_sha256=sha256_file(destination) if had_original else None,
+                original_sha256=sha256_file(destination, lambda size: advance_stage(size, detail)) if had_original else None,
                 payload_size=payload.expected_size, payload_sha256=payload.expected_sha256,
                 original_directory=original_directory,
             ))
+            advance_stage(1, detail)
 
         write_transaction_journal(transaction)
         staging_marker.unlink()
+        advance_replace = progress_counter(progress, "replace", sum(
+            (item.original_size or 0) + (item.payload_size or 0) + 1 for item in transaction.replacements
+        ))
         for replacement in transaction.replacements:
+            detail = replacement.destination.name
             assert_payload_path(installation_directory, replacement.destination, "Payload-Ziel")
             if replacement.had_original:
                 if not file_matches(
                     replacement.destination,
                     replacement.original_size,
                     replacement.original_sha256,
+                    lambda size: advance_replace(size, detail),
                 ):
                     raise OSError(f"Installierte Datei wurde während des Updates verändert: {replacement.destination}")
                 os.replace(replacement.destination, replacement.backup)
                 replacement.backup_created = True
             if replacement.remove_only:
+                advance_replace(1, detail)
                 continue
             if replacement.stage is None or not file_matches(
                 replacement.stage,
                 replacement.payload_size,
                 replacement.payload_sha256,
+                lambda size: advance_replace(size, detail),
             ):
                 raise OSError(f"Stage-Datei wurde vor der Installation verändert: {replacement.stage}")
             assert_payload_path(installation_directory, replacement.destination, "Payload-Ziel")
@@ -1301,7 +1366,10 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
             assert_payload_path(installation_directory, replacement.destination, "Payload-Ziel")
             os.replace(replacement.stage, replacement.destination)
             replacement.destination_replaced = True
+            advance_replace(1, detail)
     except Exception as installation_error:
+        if progress is not None:
+            progress("rollback", 0, 1, "Programmdateien werden wiederhergestellt")
         try:
             transaction.rollback()
         except Exception as rollback_error:
@@ -2150,6 +2218,17 @@ def run_installation() -> int:
         return 0
 
     progress_dialog = selection.progress_dialog
+    last_percent = 0
+
+    def report(phase: str, completed: int, total: int, detail: str = "") -> None:
+        nonlocal last_percent
+        if phase == "rollback":
+            step = "Update wird zurückgesetzt"
+        else:
+            start, end, step = PROGRESS_STEPS[phase]
+            last_percent = max(last_percent, start + (end - start) * min(completed, total) // max(1, total))
+        if progress_dialog is not None:
+            progress_dialog.update(last_percent, step, detail)
 
     transaction: InstallationTransaction | None = None
     registry_snapshot: dict[str, tuple[object, int]] | None = None
@@ -2157,12 +2236,14 @@ def run_installation() -> int:
     shortcuts_to_restore: list[tuple[Path, Path]] = []
     cleanup_warning: str | None = None
     try:
-        files = validate_payload_bundle(version, payload_files(target))
+        report("verify", 0, 1, "Installationspaket wird geprüft")
+        files = validate_payload_bundle(version, payload_files(target), report)
         if "--silent" in sys.argv:
             if sys.stdout is not None:
                 print(f"Installiere {payload_path()} nach {target}")
         registry_snapshot = installed_application_registration()
-        transaction = install_files_transactionally(files)
+        transaction = install_files_transactionally(files, report)
+        report("integrate", 0, 3, "Bisherige Verknüpfungen und Windows-Eintrag sichern")
         write_integration_snapshot(transaction, capture_integration_snapshot(registry_snapshot))
         installed_launcher = target.parent / OPEN_LAUNCHER_FILENAME
         installed_icon = target.parent / ICON_FILENAME
@@ -2170,10 +2251,12 @@ def run_installation() -> int:
         desktop_shortcut_backup = transaction.backup_directory / f"desktop-{SHORTCUT_FILENAME}"
         desktop_shortcut = create_desktop_shortcut(installed_launcher, installed_icon, desktop_shortcut_backup)
         shortcuts_to_restore.append((desktop_shortcut, desktop_shortcut_backup))
+        report("integrate", 1, 3, "Desktop-Verknüpfung erstellt")
         if not selection.configure_server_autostart:
             startup_shortcut_backup = transaction.backup_directory / f"startup-{STARTUP_SHORTCUT_FILENAME}"
             startup_shortcut = create_startup_shortcut(target, installed_icon, startup_shortcut_backup)
             shortcuts_to_restore.append((startup_shortcut, startup_shortcut_backup))
+        report("integrate", 2, 3, "Windows-App-Eintrag aktualisieren")
         registry_touched = True
         register_installed_application(
             target,
@@ -2181,11 +2264,15 @@ def run_installation() -> int:
             version,
             tuple(payload.destination for payload in files),
         )
+        report("integrate", 3, 3, "Windows-App-Eintrag aktualisiert")
+        report("commit", 0, 1, "Änderungen festschreiben und Sicherungen bereinigen")
         cleanup_warning = transaction.commit()
         transaction = None
         registry_touched = False
         shortcuts_to_restore.clear()
+        report("commit", 1, 1)
     except Exception as error:
+        report("rollback", 0, 1, "Vorheriger Installationszustand wird wiederhergestellt")
         rollback_errors: list[str] = []
         if registry_touched:
             try:
@@ -2233,17 +2320,27 @@ def run_installation() -> int:
     server_autostart_warning: str | None = None
     if selection.configure_server_autostart:
         try:
+            report("autostart", 0, 2, "Zentrale Servereinstellungen vorbereiten")
             settings_path = prepare_server_settings()
+            report("autostart", 1, 2, "SYSTEM-Aufgabe registrieren und prüfen")
             create_or_update_server_autostart(target, settings_path)
             remove_startup_shortcut()
         except RuntimeError as error:
             server_autostart_warning = str(error)
+    if server_autostart_warning:
+        report("autostart", 1, 2, "Serverautostart konnte nicht eingerichtet werden")
+    else:
+        report("autostart", 2, 2, "Serverautostart geprüft" if selection.configure_server_autostart else "Benutzerautostart eingerichtet")
+    report("finish", 0, 1, "Abschluss mit Warnung vorbereiten" if server_autostart_warning else "Windows-Anzeige aktualisieren")
 
     try:
         notify_shell_icon_change(installed_icon)
         notify_shell_icon_change(Path(os.environ.get("USERPROFILE", Path.home())) / "Desktop" / SHORTCUT_FILENAME)
     except Exception:
         pass
+
+    if not server_autostart_warning and not cleanup_warning:
+        report("finish", 1, 1, "Installation erfolgreich abgeschlossen")
 
     if "--silent" in sys.argv:
         should_launch = "--no-launch" not in sys.argv
