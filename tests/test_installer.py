@@ -983,10 +983,7 @@ class InstallerTests(unittest.TestCase):
             real_replace = installer.os.replace
 
             def fail_payload_backup(source_path: Path, destination_path: Path) -> None:
-                if (
-                    Path(destination_path).parent.name.startswith(".backup-")
-                    and Path(destination_path).name != installer.TRANSACTION_JOURNAL_FILENAME
-                ):
+                if Path(source_path) == destination and Path(destination_path).parent.name.startswith(".backup-"):
                     raise OSError("backup locked")
                 real_replace(source_path, destination_path)
 
@@ -1507,6 +1504,19 @@ class InstallerTests(unittest.TestCase):
             self.assertFalse(stage.exists())
             self.assertFalse(backup.exists())
 
+    def test_partial_staging_marker_write_is_recovered_before_any_payload_copy(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage = root / ".stage-marker-write"
+            backup = root / ".backup-marker-write"
+            stage.mkdir()
+            backup.mkdir()
+            (backup / f"{installer.TRANSACTION_STAGING_MARKER}.tmp").write_text("marker-", encoding="ascii")
+
+            self.assertEqual(("marker-write",), installer.recover_orphaned_transactions(root))
+            self.assertFalse(stage.exists())
+            self.assertFalse(backup.exists())
+
     def test_crash_recovery_restores_shortcuts_and_registry_with_files(self) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1597,6 +1607,36 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(4, result)
             self.assertIn("task failed", stderr.getvalue())
             show_message.assert_not_called()
+
+    def test_interactive_server_autostart_warning_keeps_successful_app_exit_code(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / installer.APPLICATION_FILENAME
+            transaction = SimpleNamespace(backup_directory=root, commit=Mock(return_value=None), rollback=Mock())
+            with (
+                patch.object(installer.sys, "argv", ["setup.exe", "--no-launch"]),
+                patch("installer.installer.installation_path", return_value=target),
+                patch("installer.installer.recover_orphaned_transactions", return_value=()),
+                patch("installer.installer.application_version", return_value="0.4.2"),
+                patch("installer.installer.confirm_installation_selection", return_value=installer.InstallationSelection(True, True)),
+                patch("installer.installer.payload_files", return_value=()),
+                patch("installer.installer.validate_payload_bundle", return_value=()),
+                patch("installer.installer.installed_application_registration", return_value=None),
+                patch("installer.installer.install_files_transactionally", return_value=transaction),
+                patch("installer.installer.capture_integration_snapshot", return_value={}),
+                patch("installer.installer.write_integration_snapshot"),
+                patch("installer.installer.create_desktop_shortcut", return_value=root / "desktop.lnk"),
+                patch("installer.installer.register_installed_application"),
+                patch("installer.installer.prepare_server_settings", return_value=root / "settings.json"),
+                patch("installer.installer.create_or_update_server_autostart", side_effect=RuntimeError("task failed")),
+                patch("installer.installer.notify_shell_icon_change"),
+                patch("installer.installer.completion_text", return_value=("Partial", "Info", "Details")),
+                patch("installer.installer.show_completion", return_value=False) as show_completion,
+            ):
+                result = installer.run_installation()
+
+            self.assertEqual(0, result)
+            self.assertIn("task failed", show_completion.call_args.args[2])
 
 
 if __name__ == "__main__":

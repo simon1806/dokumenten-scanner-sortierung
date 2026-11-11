@@ -1067,11 +1067,20 @@ def recover_orphaned_transactions(installation_directory: Path) -> tuple[str, ..
                 "Unvollständige verwaiste Installation erkannt. Keine Dateien wurden gelöscht; "
                 f"manuelle Prüfung erforderlich: {existing}"
             )
-        if not any(backup_directory.iterdir()) and stage_directory is not None and not any(stage_directory.iterdir()):
-            stage_directory.rmdir()
-            backup_directory.rmdir()
-            recovered.append(transaction_id)
-            continue
+        if stage_directory is not None and not any(stage_directory.iterdir()):
+            backup_entries = list(backup_directory.iterdir())
+            marker_temporary = f"{TRANSACTION_STAGING_MARKER}.tmp"
+            if not backup_entries or (
+                len(backup_entries) == 1
+                and backup_entries[0].name == marker_temporary
+                and backup_entries[0].is_file()
+                and not is_reparse_point(backup_entries[0])
+            ):
+                cleanup_transaction_directories(
+                    stage_directory, backup_directory, "Unvollständige Staging-Vorbereitung wurde entfernt"
+                )
+                recovered.append(transaction_id)
+                continue
         if stage_directory is None:
             stage_directory = installation_directory / f".stage-{transaction_id}"
         recover_transaction(installation_directory, stage_directory, backup_directory)
@@ -1216,13 +1225,15 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
     assert_not_reparse(stage_directory, "Stage-Ordner")
     assert_not_reparse(backup_directory, "Backup-Ordner")
     staging_marker = backup_directory / TRANSACTION_STAGING_MARKER
+    marker_temporary = backup_directory / f"{TRANSACTION_STAGING_MARKER}.tmp"
     transaction = InstallationTransaction(stage_directory, backup_directory, [])
 
     try:
-        with staging_marker.open("x", encoding="ascii") as stream:
+        with marker_temporary.open("x", encoding="ascii") as stream:
             stream.write(transaction_id)
             stream.flush()
             os.fsync(stream.fileno())
+        os.replace(marker_temporary, staging_marker)
         removals = obsolete_runtime_files(files, installation_directory)
         # Keep fixed root entries first for legacy recovery. Remove old runtime
         # files before adding the new runtime so file/directory changes work;
@@ -2271,7 +2282,7 @@ def run_installation() -> int:
                 progress_dialog.close()
     if should_launch:
         subprocess.Popen([str(target)], close_fds=True)
-    return 4 if server_autostart_warning else 0
+    return 4 if server_autostart_warning and "--silent" in sys.argv else 0
 
 
 def main() -> int:
