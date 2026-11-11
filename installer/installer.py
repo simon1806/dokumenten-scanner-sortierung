@@ -8,6 +8,8 @@ als Update-Mechanismus.
 from __future__ import annotations
 
 import hashlib
+import base64
+import binascii
 import json
 import os
 import re
@@ -290,6 +292,7 @@ def sha256_file(path: Path) -> str:
 
 
 TRANSACTION_JOURNAL_FILENAME = "transaction.json"
+TRANSACTION_STAGING_MARKER = "staging-in-progress"
 TRANSACTION_JOURNAL_SCHEMA = 1
 TRANSACTION_STATE_PREPARED = "prepared"
 TRANSACTION_STATE_COMMITTED = "committed"
@@ -555,21 +558,49 @@ def write_transaction_journal(transaction: InstallationTransaction) -> None:
             }
         )
     journal = transaction.backup_directory / TRANSACTION_JOURNAL_FILENAME
-    with journal.open("x", encoding="utf-8", newline="\n") as stream:
-        json.dump(
-            {
-                "schema": TRANSACTION_JOURNAL_SCHEMA,
-                "state": TRANSACTION_STATE_PREPARED,
-                "records": records,
-            },
-            stream,
-            ensure_ascii=False,
-            indent=2,
-        )
-        stream.write("\n")
-        stream.flush()
-        os.fsync(stream.fileno())
+    temporary = journal.with_name(f"{journal.name}.{uuid4().hex}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+            json.dump(
+                {
+                    "schema": TRANSACTION_JOURNAL_SCHEMA,
+                    "state": TRANSACTION_STATE_PREPARED,
+                    "records": records,
+                },
+                stream,
+                ensure_ascii=False,
+                indent=2,
+            )
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, journal)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
     transaction.journal_path = journal
+
+
+def write_integration_snapshot(transaction: InstallationTransaction, snapshot: dict[str, object]) -> None:
+    """Persist external state before changing shortcuts or the uninstall key."""
+    journal = transaction.journal_path
+    if journal is None:
+        raise RuntimeError("Recovery-Journal fehlt vor der Windows-Integration.")
+    payload = json.loads(journal.read_text(encoding="utf-8"))
+    if payload.get("state") != TRANSACTION_STATE_PREPARED or "integration" in payload:
+        raise RuntimeError("Recovery-Journal besitzt keinen vorbereiteten Integrationszustand.")
+    payload["integration"] = snapshot
+    temporary = journal.with_name(f"{journal.name}.{uuid4().hex}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+            json.dump(payload, stream, ensure_ascii=False, indent=2)
+            stream.write("\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, journal)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def replace_transaction_journal_state(
@@ -692,6 +723,25 @@ def assert_recovery_records_committed(
         )
 
 
+def assert_safe_prejournal_staging(stage_directory: Path, backup_directory: Path) -> None:
+    """Accept only files created before the first installation move."""
+    marker = backup_directory / TRANSACTION_STAGING_MARKER
+    assert_not_reparse(marker, "Staging-Marker")
+    if marker.read_text(encoding="ascii") != backup_directory.name.removeprefix(".backup-"):
+        raise RuntimeError(f"Ungültiger Staging-Marker: {marker}")
+    for entry in backup_directory.iterdir():
+        assert_not_reparse(entry, "Staging-Backup")
+        is_partial_journal = re.fullmatch(r"transaction\.json\.[0-9a-f]{32}\.tmp", entry.name)
+        if (entry.name != TRANSACTION_STAGING_MARKER and not is_partial_journal) or not entry.is_file():
+            raise RuntimeError(f"Unbekannte Datei in unvollständigem Staging: {entry}")
+    if stage_directory.exists():
+        assert_not_reparse(stage_directory, "Stage-Ordner")
+        for entry in stage_directory.iterdir():
+            assert_not_reparse(entry, "Stage-Datei")
+            if not entry.is_file() or not re.fullmatch(r"\d{2,}-.+", entry.name):
+                raise RuntimeError(f"Unbekannter Eintrag in unvollständigem Staging: {entry}")
+
+
 def recover_transaction(
     installation_directory: Path,
     stage_directory: Path,
@@ -704,6 +754,16 @@ def recover_transaction(
         assert_not_reparse(stage_directory, "Stage-Ordner")
     assert_not_reparse(backup_directory, "Backup-Ordner")
     journal_path = backup_directory / TRANSACTION_JOURNAL_FILENAME
+    staging_marker = backup_directory / TRANSACTION_STAGING_MARKER
+    if staging_marker.exists() and not journal_path.exists():
+        # The marker is removed before the first destination move.
+        # A crash while copying the payload therefore leaves only disposable
+        # stage files; no installed file or backup has been touched yet.
+        assert_safe_prejournal_staging(stage_directory, backup_directory)
+        cleanup_transaction_directories(
+            stage_directory, backup_directory, "Unvollständiges Payload-Staging wurde entfernt"
+        )
+        return
     assert_direct_child(backup_directory, journal_path, "Recovery-Journal")
     assert_not_reparse(journal_path, "Recovery-Journal")
     try:
@@ -865,6 +925,8 @@ def recover_transaction(
     if not stage_directory.is_dir():
         try:
             assert_recovery_records_rolled_back(parsed_records, journal_path)
+            if "integration" in journal:
+                restore_integration_snapshot(journal["integration"])
             replace_transaction_journal_state(
                 journal_path,
                 TRANSACTION_STATE_PREPARED,
@@ -944,6 +1006,8 @@ def recover_transaction(
 
     try:
         assert_recovery_records_rolled_back(parsed_records, journal_path)
+        if "integration" in journal:
+            restore_integration_snapshot(journal["integration"])
         replace_transaction_journal_state(
             journal_path,
             TRANSACTION_STATE_PREPARED,
@@ -995,10 +1059,28 @@ def recover_orphaned_transactions(installation_directory: Path) -> tuple[str, ..
         backup_directory = backups.get(transaction_id)
         if backup_directory is None:
             existing = stage_directory
+            if existing is not None and existing.is_dir() and not any(existing.iterdir()):
+                existing.rmdir()
+                recovered.append(transaction_id)
+                continue
             raise RuntimeError(
                 "Unvollständige verwaiste Installation erkannt. Keine Dateien wurden gelöscht; "
                 f"manuelle Prüfung erforderlich: {existing}"
             )
+        if stage_directory is not None and not any(stage_directory.iterdir()):
+            backup_entries = list(backup_directory.iterdir())
+            marker_temporary = f"{TRANSACTION_STAGING_MARKER}.tmp"
+            if not backup_entries or (
+                len(backup_entries) == 1
+                and backup_entries[0].name == marker_temporary
+                and backup_entries[0].is_file()
+                and not is_reparse_point(backup_entries[0])
+            ):
+                cleanup_transaction_directories(
+                    stage_directory, backup_directory, "Unvollständige Staging-Vorbereitung wurde entfernt"
+                )
+                recovered.append(transaction_id)
+                continue
         if stage_directory is None:
             stage_directory = installation_directory / f".stage-{transaction_id}"
         recover_transaction(installation_directory, stage_directory, backup_directory)
@@ -1142,9 +1224,16 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
     assert_direct_child(installation_directory, backup_directory, "Backup-Ordner")
     assert_not_reparse(stage_directory, "Stage-Ordner")
     assert_not_reparse(backup_directory, "Backup-Ordner")
+    staging_marker = backup_directory / TRANSACTION_STAGING_MARKER
+    marker_temporary = backup_directory / f"{TRANSACTION_STAGING_MARKER}.tmp"
     transaction = InstallationTransaction(stage_directory, backup_directory, [])
 
     try:
+        with marker_temporary.open("x", encoding="ascii") as stream:
+            stream.write(transaction_id)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(marker_temporary, staging_marker)
         removals = obsolete_runtime_files(files, installation_directory)
         # Keep fixed root entries first for legacy recovery. Remove old runtime
         # files before adding the new runtime so file/directory changes work;
@@ -1183,6 +1272,7 @@ def install_files_transactionally(files: tuple[PayloadFile, ...]) -> Installatio
             ))
 
         write_transaction_journal(transaction)
+        staging_marker.unlink()
         for replacement in transaction.replacements:
             assert_payload_path(installation_directory, replacement.destination, "Payload-Ziel")
             if replacement.had_original:
@@ -1274,9 +1364,9 @@ def prepare_server_settings() -> Path:
             "tragen Sie die Ordner ein und speichern Sie die Einstellungen."
         )
     payload = _read_settings_payload(source)
-    destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.name}.{uuid4().hex}.tmp")
     try:
+        destination.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_text(payload, encoding="utf-8", newline="\n")
         os.replace(temporary, destination)
     except OSError as error:
@@ -1860,6 +1950,90 @@ def restore_installed_application_registration(snapshot: dict[str, tuple[object,
             winreg.SetValueEx(key, name, 0, value_type, value)
 
 
+def shortcut_path(known_folder: str) -> Path:
+    if known_folder not in {"Desktop", "Startup"}:
+        raise ValueError(f"Unbekannter Verknüpfungsordner: {known_folder}")
+    script = (
+        "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); "
+        f"$folder = [Environment]::GetFolderPath({powershell_quote(known_folder)}); "
+        f"Join-Path $folder {powershell_quote(SHORTCUT_FILENAME)}"
+    )
+    result = subprocess.run(
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
+        check=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+    path = Path(result.stdout.strip())
+    if path.name != SHORTCUT_FILENAME or not path.is_absolute():
+        raise RuntimeError(f"Verknüpfungsordner konnte nicht bestimmt werden: {known_folder}")
+    return path
+
+
+def capture_integration_snapshot(registry: dict[str, tuple[object, int]] | None) -> dict[str, object]:
+    encoded_registry: dict[str, dict[str, object]] | None = None
+    if registry is not None:
+        encoded_registry = {}
+        for name, (value, value_type) in registry.items():
+            if isinstance(value, bytes):
+                encoded_value: object = {"binary": base64.b64encode(value).decode("ascii")}
+            elif isinstance(value, (str, int, list)):
+                encoded_value = value
+            else:
+                raise RuntimeError(f"Nicht unterstützter Registry-Wert: {name}")
+            encoded_registry[name] = {"value": encoded_value, "type": value_type}
+    shortcuts: dict[str, str | None] = {}
+    for folder in ("Desktop", "Startup"):
+        path = shortcut_path(folder)
+        assert_not_reparse(path, "vorhandene Verknüpfung")
+        shortcuts[folder] = base64.b64encode(path.read_bytes()).decode("ascii") if path.exists() else None
+    return {"registry": encoded_registry, "shortcuts": shortcuts}
+
+
+def restore_integration_snapshot(snapshot: object) -> None:
+    if not isinstance(snapshot, dict) or set(snapshot) != {"registry", "shortcuts"}:
+        raise RuntimeError("Ungültiger Windows-Integrationszustand im Recovery-Journal.")
+    shortcuts = snapshot["shortcuts"]
+    if not isinstance(shortcuts, dict) or set(shortcuts) != {"Desktop", "Startup"}:
+        raise RuntimeError("Ungültige Verknüpfungen im Recovery-Journal.")
+    decoded_shortcuts: dict[str, bytes | None] = {}
+    for folder, encoded in shortcuts.items():
+        try:
+            decoded_shortcuts[folder] = base64.b64decode(encoded, validate=True) if isinstance(encoded, str) else None
+        except (ValueError, binascii.Error) as error:
+            raise RuntimeError("Ungültiger Verknüpfungsinhalt im Recovery-Journal.") from error
+        if encoded is not None and not isinstance(encoded, str):
+            raise RuntimeError("Ungültiger Verknüpfungsinhalt im Recovery-Journal.")
+    registry = snapshot["registry"]
+    if registry is not None and not isinstance(registry, dict):
+        raise RuntimeError("Ungültiger Registry-Zustand im Recovery-Journal.")
+    decoded: dict[str, tuple[object, int]] = {}
+    for name, entry in (registry or {}).items():
+        if not isinstance(name, str) or not isinstance(entry, dict) or set(entry) != {"value", "type"}:
+            raise RuntimeError("Ungültiger Registry-Eintrag im Recovery-Journal.")
+        value = entry["value"]
+        if isinstance(value, dict) and set(value) == {"binary"} and isinstance(value["binary"], str):
+            try:
+                value = base64.b64decode(value["binary"], validate=True)
+            except (ValueError, binascii.Error) as error:
+                raise RuntimeError("Ungültiger Registry-Wert im Recovery-Journal.") from error
+        if not isinstance(value, (str, int, bytes, list)) or not isinstance(entry["type"], int):
+            raise RuntimeError("Ungültiger Registry-Wert im Recovery-Journal.")
+        decoded[name] = (value, entry["type"])
+    for folder, content in decoded_shortcuts.items():
+        path = shortcut_path(folder)
+        assert_not_reparse(path, "Recovery-Verknüpfung")
+        if content is None:
+            path.unlink(missing_ok=True)
+        else:
+            temporary = path.with_name(f".{path.name}.{uuid4().hex}.tmp")
+            try:
+                temporary.write_bytes(content)
+                os.replace(temporary, path)
+            finally:
+                temporary.unlink(missing_ok=True)
+    restore_installed_application_registration(decoded if registry is not None else None)
+
+
 @dataclass(slots=True)
 class SetupMutex:
     handle: int | None
@@ -1989,6 +2163,7 @@ def run_installation() -> int:
                 print(f"Installiere {payload_path()} nach {target}")
         registry_snapshot = installed_application_registration()
         transaction = install_files_transactionally(files)
+        write_integration_snapshot(transaction, capture_integration_snapshot(registry_snapshot))
         installed_launcher = target.parent / OPEN_LAUNCHER_FILENAME
         installed_icon = target.parent / ICON_FILENAME
         installed_uninstaller = target.parent / UNINSTALLER_FILENAME
@@ -2072,11 +2247,11 @@ def run_installation() -> int:
 
     if "--silent" in sys.argv:
         should_launch = "--no-launch" not in sys.argv
-        show_message(
-            "showinfo",
-            "Installation abgeschlossen",
-            f"Version {version} wurde erfolgreich installiert.",
-        )
+        if server_autostart_warning:
+            if sys.stderr is not None:
+                print(f"Serverautostart fehlgeschlagen: {server_autostart_warning}", file=sys.stderr)
+        else:
+            show_message("showinfo", "Installation abgeschlossen", f"Version {version} wurde erfolgreich installiert.")
     else:
         title, instruction, content = completion_text(
             action, version, installed_version, target, server_autostart_confirmed=not bool(server_autostart_warning)
@@ -2107,7 +2282,7 @@ def run_installation() -> int:
                 progress_dialog.close()
     if should_launch:
         subprocess.Popen([str(target)], close_fds=True)
-    return 0
+    return 4 if server_autostart_warning and "--silent" in sys.argv else 0
 
 
 def main() -> int:

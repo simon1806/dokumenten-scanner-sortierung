@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ctypes
+import base64
+import io
 import os
 import subprocess
 import time
@@ -981,10 +983,7 @@ class InstallerTests(unittest.TestCase):
             real_replace = installer.os.replace
 
             def fail_payload_backup(source_path: Path, destination_path: Path) -> None:
-                if (
-                    Path(destination_path).parent.name.startswith(".backup-")
-                    and Path(destination_path).name != installer.TRANSACTION_JOURNAL_FILENAME
-                ):
+                if Path(source_path) == destination and Path(destination_path).parent.name.startswith(".backup-"):
                     raise OSError("backup locked")
                 real_replace(source_path, destination_path)
 
@@ -1006,22 +1005,23 @@ class InstallerTests(unittest.TestCase):
             source.write_bytes(b"MZnew")
             destination.write_bytes(original_content)
             real_replace = installer.os.replace
-            replace_calls = 0
+            replaced_payload_backup = False
 
-            def fail_second_replace(source_path: Path, destination_path: Path) -> None:
-                nonlocal replace_calls
-                replace_calls += 1
-                if replace_calls == 2:
+            def fail_stage_replace(source_path: Path, destination_path: Path) -> None:
+                nonlocal replaced_payload_backup
+                if Path(source_path).parent.name.startswith(".stage-"):
                     raise OSError("stage move failed")
+                if Path(destination_path).parent.name.startswith(".backup-") and Path(source_path) == destination:
+                    replaced_payload_backup = True
                 real_replace(source_path, destination_path)
 
-            with patch("installer.installer.os.replace", side_effect=fail_second_replace):
+            with patch("installer.installer.os.replace", side_effect=fail_stage_replace):
                 with self.assertRaisesRegex(OSError, "stage move failed"):
                     installer.install_files_transactionally(
                         (verified_payload("application.exe", source, destination),)
                     )
 
-            self.assertEqual(4, replace_calls)
+            self.assertTrue(replaced_payload_backup)
             self.assertEqual(original_content, destination.read_bytes())
 
     def test_staging_uses_manifest_identity_and_detects_toctou_change(self) -> None:
@@ -1483,6 +1483,160 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(2, result)
         confirm.assert_not_called()
         self.assertEqual("Installation blockiert", show_message.call_args.args[1])
+
+    def test_prejournal_staging_is_recovered_without_touching_installed_files(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            installed = root / installer.APPLICATION_FILENAME
+            installed.write_bytes(b"previous version")
+            stage = root / ".stage-staging"
+            backup = root / ".backup-staging"
+            stage.mkdir()
+            backup.mkdir()
+            (stage / f"00-{installer.APPLICATION_FILENAME}").write_bytes(b"new version")
+            (backup / installer.TRANSACTION_STAGING_MARKER).write_text("staging", encoding="ascii")
+            (backup / f"{installer.TRANSACTION_JOURNAL_FILENAME}.{uuid4().hex}.tmp").write_text(
+                "{partial", encoding="utf-8"
+            )
+
+            self.assertEqual(("staging",), installer.recover_orphaned_transactions(root))
+            self.assertEqual(b"previous version", installed.read_bytes())
+            self.assertFalse(stage.exists())
+            self.assertFalse(backup.exists())
+
+    def test_partial_staging_marker_write_is_recovered_before_any_payload_copy(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            stage = root / ".stage-marker-write"
+            backup = root / ".backup-marker-write"
+            stage.mkdir()
+            backup.mkdir()
+            (backup / f"{installer.TRANSACTION_STAGING_MARKER}.tmp").write_text("marker-", encoding="ascii")
+
+            self.assertEqual(("marker-write",), installer.recover_orphaned_transactions(root))
+            self.assertFalse(stage.exists())
+            self.assertFalse(backup.exists())
+
+    def test_crash_recovery_restores_shortcuts_and_registry_with_files(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            transaction, destination, _backup, old_content, _new_content = (
+                create_full_recovery_transaction(root, "integration")
+            )
+            desktop = root / "Desktop" / installer.SHORTCUT_FILENAME
+            startup = root / "Startup" / installer.SHORTCUT_FILENAME
+            desktop.parent.mkdir()
+            startup.parent.mkdir()
+            desktop.write_bytes(b"new desktop shortcut")
+            startup.write_bytes(b"new startup shortcut")
+            snapshot = {
+                "registry": {"DisplayVersion": {"value": "0.4.1", "type": 1}},
+                "shortcuts": {
+                    "Desktop": base64.b64encode(b"old desktop shortcut").decode("ascii"),
+                    "Startup": None,
+                },
+            }
+            installer.write_integration_snapshot(transaction, snapshot)
+            with (
+                patch("installer.installer.shortcut_path", side_effect=lambda folder: desktop if folder == "Desktop" else startup),
+                patch("installer.installer.restore_installed_application_registration") as restore_registry,
+            ):
+                installer.recover_orphaned_transactions(root)
+
+            self.assertEqual(old_content, destination.read_bytes())
+            self.assertEqual(b"old desktop shortcut", desktop.read_bytes())
+            self.assertFalse(startup.exists())
+            restore_registry.assert_called_once_with({"DisplayVersion": ("0.4.1", 1)})
+
+    def test_staging_marker_with_valid_journal_uses_full_file_recovery(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            transaction, destination, _backup, old_content, _new_content = (
+                create_full_recovery_transaction(root, "marker-after-move")
+            )
+            (transaction.backup_directory / installer.TRANSACTION_STAGING_MARKER).write_text(
+                "marker-after-move", encoding="ascii"
+            )
+
+            installer.recover_orphaned_transactions(root)
+
+            self.assertEqual(old_content, destination.read_bytes())
+            self.assertFalse(transaction.backup_directory.exists())
+
+    def test_server_settings_directory_error_is_reported_as_runtime_error(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "user-settings.json"
+            source.write_text("{}", encoding="utf-8")
+            destination = root / "central" / "settings.json"
+            with (
+                patch("installer.installer.user_settings_path", return_value=source),
+                patch("installer.installer.server_settings_path", return_value=destination),
+                patch.object(Path, "mkdir", side_effect=PermissionError("denied")),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "Zentrale Einstellungen konnten nicht erstellt werden"):
+                    installer.prepare_server_settings()
+
+    def test_silent_server_autostart_failure_returns_error_without_success_message(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / installer.APPLICATION_FILENAME
+            transaction = SimpleNamespace(backup_directory=root, commit=Mock(return_value=None), rollback=Mock())
+            stderr = io.StringIO()
+            with (
+                patch.object(installer.sys, "argv", ["setup.exe", "--silent", "--server-autostart", "--no-launch"]),
+                patch.object(installer.sys, "stderr", stderr),
+                patch("installer.installer.installation_path", return_value=target),
+                patch("installer.installer.recover_orphaned_transactions", return_value=()),
+                patch("installer.installer.application_version", return_value="0.4.2"),
+                patch("installer.installer.payload_files", return_value=()),
+                patch("installer.installer.validate_payload_bundle", return_value=()),
+                patch("installer.installer.installed_application_registration", return_value=None),
+                patch("installer.installer.install_files_transactionally", return_value=transaction),
+                patch("installer.installer.capture_integration_snapshot", return_value={}),
+                patch("installer.installer.write_integration_snapshot"),
+                patch("installer.installer.create_desktop_shortcut", return_value=root / "desktop.lnk"),
+                patch("installer.installer.register_installed_application"),
+                patch("installer.installer.prepare_server_settings", return_value=root / "settings.json"),
+                patch("installer.installer.create_or_update_server_autostart", side_effect=RuntimeError("task failed")),
+                patch("installer.installer.notify_shell_icon_change"),
+                patch("installer.installer.show_message") as show_message,
+            ):
+                result = installer.run_installation()
+
+            self.assertEqual(4, result)
+            self.assertIn("task failed", stderr.getvalue())
+            show_message.assert_not_called()
+
+    def test_interactive_server_autostart_warning_keeps_successful_app_exit_code(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / installer.APPLICATION_FILENAME
+            transaction = SimpleNamespace(backup_directory=root, commit=Mock(return_value=None), rollback=Mock())
+            with (
+                patch.object(installer.sys, "argv", ["setup.exe", "--no-launch"]),
+                patch("installer.installer.installation_path", return_value=target),
+                patch("installer.installer.recover_orphaned_transactions", return_value=()),
+                patch("installer.installer.application_version", return_value="0.4.2"),
+                patch("installer.installer.confirm_installation_selection", return_value=installer.InstallationSelection(True, True)),
+                patch("installer.installer.payload_files", return_value=()),
+                patch("installer.installer.validate_payload_bundle", return_value=()),
+                patch("installer.installer.installed_application_registration", return_value=None),
+                patch("installer.installer.install_files_transactionally", return_value=transaction),
+                patch("installer.installer.capture_integration_snapshot", return_value={}),
+                patch("installer.installer.write_integration_snapshot"),
+                patch("installer.installer.create_desktop_shortcut", return_value=root / "desktop.lnk"),
+                patch("installer.installer.register_installed_application"),
+                patch("installer.installer.prepare_server_settings", return_value=root / "settings.json"),
+                patch("installer.installer.create_or_update_server_autostart", side_effect=RuntimeError("task failed")),
+                patch("installer.installer.notify_shell_icon_change"),
+                patch("installer.installer.completion_text", return_value=("Partial", "Info", "Details")),
+                patch("installer.installer.show_completion", return_value=False) as show_completion,
+            ):
+                result = installer.run_installation()
+
+            self.assertEqual(0, result)
+            self.assertIn("task failed", show_completion.call_args.args[2])
 
 
 if __name__ == "__main__":
