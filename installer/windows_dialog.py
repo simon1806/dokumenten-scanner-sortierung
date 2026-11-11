@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import subprocess
+import json
+import os
 import tempfile
 import time
 from dataclasses import dataclass
@@ -17,8 +19,38 @@ class ProgressDialog:
     """A lightweight, modeless PowerShell progress window owned by setup."""
 
     process: subprocess.Popen[object]
+    status_path: Path | None = None
+    _last_write: float = 0
+    _last_step: str = ""
+    _closed: bool = False
+
+    def update(self, percent: int, step: str, detail: str = "") -> None:
+        if self._closed or self.status_path is None:
+            return
+        now = time.monotonic()
+        if step == self._last_step and percent < 100 and now - self._last_write < 0.1:
+            return
+        temporary = self.status_path.with_suffix(".tmp")
+        try:
+            temporary.write_text(json.dumps({"percent": percent, "step": step, "detail": detail}), encoding="utf-8")
+            os.replace(temporary, self.status_path)
+            self._last_write, self._last_step = now, step
+        except OSError:
+            # A display failure must never interrupt a file transaction.
+            pass
+        finally:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     def close(self) -> None:
+        self._closed = True
+        if self.status_path is not None:
+            try:
+                self.status_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         if self.process.poll() is not None:
             return
         try:
@@ -64,6 +96,7 @@ def _progress_script(
     *,
     ready_path: Path | None = None,
     ready_value: str = "ready",
+    status_path: Path | None = None,
 ) -> str:
     shown_action = ""
     if ready_path is not None:
@@ -89,16 +122,28 @@ def _progress_script(
         "$titleLabel.ForeColor = [System.Drawing.Color]::White; $titleLabel.Font = New-Object System.Drawing.Font('Segoe UI Semibold',14); "
         f"$titleLabel.Text = {powershell_quote(instruction)}; $header.Controls.Add($titleLabel); "
         "$contentLabel = New-Object System.Windows.Forms.Label; $contentLabel.AutoSize = $false; "
-        "$contentLabel.Location = New-Object System.Drawing.Point(24,91); $contentLabel.Size = New-Object System.Drawing.Size(670,54); "
+        "$contentLabel.Location = New-Object System.Drawing.Point(24,91); $contentLabel.Size = New-Object System.Drawing.Size(670,48); "
         "$contentLabel.Font = New-Object System.Drawing.Font('Segoe UI',9); "
         f"$contentLabel.Text = {powershell_quote(content)}; $form.Controls.Add($contentLabel); "
         "$progress = New-Object System.Windows.Forms.ProgressBar; "
         "$progress.Location = New-Object System.Drawing.Point(24,166); $progress.Size = New-Object System.Drawing.Size(670,24); "
-        "$progress.Style = 'Marquee'; $progress.MarqueeAnimationSpeed = 28; $form.Controls.Add($progress); "
+        "$progress.Style = 'Continuous'; $progress.Minimum = 0; $progress.Maximum = 100; "
+        "$progress.Value = 0; $form.Controls.Add($progress); "
         "$waitLabel = New-Object System.Windows.Forms.Label; $waitLabel.AutoSize = $false; "
         "$waitLabel.Location = New-Object System.Drawing.Point(24,202); $waitLabel.Size = New-Object System.Drawing.Size(670,22); "
         "$waitLabel.ForeColor = [System.Drawing.Color]::FromArgb(72,96,111); $waitLabel.Font = New-Object System.Drawing.Font('Segoe UI',8); "
         "$waitLabel.Text = 'Bitte schließen Sie dieses Fenster nicht und starten Sie kein weiteres Setup.'; $form.Controls.Add($waitLabel); "
+        "$percentLabel = New-Object System.Windows.Forms.Label; $percentLabel.Location = New-Object System.Drawing.Point(24,143); "
+        "$percentLabel.Size = New-Object System.Drawing.Size(670,22); $percentLabel.Text = '0 %'; $form.Controls.Add($percentLabel); "
+        f"$statusPath = {powershell_quote(str(status_path or ''))}; "
+        "$timer = New-Object System.Windows.Forms.Timer; $timer.Interval = 100; "
+        "$timer.Add_Tick({ if ($statusPath -and [System.IO.File]::Exists($statusPath)) { try { "
+        "$state = [System.IO.File]::ReadAllText($statusPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json; "
+        "$progress.Value = [Math]::Max(0, [Math]::Min(100, [int]$state.percent)); "
+        "$titleLabel.Text = [string]$state.step; $contentLabel.Text = [string]$state.detail; "
+        "$percentLabel.Text = ([string]$progress.Value + ' %') "
+        "} catch { } } }); $timer.Start(); "
+        "$form.Add_FormClosed({ $timer.Stop(); $timer.Dispose() }); "
         f"$form.Add_Shown({{ {shown_action}$form.Activate() }}); "
         "[System.Windows.Forms.Application]::Run($form)"
     )
@@ -111,7 +156,8 @@ def show_installation_progress(
     icon_path: Path,
 ) -> ProgressDialog:
     """Show a non-interactive progress window while setup replaces its payload."""
-    script = _progress_script(title, instruction, content, icon_path)
+    status_path = _dialog_response_path()
+    script = _progress_script(title, instruction, content, icon_path, status_path=status_path)
     process = subprocess.Popen(
         [
             "powershell.exe",
@@ -125,7 +171,7 @@ def show_installation_progress(
         close_fds=True,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
-    return ProgressDialog(process)
+    return ProgressDialog(process, status_path)
 
 
 def show_confirmation(
@@ -276,6 +322,7 @@ def show_confirmation_with_server_autostart_and_progress(
     """Hand the visible confirmation directly over to a progress window."""
     selection_path = _dialog_response_path()
     ready_path = _dialog_response_path()
+    status_path = _dialog_response_path()
     progress_title, progress_instruction, progress_content = progress_text
     script = (
         "Add-Type -AssemblyName System.Windows.Forms; "
@@ -335,6 +382,7 @@ def show_confirmation_with_server_autostart_and_progress(
             progress_content,
             icon_path,
             ready_path=ready_path,
+            status_path=status_path,
         )
     )
     process = subprocess.Popen(
@@ -363,7 +411,7 @@ def show_confirmation_with_server_autostart_and_progress(
         if process.poll() is None:
             process.terminate()
         return False, False, None
-    return True, selection == "server", ProgressDialog(process)
+    return True, selection == "server", ProgressDialog(process, status_path)
 
 
 def show_completion(
