@@ -21,6 +21,8 @@ Barcode-, Text- und OCR-Erkennung je Seite
 
 Mehrseitige Dokumente bleiben zusammen. Werden in einem Scan mehrere Dokumentanfänge erkannt, erzeugt die Anwendung entsprechend mehrere PDFs.
 
+Neu erzeugte Teildokumente werden als **PDF 2.0** gespeichert. Die archivierten Originalscans und unverändert weitergeleiteten Dateien behalten ihr ursprüngliches PDF-Format. Die Versionswahl allein fügt keine zusätzliche Komprimierung, OCR-Textebene oder PDF/A-Konformität hinzu.
+
 ## Unterstützte Dokumente
 
 | Dokumenttyp | Erkennungsmerkmale | Dateiname |

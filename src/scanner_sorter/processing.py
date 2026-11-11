@@ -468,6 +468,7 @@ class DocumentProcessor:
             for index, group in enumerate(groups):
                 stage = staging / f"document-{index + 1}.pdf"
                 writer = PdfWriter()
+                writer.pdf_header = "%PDF-2.0"
                 for page_index in group.page_indexes:
                     writer.add_page(reader.pages[page_index])
                 with stage.open("wb") as stream:
