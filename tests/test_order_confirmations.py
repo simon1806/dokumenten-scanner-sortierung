@@ -272,7 +272,7 @@ class OrderConfirmationTests(unittest.TestCase):
             log = Path(directory) / "dokumentensortierer-2026-11-11.log"
             log.write_text(
                 "2026-11-11 08:00:00,000 WARNING scanner_sorter.processing [worker]: "
-                "Vorgang abgeschlossen; schema=2; ereignis=processing_completed; version=0.4.2; "
+                "Vorgang abgeschlossen; schema=2; ereignis=processing_completed; version=0.4.3; "
                 "status=nicht_erkannt; grundcode=auftragsbestaetigung_ohne_handschrift; "
                 "erkennungspfade=auftragsbestaetigung:1; gesamt_s=2.0\n",
                 encoding="utf-8",

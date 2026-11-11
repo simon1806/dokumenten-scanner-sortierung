@@ -1,6 +1,10 @@
 # Änderungsprotokoll
 
-## Noch nicht veröffentlicht
+## 0.4.3 – 2026-11-11
+
+- Das Setup zeigt den tatsächlichen Fortschritt in acht Schritten mit aktueller Datei und Prozentwert. Große Dateien melden verarbeitete Bytes; Rückrollen und Teilstörungen werden ausdrücklich angezeigt. Die Prozentzahl ist keine Schätzung der verbleibenden Zeit.
+- Abgebrochene Updates stellen neben Programmdateien auch Registry-Eintrag sowie Desktop- und Autostart-Verknüpfungen wieder her. Staging-Marker und Recovery-Journal werden atomar veröffentlicht; ein Abbruch vor dem ersten Dateiaustausch wird sicher bereinigt.
+- Bei stillen Installationen wird ein fehlgeschlagener SYSTEM-Autostart auf stderr gemeldet und mit Exitcode 4 beendet. Interaktive Installationen zeigen die Teilstörung weiterhin im Abschlussdialog. Fehler beim Vorbereiten der zentralen Einstellungen werden als verständliche Setup-Warnung ausgegeben.
 
 - Bei gemischten Stapeln werden unbestätigte AU-Seiten weder an unterschriebene Angebote noch als normale Folgeseiten an andere Dokumente angehängt. Die AU-Ausstellerprüfung verlangt das Glas-Hagen-Logo und die eigenen Kontaktdaten in getrennten Briefkopfbereichen; ein Kundenstempel oder eine Empfängeradresse reichen nicht aus.
 - Unterschriebene Glas-Hagen-Auftragsbestätigungen werden anhand des eigenen Briefkopfs, der Auftragsnummer, des Rücksende-/Unterschriftsfelds und einer handschriftlichen Eintragung als `AU_<Auftragsnummer>_UNTERS.pdf` erkannt. Unsignierte Formulare und fremde Auftragsbestätigungen bleiben zur manuellen Prüfung vorgesehen.

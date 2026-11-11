@@ -156,6 +156,8 @@ Ist die SYSTEM-Aufgabe bereits gestoppt, schließt **Anwendung beenden** nach ei
 
 ### Beschleunigung des ersten Fensterstarts
 
+Version 0.4.3 zeigt während Installation, Update und Reparatur die tatsächlichen Arbeitsschritte, die aktuelle Datei und den Fortschritt in Prozent. Bei einem Abbruch werden auch Registry-Eintrag und Verknüpfungen wiederhergestellt. Eine stille Installation mit fehlgeschlagenem SYSTEM-Autostart endet mit Exitcode `4`; bei interaktiver Installation steht die Teilstörung im Abschlussdialog. Nach dem Update auf dem Server sind der Start der Überwachung und ein Testscan einschließlich einer unterschriebenen Auftragsbestätigung zu prüfen.
+
 Version 0.3.6 installiert die Laufzeitdateien dauerhaft im Unterordner `_internal` des Programmordners. Damit muss die installierte Anwendung beim ersten Öffnen nach einem Serverneustart ihr großes OCR-Paket nicht erneut in einen temporären Ordner entpacken. Die Benutzeroberfläche fragt beim Start außerdem keine OCR-Versionen ab; diese bleiben im Infofenster und in den Protokollen der aktiven Überwachung verfügbar. Die tatsächliche Startzeit ist mit Version 0.3.6 auf dem Server zu prüfen.
 
 EXE und `_internal` gehören bei dieser Installation zusammen. Zum Installieren, Aktualisieren oder Übertragen einer Installation wird weiterhin das Setup verwendet. Die portable Einzel-EXE bleibt eigenständig und entpackt ihre Komponenten weiterhin beim Start. Die Serveraufgabe, zentrale Einstellungen und Desktop-Verknüpfung verwenden unverändert ihre bisherigen Einstiegspunkte.
@@ -246,7 +248,7 @@ Nach Abschluss der gesammelten Änderungen das OCR-Paket vorbereiten und den nä
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.4.2
+.\scripts\build-release.ps1 -Version 0.4.3
 ```
 
 Die OCR-Vorbereitung baut ausschließlich Tesseract 5.5.4 aus dem per SHA-256 festgelegten offiziellen Quellarchiv, solange noch kein entsprechendes MSYS2-Windows-Paket verfügbar ist. GCC 16.2.0, CMake, Ninja und ihre Abhängigkeiten werden anhand von `scripts/tesseract-build-tools.lock.json` geprüft und ausschließlich unter `.artifacts/tesseract-5.5.4-update` entpackt. Compiler und Buildwerkzeuge werden nicht in die Anwendung übernommen. Der getrennte Laufzeitsatz aus `scripts/tesseract-runtime.lock.json` enthält Leptonica 1.87.0 (Paketrevision 2), libpng 1.6.59, libtiff 4.7.2, libwebp 1.6.0, libjpeg-turbo 3.2.0, OpenJPEG 2.5.4, zlib 1.3.2 sowie ihre Abhängigkeiten und Lizenztexte. Downloads bleiben für weitere Aufrufe zwischengespeichert. `OCR-BUILD-MANIFEST.json` dokumentiert Quellhash, Werkzeug- und Laufzeitlisten, Compiler und Optionen.
