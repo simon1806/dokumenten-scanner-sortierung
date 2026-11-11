@@ -43,6 +43,7 @@ _RECOGNITION_PATHS = {
     "allgemeiner_kopf",
     "abtretung_nummer",
     "angebot_bestaetigung",
+    "auftragsbestaetigung",
     "ganzseite",
     "heitzer_seitenreferenz",
 }

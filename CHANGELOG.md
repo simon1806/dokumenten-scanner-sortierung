@@ -2,6 +2,8 @@
 
 ## Noch nicht veröffentlicht
 
+- Unterschriebene Glas-Hagen-Auftragsbestätigungen werden anhand des eigenen Briefkopfs, der Auftragsnummer, des Rücksende-/Unterschriftsfelds und einer handschriftlichen Eintragung als `AU_<Auftragsnummer>_UNTERS.pdf` erkannt. Unsignierte Formulare und fremde Auftragsbestätigungen bleiben zur manuellen Prüfung vorgesehen.
+- Die AU-Unterschriftszeile wird über `Ort / den` auch auf kürzeren Folgeseiten gefunden; Seiten mit gleichem eigenen AU-Kopf und gleicher Nummer bleiben als ein Dokument zusammen.
 - Neu erzeugte Teildokumente werden als PDF 2.0 gespeichert. Archivierte Originalscans und unverändert weitergeleitete Dateien behalten ihr ursprüngliches Format; Seiteninhalt und Seitenreihenfolge werden weiterhin übernommen.
 
 ## 0.4.2 – 2026-10-29

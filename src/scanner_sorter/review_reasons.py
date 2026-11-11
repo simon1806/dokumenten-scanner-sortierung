@@ -6,6 +6,8 @@ REVIEW_REASON_LABELS = {
     "belegnummer_nicht_erkannt": "Dokumentart erkannt, Belegnummer nicht lesbar",
     "lieferant_erkannt_belegart_unbekannt": "Lieferant erkannt, Belegart nicht eindeutig",
     "angebot_ohne_handschrift": "Angebot ohne erkennbare handschriftliche Eintragung",
+    "auftragsbestaetigung_ohne_handschrift": "Auftragsbestätigung ohne erkennbare handschriftliche Unterschrift",
+    "auftragsbestaetigung_unterschriftsfeld_nicht_erkannt": "Auftragsbestätigung erkannt, Unterschriftsfeld nicht lesbar",
     "angebot_bestaetigung_nicht_erkannt": "Angebot erkannt, Auftragserteilung nicht lesbar",
     "anlage_ohne_hauptbeleg": "Anlage ohne zugeordneten Hauptbeleg",
     "dokumenttyp_nicht_erkannt": "Dokument konnte nicht zugeordnet werden",

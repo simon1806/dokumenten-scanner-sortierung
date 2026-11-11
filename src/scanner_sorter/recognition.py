@@ -41,6 +41,10 @@ SIGNED_OFFER_INK_X_RANGE = (0.26, 0.78)
 SIGNED_OFFER_INK_ABOVE_LINE = (0.065, 0.004)
 SIGNED_OFFER_MIN_LINE_DARK_RATIO = 0.18
 SIGNED_OFFER_MIN_INK_RATIO = 0.003
+SIGNED_ORDER_CONFIRMATION_CROP = (0.02, 0.45, 0.98, 0.90)
+SIGNED_ORDER_LABEL_CROP = (0.05, 0.45, 0.51, 0.90)
+SIGNED_ORDER_INK_X_RANGE = (0.52, 0.87)
+SIGNED_ORDER_INK_ABOVE_LINE = (0.045, 0.004)
 SCANNER_TIMESTAMP = re.compile(r"(?<!\d)(\d{2})(\d{2})(\d{2})\d{4,6}(?!\d)")
 # Fax OCR can split the four-digit year or read a printed dash as a tilde.
 # Keep the 20xx year and six-digit sequence mandatory; only NEUMA uses this pattern.
@@ -193,6 +197,7 @@ def has_supported_document_signal(text: str) -> bool:
     normalised = normalise(text)
     return (
         is_assignment_declaration(normalised)
+        or is_order_confirmation(normalised)
         or is_montage_report(normalised)
         or is_pauli_delivery_note(normalised)
         or any(signal in normalised for signal in SUPPORTED_DOCUMENT_SIGNALS)
@@ -203,6 +208,12 @@ def unrecognised_document_reason(text: str) -> str:
     """Describe only evidence present in the OCR, without exporting its text."""
     normalised = normalise(text)
     if re.search(r"\bAUFTRAGSBEST(?:A|AE)TIGUNG\b", normalised):
+        if is_order_confirmation(normalised):
+            return (
+                "auftragsbestaetigung_unterschriftsfeld_nicht_erkannt"
+                if order_confirmation_number_from_text(normalised)
+                else "belegnummer_nicht_erkannt"
+            )
         return "dokumentart_nicht_unterstuetzt"
     if (
         is_pauli_delivery_note(normalised)
@@ -310,6 +321,35 @@ def is_zeidler_execution_confirmation(text: str) -> bool:
     return ZEIDLER_EXECUTION_SIGNAL in normalised and has_supplier_signal
 
 
+def is_order_confirmation(text: str) -> bool:
+    """Require the Glas Hagen issuer and an explicit order-confirmation title."""
+    normalised = normalise(text)
+    return bool(
+        re.search(r"\bGLAS HAGEN\b", normalised)
+        and re.search(r"\bGLASHAGEN\s*\.\s*DE\b", normalised)
+        and re.search(r"\bAUFTRAGSBEST(?:A|AE)TIGUNG\b", normalised)
+    )
+
+
+def order_confirmation_number_from_text(text: str) -> str | None:
+    if not is_order_confirmation(text):
+        return None
+    match = re.search(
+        rf"\bAUFTRAGSBEST(?:A|AE)TIGUNG\s+NR\.?\s*:?\s*{NUMBER}\b",
+        normalise(text),
+    )
+    return match.group(1) if match else None
+
+
+def has_order_confirmation_signature_field(text: str) -> bool:
+    """Identify the printed return/signature block; handwriting is checked separately."""
+    normalised = normalise(text)
+    return bool(
+        re.search(r"\bKOPIE DER AUFTRAGSBEST(?:A|AE|D)TIGUNG\b", normalised)
+        and re.search(r"\bVON IHNEN UNTERSCHRIEBEN\b", normalised)
+    )
+
+
 def offer_number_from_text(text: str) -> str | None:
     """Read the number printed in a Glas Hagen offer header."""
     match = re.search(
@@ -367,6 +407,10 @@ def detect_document_from_text(
     """Recognise the supported document headers from OCR text and barcode values."""
     normalised = normalise(text)
     barcode_values = tuple(barcodes)
+
+    order_number = order_confirmation_number_from_text(normalised)
+    if order_number and has_order_confirmation_signature_field(normalised):
+        return DetectedDocument("AU", f"{order_number}_UNTERS")
 
     offer_number = offer_number_from_text(normalised)
     if offer_number and is_signed_offer(normalised):
@@ -481,6 +525,7 @@ class PageRecognizer:
         self._last_metrics = self._new_metrics()
         self._page_reasons: dict[int, str] = {}
         self._last_page_reasons: dict[int, str] = {}
+        self._order_confirmation_numbers: dict[int, str] = {}
 
     def _new_metrics(self) -> dict[str, object]:
         return {
@@ -499,6 +544,7 @@ class PageRecognizer:
         with self._metrics_lock:
             self._active_metrics = self._new_metrics()
             self._page_reasons = {}
+            self._order_confirmation_numbers = {}
 
     def _finish_metrics(self) -> None:
         with self._metrics_lock:
@@ -612,7 +658,7 @@ class PageRecognizer:
             # cancelled instead of allowing a long PDF to continue spawning OCR
             # processes after the document has already been rejected.
             detections = [future.result() for future in futures]
-            return complete_signed_offer_pages(detections)
+            return complete_signed_offer_pages(self._complete_signed_order_confirmation_pages(detections))
         except Exception:
             for future in futures:
                 future.cancel()
@@ -629,6 +675,30 @@ class PageRecognizer:
                 f"OCR-Gesamtzeitlimit von {self.settings.processing_timeout_seconds} Sekunden überschritten."
             )
         return max(1, min(OCR_TIMEOUT_SECONDS, math.ceil(remaining)))
+
+    def _remember_order_confirmation_header(self, page: object, text: str) -> None:
+        number = order_confirmation_number_from_text(text)
+        page_index = getattr(page, "number", None)
+        if number and type(page_index) is int and page_index >= 0:
+            with self._metrics_lock:
+                self._order_confirmation_numbers[page_index] = number
+
+    def _complete_signed_order_confirmation_pages(
+        self, detections: list[DetectedDocument | None]
+    ) -> list[DetectedDocument | None]:
+        # Unlike an unknown attachment, every inherited AU page must carry the
+        # same Glas Hagen order-confirmation header as a verified signed page.
+        signed_orders = {
+            detection.number.removesuffix("_UNTERS"): detection
+            for detection in detections
+            if detection is not None and detection.document_type == "AU"
+        }
+        with self._metrics_lock:
+            numbers = dict(self._order_confirmation_numbers)
+        return [
+            detection or signed_orders.get(numbers.get(index, ""))
+            for index, detection in enumerate(detections)
+        ]
 
     def _order_heitzer_delivery_pages(
         self,
@@ -722,9 +792,10 @@ class PageRecognizer:
             pass
 
         if embedded_text:
+            self._remember_order_confirmation_header(page, embedded_text)
             self._record_path("eingebetteter_text")
             detected = detect_document_from_text(embedded_text, mi_scan_date=mi_scan_date)
-            if detected and detected.document_type != "AG":
+            if detected and detected.document_type not in {"AG", "AU"}:
                 return detected
             if is_pauli_measurement_attachment(embedded_text):
                 LOGGER.info(
@@ -740,7 +811,7 @@ class PageRecognizer:
             self._add_metric("barcode_seconds", time.perf_counter() - barcode_started)
         self._record_path("barcode")
         detected = detect_document_from_text(embedded_text, barcodes, mi_scan_date)
-        if detected and detected.document_type != "AG":
+        if detected and detected.document_type not in {"AG", "AU"}:
             return detected
 
         # Nowak druckt Lieferant, Belegart und Lieferscheinnummer stets in
@@ -795,10 +866,13 @@ class PageRecognizer:
 
         self._record_path("allgemeiner_kopf")
         header_text = self._read_ocr(self._header_crop(image))
+        self._remember_order_confirmation_header(page, f"{embedded_text}\n{header_text}")
         detected = detect_document_from_text(header_text, barcodes, mi_scan_date)
         if detected:
             if detected.document_type == "AG" and not self._has_signed_offer_mark(image):
                 return self._unrecognised_page(page, "angebot_ohne_handschrift")
+            if detected.document_type == "AU" and not self._has_signed_order_confirmation_mark(image):
+                return self._unrecognised_page(page, "auftragsbestaetigung_ohne_handschrift")
             return detected
 
         pauli_header = f"{embedded_text}\n{nowak_text}\n{header_text}"
@@ -823,6 +897,25 @@ class PageRecognizer:
             if detected:
                 LOGGER.info("Abtretungserklaerung-Schnellerkennung verwendet; auftrag=%s", detected.number)
                 return detected
+
+        order_header = f"{embedded_text}\n{header_text}"
+        if order_confirmation_number_from_text(order_header):
+            self._record_path("auftragsbestaetigung")
+            confirmation_text = self._read_ocr(self._signed_order_confirmation_crop(image))
+            detected = detect_document_from_text(
+                f"{order_header}\n{confirmation_text}", barcodes, mi_scan_date
+            )
+            if detected and detected.document_type == "AU":
+                if not self._has_signed_order_confirmation_mark(image):
+                    return self._unrecognised_page(page, "auftragsbestaetigung_ohne_handschrift")
+                LOGGER.info(
+                    "Unterschriebene Auftragsbestaetigung erkannt; auftrag=%s",
+                    detected.number.removesuffix("_UNTERS"),
+                )
+                return detected
+            return self._unrecognised_page(
+                page, "auftragsbestaetigung_unterschriftsfeld_nicht_erkannt"
+            )
 
         if offer_number_from_text(header_text):
             self._record_path("angebot_bestaetigung")
@@ -861,10 +954,13 @@ class PageRecognizer:
 
         self._record_path("ganzseite")
         text = self._read_ocr(image)
+        self._remember_order_confirmation_header(page, text)
         detected = detect_document_from_text(text, barcodes, mi_scan_date)
         if detected:
             if detected.document_type == "AG" and not self._has_signed_offer_mark(image):
                 return self._unrecognised_page(page, "angebot_ohne_handschrift")
+            if detected.document_type == "AU" and not self._has_signed_order_confirmation_mark(image):
+                return self._unrecognised_page(page, "auftragsbestaetigung_ohne_handschrift")
             return detected
         return self._unrecognised_page(
             page, unrecognised_document_reason(f"{pauli_header}\n{text}")
@@ -998,11 +1094,64 @@ class PageRecognizer:
         )
 
     @staticmethod
+    def _signed_order_confirmation_crop(image: object):
+        width, height = image.size
+        left, top, right, bottom = SIGNED_ORDER_CONFIRMATION_CROP
+        return image.crop(
+            (round(width * left), round(height * top), round(width * right), round(height * bottom))
+        )
+
+    def _has_signed_order_confirmation_mark(self, image: object) -> bool:
+        # The date and "Ort / den / x" labels sit to the left of the customer
+        # signature. They must not count as handwriting on this form.
+        width, height = image.size
+        left, top, right, bottom = SIGNED_ORDER_LABEL_CROP
+        x_offset, y_offset = round(width * left), round(height * top)
+        words = self._read_ocr_words(image.crop(
+            (x_offset, y_offset, round(width * right), round(height * bottom))
+        ))
+        labels = [
+            (re.sub(r"[^A-Z]", "", normalise(text)), words["left"][index] + x_offset,
+             words["top"][index] + y_offset, words["height"][index])
+            for index, text in enumerate(words["text"])
+            if text.strip()
+        ]
+        for text, x_position, y_position, label_height in labels:
+            if text != "ORT" or x_position > width * 0.20:
+                continue
+            if not any(
+                other == "DEN" and width * 0.25 < other_x < width * 0.51
+                and abs(other_y - y_position) < max(label_height, other_height)
+                for other, other_x, other_y, other_height in labels
+            ):
+                continue
+            if self._has_handwriting_above_line(
+                image,
+                (0.51, max(0, y_position / height - 0.006), 0.90,
+                 min(1, (y_position + label_height) / height + 0.006)),
+                SIGNED_ORDER_INK_X_RANGE,
+                SIGNED_ORDER_INK_ABOVE_LINE,
+            ):
+                return True
+        return False
+
+    @staticmethod
     def _has_signed_offer_mark(image: object) -> bool:
         """Return whether handwriting is present above the printed signature line."""
+        return PageRecognizer._has_handwriting_above_line(
+            image, SIGNED_OFFER_LINE_SEARCH, SIGNED_OFFER_INK_X_RANGE, SIGNED_OFFER_INK_ABOVE_LINE
+        )
+
+    @staticmethod
+    def _has_handwriting_above_line(
+        image: object,
+        line_search: tuple[float, float, float, float],
+        ink_x_range: tuple[float, float],
+        ink_above_line: tuple[float, float],
+    ) -> bool:
         grayscale = image.convert("L")
         width, height = grayscale.size
-        left, top, right, bottom = SIGNED_OFFER_LINE_SEARCH
+        left, top, right, bottom = line_search
         x_start = round(width * left)
         x_end = max(x_start + 1, round(width * right))
         y_start = round(height * top)
@@ -1021,8 +1170,8 @@ class PageRecognizer:
         if darkest_row_count < line_width * SIGNED_OFFER_MIN_LINE_DARK_RATIO:
             return False
 
-        ink_left, ink_right = SIGNED_OFFER_INK_X_RANGE
-        above_start, above_end = SIGNED_OFFER_INK_ABOVE_LINE
+        ink_left, ink_right = ink_x_range
+        above_start, above_end = ink_above_line
         ink_box = (
             round(width * ink_left),
             max(0, signature_line_y - round(height * above_start)),
@@ -1069,6 +1218,12 @@ class PageRecognizer:
             return ()
 
     def _read_ocr(self, image: object) -> str:
+        return self._run_ocr(image)
+
+    def _read_ocr_words(self, image: object) -> dict[str, list]:
+        return self._run_ocr(image, words=True)
+
+    def _run_ocr(self, image: object, *, words: bool = False):
         try:
             import pytesseract
         except ImportError as error:  # pragma: no cover - dependency check at runtime
@@ -1095,6 +1250,11 @@ class PageRecognizer:
             )
             ocr_started = time.perf_counter()
             try:
+                if words:
+                    return pytesseract.image_to_data(
+                        image, lang=language, config="--psm 6",
+                        timeout=timeout, output_type=pytesseract.Output.DICT,
+                    )
                 return pytesseract.image_to_string(
                     image,
                     lang=language,
