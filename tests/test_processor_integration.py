@@ -91,6 +91,7 @@ class ProcessorIntegrationTests(unittest.TestCase):
             incoming.mkdir()
             source = incoming / "scan.pdf"
             self._create_pdf(source, 4)
+            original_bytes = source.read_bytes()
             processor = DocumentProcessor(Settings(str(incoming), str(output), str(archive)))
             processor.recognizer = StubRecognizer(
                 [
@@ -111,6 +112,16 @@ class ProcessorIntegrationTests(unittest.TestCase):
                 sorted(path.name for path in output.glob("*.pdf")),
             )
             self.assertEqual(1, len(list(archive.rglob("scan.pdf"))))
+            self.assertEqual(original_bytes, next(archive.rglob("scan.pdf")).read_bytes())
+            for filename, page_count in (
+                ("LS-Nowak-4781776.pdf", 2),
+                ("LS-Nowak-4783774.pdf", 1),
+                ("LS-Nowak-4783804.pdf", 1),
+            ):
+                with self.subTest(filename=filename):
+                    reader = PdfReader(output / filename, strict=True)
+                    self.assertEqual("%PDF-2.0", reader.pdf_header)
+                    self.assertEqual(page_count, len(reader.pages))
             summary = next(message for message in captured.output if "status=erfolgreich" in message)
             self.assertIn("seiten=4", summary)
             self.assertIn("dokumente=3", summary)

@@ -1,5 +1,9 @@
 # Änderungsprotokoll
 
+## Noch nicht veröffentlicht
+
+- Neu erzeugte Teildokumente werden als PDF 2.0 gespeichert. Archivierte Originalscans und unverändert weitergeleitete Dateien behalten ihr ursprüngliches Format; Seiteninhalt und Seitenreihenfolge werden weiterhin übernommen.
+
 ## 0.4.2 – 2026-10-29
 
 - Die neue SYSTEM-Aufgabenkennung lautet `GlasHagen DokumentenScannerSortierung Server`. Sie vermeidet den auf dem betroffenen Server unbrauchbaren bisherigen Aufgabeneintrag. Vergleichstests auf dem Server konnten unter neuen Namen sowohl deaktivierte als auch aktivierte Aufgaben mit identischen Startparametern registrieren; eine Securepoint-Blockierung ist weiterhin nicht nachgewiesen.
