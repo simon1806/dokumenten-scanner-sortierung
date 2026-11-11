@@ -156,6 +156,8 @@ Ist die SYSTEM-Aufgabe bereits gestoppt, schließt **Anwendung beenden** nach ei
 
 ### Beschleunigung des ersten Fensterstarts
 
+Version 0.4.3 zeigt während Installation, Update und Reparatur die tatsächlichen Arbeitsschritte, die aktuelle Datei und den Fortschritt in Prozent. Bei einem Abbruch werden auch Registry-Eintrag und Verknüpfungen wiederhergestellt. Eine stille Installation mit fehlgeschlagenem SYSTEM-Autostart endet mit Exitcode `4`; bei interaktiver Installation steht die Teilstörung im Abschlussdialog. Nach dem Update auf dem Server sind der Start der Überwachung und ein Testscan einschließlich einer unterschriebenen Auftragsbestätigung zu prüfen.
+
 Version 0.3.6 installiert die Laufzeitdateien dauerhaft im Unterordner `_internal` des Programmordners. Damit muss die installierte Anwendung beim ersten Öffnen nach einem Serverneustart ihr großes OCR-Paket nicht erneut in einen temporären Ordner entpacken. Die Benutzeroberfläche fragt beim Start außerdem keine OCR-Versionen ab; diese bleiben im Infofenster und in den Protokollen der aktiven Überwachung verfügbar. Die tatsächliche Startzeit ist mit Version 0.3.6 auf dem Server zu prüfen.
 
 EXE und `_internal` gehören bei dieser Installation zusammen. Zum Installieren, Aktualisieren oder Übertragen einer Installation wird weiterhin das Setup verwendet. Die portable Einzel-EXE bleibt eigenständig und entpackt ihre Komponenten weiterhin beim Start. Die Serveraufgabe, zentrale Einstellungen und Desktop-Verknüpfung verwenden unverändert ihre bisherigen Einstiegspunkte.
