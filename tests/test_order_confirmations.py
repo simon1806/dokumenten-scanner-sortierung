@@ -8,10 +8,12 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from PIL import Image, ImageDraw
+from pypdf import PdfWriter
 
 from scanner_sorter.config import Settings
 from scanner_sorter.diagnostics import build_diagnostic_report, render_diagnostic_html
 from scanner_sorter.models import DetectedDocument
+from scanner_sorter.processing import DocumentProcessor, RecognitionGroupingError
 from scanner_sorter.recognition import (
     PageRecognizer,
     detect_document_from_text,
@@ -29,6 +31,43 @@ FORM = (
 
 
 class OrderConfirmationTests(unittest.TestCase):
+    def test_unsigned_au_is_not_attached_to_signed_offer_in_either_scan_order(self) -> None:
+        for au_index, preceding_type in ((i, kind) for i in (0, 1) for kind in ("AG", "EM", "LS")):
+            with self.subTest(au_index=au_index, other=preceding_type), tempfile.TemporaryDirectory() as directory:
+                source = Path(directory) / "batch.pdf"
+                writer = PdfWriter()
+                for _ in range(2):
+                    writer.add_blank_page(width=595, height=842)
+                with source.open("wb") as stream:
+                    writer.write(stream)
+                processor = DocumentProcessor(Settings())
+                recognizer = processor.recognizer
+
+                def recognise_page(_source: Path, index: int):
+                    if index != au_index:
+                        return DetectedDocument(preceding_type, "5260615_UNTERS")
+                    page = SimpleNamespace(number=index)
+                    recognizer._remember_order_confirmation_header(page, HEADER)
+                    return recognizer._unrecognised_page(page, "auftragsbestaetigung_ohne_handschrift")
+
+                with patch.object(recognizer, "_recognise_file_page", side_effect=recognise_page):
+                    with self.assertRaisesRegex(RecognitionGroupingError, "Auftragsbestätigung"):
+                        processor._recognise_groups(source)
+
+    def test_recipient_or_customer_stamp_does_not_establish_the_issuer(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        foreign = f"Fremder Lieferant GmbH {HEADER} {FORM}"
+        page = SimpleNamespace(number=0, get_text=lambda _format: foreign)
+        with (
+            patch.object(recognizer, "_render", return_value=Image.new("RGB", (1000, 1400), "white")),
+            patch.object(recognizer, "_read_barcodes", return_value=()),
+            patch.object(recognizer, "_read_ocr", side_effect=("", foreign, "Fremder Lieferant GmbH")),
+            patch.object(recognizer, "_has_signed_order_confirmation_mark", return_value=True),
+        ):
+            recognizer._start_metrics()
+            self.assertIsNone(recognizer.recognise(page))
+            recognizer._finish_metrics()
+
     def test_reads_own_order_number_and_au_filename(self) -> None:
         for spelling in ("Auftragsbestätigung", "Auftragsbestaetigung", "Auftragsbestatigung"):
             with self.subTest(spelling=spelling):
@@ -89,6 +128,7 @@ class OrderConfirmationTests(unittest.TestCase):
                         patch.object(recognizer, "_render", return_value=Image.new("RGB", (1000, 1400), "white")),
                         patch.object(recognizer, "_read_barcodes", return_value=()),
                         patch.object(recognizer, "_read_ocr", side_effect=texts),
+                        patch.object(recognizer, "_has_order_confirmation_issuer", return_value=True),
                         patch.object(recognizer, "_has_signed_order_confirmation_mark", return_value=signed) as mark,
                     ):
                         recognizer._start_metrics()
@@ -107,6 +147,7 @@ class OrderConfirmationTests(unittest.TestCase):
             patch.object(recognizer, "_render", return_value=Image.new("RGB", (1000, 1400), "white")),
             patch.object(recognizer, "_read_barcodes", return_value=()),
             patch.object(recognizer, "_read_ocr", side_effect=("", HEADER, "Zahlungsbedingungen")),
+            patch.object(recognizer, "_has_order_confirmation_issuer", return_value=True),
             patch.object(recognizer, "_has_signed_order_confirmation_mark") as mark,
         ):
             recognizer._start_metrics()
@@ -149,7 +190,9 @@ class OrderConfirmationTests(unittest.TestCase):
         signed = DetectedDocument("AU", "3260829_UNTERS")
         recognizer._start_metrics()
         for index, header in enumerate((HEADER, HEADER, HEADER.replace("3260829", "3260825"))):
-            recognizer._remember_order_confirmation_header(SimpleNamespace(number=index), header)
+            recognizer._remember_order_confirmation_header(
+                SimpleNamespace(number=index), header, issuer_verified=True
+            )
         self.assertEqual(
             [signed, signed, None, None],
             recognizer._complete_signed_order_confirmation_pages([None, signed, None, None]),
@@ -160,12 +203,71 @@ class OrderConfirmationTests(unittest.TestCase):
         recognizer._start_metrics()
         self.assertEqual([None, signed], recognizer._complete_signed_order_confirmation_pages([None, signed]))
 
+    def test_unverified_matching_header_does_not_inherit_a_signed_au(self) -> None:
+        recognizer = PageRecognizer(Settings())
+        recognizer._start_metrics()
+        recognizer._remember_order_confirmation_header(SimpleNamespace(number=0), HEADER)
+        signed = DetectedDocument("AU", "3260829_UNTERS")
+        self.assertEqual([None, signed], recognizer._complete_signed_order_confirmation_pages([None, signed]))
+
+    def test_issuer_verification_uses_the_upper_right_letterhead_only(self) -> None:
+        issuer = "GlasHagen Kreuzstraße 21 45770 Marl www.glashagen.de"
+        recognizer = PageRecognizer(Settings())
+        for own_logo, own_contacts in ((True, True), (False, True), (True, False), (False, False)):
+            with self.subTest(own_logo=own_logo, own_contacts=own_contacts):
+                image = Image.new("RGB", (1000, 1400), "white")
+                draw = ImageDraw.Draw(image)
+                # Recipient and customer-stamp text lies outside the issuer box.
+                draw.rectangle((100, 200, 400, 400), fill="black")
+                draw.rectangle((550, 1100, 850, 1200), fill="black")
+                if own_logo:
+                    draw.rectangle((650, 80, 850, 120), fill="black")
+                if own_contacts:
+                    draw.rectangle((850, 230, 950, 350), fill="black")
+
+                def read_crop(crop):
+                    return issuer if crop.convert("L").getextrema()[0] == 0 else ""
+
+                with patch.object(recognizer, "_read_ocr", side_effect=read_crop):
+                    self.assertEqual(own_logo and own_contacts, recognizer._has_order_confirmation_issuer(image))
+
+    def test_all_au_candidate_routes_require_a_verified_issuer(self) -> None:
+        full = f"{HEADER} {FORM}"
+        for route in ("embedded", "header", "targeted", "full_page"):
+            with self.subTest(route=route):
+                recognizer = PageRecognizer(Settings())
+                page = SimpleNamespace(number=0, get_text=lambda _format: full if route == "embedded" else "")
+                texts = {
+                    "embedded": ("", "", FORM),
+                    "header": ("", full),
+                    "targeted": ("", HEADER, FORM),
+                    "full_page": ("", HEADER.replace("3260829", ""), full),
+                }[route]
+                with (
+                    patch.object(recognizer, "_render", return_value=Image.new("RGB", (1000, 1400), "white")),
+                    patch.object(recognizer, "_read_barcodes", return_value=()),
+                    patch.object(recognizer, "_read_ocr", side_effect=texts),
+                    patch.object(recognizer, "_has_order_confirmation_issuer", return_value=False),
+                    patch.object(recognizer, "_has_signed_order_confirmation_mark", return_value=True) as mark,
+                ):
+                    recognizer._start_metrics()
+                    self.assertIsNone(recognizer.recognise(page))
+                    recognizer._finish_metrics()
+                mark.assert_not_called()
+                self.assertEqual({0: "dokumentart_nicht_unterstuetzt"}, recognizer.last_page_reasons)
+
     def test_unsigned_pages_do_not_become_au_without_a_signed_page(self) -> None:
         recognizer = PageRecognizer(Settings())
         recognizer._remember_order_confirmation_header(SimpleNamespace(number=0), HEADER)
         self.assertEqual([None, None], recognizer._complete_signed_order_confirmation_pages([None, None]))
 
     def test_diagnostics_preserve_au_path_and_unsigned_reason(self) -> None:
+        self.assertEqual(
+            {"auftragsbestaetigung": 1},
+            DocumentProcessor._normalise_recognition_metrics({
+                "recognition_paths": {"auftragsbestaetigung": 1}
+            })["recognition_paths"],
+        )
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "dokumentensortierer-2026-11-11.log"
             log.write_text(

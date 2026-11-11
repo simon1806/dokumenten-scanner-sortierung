@@ -42,6 +42,8 @@ SIGNED_OFFER_INK_ABOVE_LINE = (0.065, 0.004)
 SIGNED_OFFER_MIN_LINE_DARK_RATIO = 0.18
 SIGNED_OFFER_MIN_INK_RATIO = 0.003
 SIGNED_ORDER_CONFIRMATION_CROP = (0.02, 0.45, 0.98, 0.90)
+ORDER_CONFIRMATION_LOGO_CROP = (0.55, 0.015, 0.995, 0.11)
+ORDER_CONFIRMATION_CONTACT_CROP = (0.55, 0.13, 0.995, 0.285)
 SIGNED_ORDER_LABEL_CROP = (0.05, 0.45, 0.51, 0.90)
 SIGNED_ORDER_INK_X_RANGE = (0.52, 0.87)
 SIGNED_ORDER_INK_ABOVE_LINE = (0.045, 0.004)
@@ -322,7 +324,7 @@ def is_zeidler_execution_confirmation(text: str) -> bool:
 
 
 def is_order_confirmation(text: str) -> bool:
-    """Require the Glas Hagen issuer and an explicit order-confirmation title."""
+    """Find an AU candidate; PageRecognizer separately verifies the issuer's position."""
     normalised = normalise(text)
     return bool(
         re.search(r"\bGLAS HAGEN\b", normalised)
@@ -378,6 +380,7 @@ def is_signed_offer(text: str) -> bool:
 
 def complete_signed_offer_pages(
     detections: list[DetectedDocument | None],
+    excluded_page_indexes: Iterable[int] = (),
 ) -> list[DetectedDocument | None]:
     """Attach all pages when one page identifies a single signed offer.
 
@@ -396,7 +399,11 @@ def complete_signed_offer_pages(
     signed_offer = signed_offers[0]
     if any(detection.key != signed_offer.key for detection in recognised):
         return detections
-    return [detection or signed_offer for detection in detections]
+    excluded = set(excluded_page_indexes)
+    return [
+        detection or (None if index in excluded else signed_offer)
+        for index, detection in enumerate(detections)
+    ]
 
 
 def detect_document_from_text(
@@ -526,6 +533,8 @@ class PageRecognizer:
         self._page_reasons: dict[int, str] = {}
         self._last_page_reasons: dict[int, str] = {}
         self._order_confirmation_numbers: dict[int, str] = {}
+        self._order_confirmation_pages: set[int] = set()
+        self._last_order_confirmation_pages: set[int] = set()
 
     def _new_metrics(self) -> dict[str, object]:
         return {
@@ -545,6 +554,7 @@ class PageRecognizer:
             self._active_metrics = self._new_metrics()
             self._page_reasons = {}
             self._order_confirmation_numbers = {}
+            self._order_confirmation_pages = set()
 
     def _finish_metrics(self) -> None:
         with self._metrics_lock:
@@ -556,6 +566,7 @@ class PageRecognizer:
             }
             self._active_metrics = None
             self._last_page_reasons = dict(self._page_reasons)
+            self._last_order_confirmation_pages = set(self._order_confirmation_pages)
 
     @property
     def last_page_reasons(self) -> dict[int, str]:
@@ -568,6 +579,12 @@ class PageRecognizer:
             with self._metrics_lock:
                 self._page_reasons[page_index] = reason_code
         return None
+
+    @property
+    def last_order_confirmation_pages(self) -> set[int]:
+        """Return AU page boundaries that cannot become another document's attachment."""
+        with self._metrics_lock:
+            return set(self._last_order_confirmation_pages)
 
     @property
     def last_metrics(self) -> dict[str, object]:
@@ -658,7 +675,10 @@ class PageRecognizer:
             # cancelled instead of allowing a long PDF to continue spawning OCR
             # processes after the document has already been rejected.
             detections = [future.result() for future in futures]
-            return complete_signed_offer_pages(self._complete_signed_order_confirmation_pages(detections))
+            return complete_signed_offer_pages(
+                self._complete_signed_order_confirmation_pages(detections),
+                self._order_confirmation_pages,
+            )
         except Exception:
             for future in futures:
                 future.cancel()
@@ -676,12 +696,17 @@ class PageRecognizer:
             )
         return max(1, min(OCR_TIMEOUT_SECONDS, math.ceil(remaining)))
 
-    def _remember_order_confirmation_header(self, page: object, text: str) -> None:
+    def _remember_order_confirmation_header(
+        self, page: object, text: str, *, issuer_verified: bool = False
+    ) -> None:
         number = order_confirmation_number_from_text(text)
         page_index = getattr(page, "number", None)
-        if number and type(page_index) is int and page_index >= 0:
+        if type(page_index) is int and page_index >= 0:
             with self._metrics_lock:
-                self._order_confirmation_numbers[page_index] = number
+                if re.search(r"\bAUFTRAGSBEST(?:A|AE)TIGUNG\b", normalise(text)):
+                    self._order_confirmation_pages.add(page_index)
+                if number and issuer_verified:
+                    self._order_confirmation_numbers[page_index] = number
 
     def _complete_signed_order_confirmation_pages(
         self, detections: list[DetectedDocument | None]
@@ -871,8 +896,12 @@ class PageRecognizer:
         if detected:
             if detected.document_type == "AG" and not self._has_signed_offer_mark(image):
                 return self._unrecognised_page(page, "angebot_ohne_handschrift")
-            if detected.document_type == "AU" and not self._has_signed_order_confirmation_mark(image):
-                return self._unrecognised_page(page, "auftragsbestaetigung_ohne_handschrift")
+            if detected.document_type == "AU":
+                if not self._has_order_confirmation_issuer(image):
+                    return self._unrecognised_page(page, "dokumentart_nicht_unterstuetzt")
+                self._remember_order_confirmation_header(page, header_text, issuer_verified=True)
+                if not self._has_signed_order_confirmation_mark(image):
+                    return self._unrecognised_page(page, "auftragsbestaetigung_ohne_handschrift")
             return detected
 
         pauli_header = f"{embedded_text}\n{nowak_text}\n{header_text}"
@@ -901,6 +930,9 @@ class PageRecognizer:
         order_header = f"{embedded_text}\n{header_text}"
         if order_confirmation_number_from_text(order_header):
             self._record_path("auftragsbestaetigung")
+            if not self._has_order_confirmation_issuer(image):
+                return self._unrecognised_page(page, "dokumentart_nicht_unterstuetzt")
+            self._remember_order_confirmation_header(page, order_header, issuer_verified=True)
             confirmation_text = self._read_ocr(self._signed_order_confirmation_crop(image))
             detected = detect_document_from_text(
                 f"{order_header}\n{confirmation_text}", barcodes, mi_scan_date
@@ -959,8 +991,12 @@ class PageRecognizer:
         if detected:
             if detected.document_type == "AG" and not self._has_signed_offer_mark(image):
                 return self._unrecognised_page(page, "angebot_ohne_handschrift")
-            if detected.document_type == "AU" and not self._has_signed_order_confirmation_mark(image):
-                return self._unrecognised_page(page, "auftragsbestaetigung_ohne_handschrift")
+            if detected.document_type == "AU":
+                if not self._has_order_confirmation_issuer(image):
+                    return self._unrecognised_page(page, "dokumentart_nicht_unterstuetzt")
+                self._remember_order_confirmation_header(page, text, issuer_verified=True)
+                if not self._has_signed_order_confirmation_mark(image):
+                    return self._unrecognised_page(page, "auftragsbestaetigung_ohne_handschrift")
             return detected
         return self._unrecognised_page(
             page, unrecognised_document_reason(f"{pauli_header}\n{text}")
@@ -1091,6 +1127,30 @@ class PageRecognizer:
                 max(1, round(width * right)),
                 max(1, round(height * bottom)),
             )
+        )
+
+    def _has_order_confirmation_issuer(self, image: object) -> bool:
+        # The own form prints its logo and contacts at the upper right. A
+        # recipient address on the left or a customer stamp near the signature
+        # does not establish that Glas Hagen issued the document.
+        width, height = image.size
+
+        def read_box(box: tuple[float, float, float, float]) -> str:
+            left, top, right, bottom = box
+            return normalise(self._read_ocr(image.crop((
+                round(width * left), round(height * top),
+                round(width * right), round(height * bottom),
+            ))))
+
+        # The name must occupy the logo band above all address blocks; finding
+        # the own recipient name in the contact/address band is insufficient.
+        if not re.search(r"\bGLAS\s*HAGEN\b", read_box(ORDER_CONFIRMATION_LOGO_CROP)):
+            return False
+        text = read_box(ORDER_CONFIRMATION_CONTACT_CROP)
+        return bool(
+            re.search(r"\bGLASHAGEN\s*\.\s*DE\b", text)
+            and re.search(r"\bKREUZSTR(?:ASSE|ABE)\s*21\b", text)
+            and re.search(r"\b45770\s+MARL\b", text)
         )
 
     @staticmethod
