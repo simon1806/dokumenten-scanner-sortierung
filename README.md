@@ -248,7 +248,7 @@ Nach Abschluss der gesammelten Änderungen das OCR-Paket vorbereiten und den nä
 
 ```powershell
 .\scripts\prepare-tesseract-vendor.ps1
-.\scripts\build-release.ps1 -Version 0.4.2
+.\scripts\build-release.ps1 -Version 0.4.3
 ```
 
 Die OCR-Vorbereitung baut ausschließlich Tesseract 5.5.4 aus dem per SHA-256 festgelegten offiziellen Quellarchiv, solange noch kein entsprechendes MSYS2-Windows-Paket verfügbar ist. GCC 16.2.0, CMake, Ninja und ihre Abhängigkeiten werden anhand von `scripts/tesseract-build-tools.lock.json` geprüft und ausschließlich unter `.artifacts/tesseract-5.5.4-update` entpackt. Compiler und Buildwerkzeuge werden nicht in die Anwendung übernommen. Der getrennte Laufzeitsatz aus `scripts/tesseract-runtime.lock.json` enthält Leptonica 1.87.0 (Paketrevision 2), libpng 1.6.59, libtiff 4.7.2, libwebp 1.6.0, libjpeg-turbo 3.2.0, OpenJPEG 2.5.4, zlib 1.3.2 sowie ihre Abhängigkeiten und Lizenztexte. Downloads bleiben für weitere Aufrufe zwischengespeichert. `OCR-BUILD-MANIFEST.json` dokumentiert Quellhash, Werkzeug- und Laufzeitlisten, Compiler und Optionen.
