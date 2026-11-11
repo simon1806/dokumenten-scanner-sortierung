@@ -33,10 +33,15 @@ Neu erzeugte Teildokumente werden als **PDF 2.0** gespeichert. Die archivierten 
 | Montageinfo/-bericht | Überschrift und Auftragsnummer; ohne Nummer mit Scannerdatum | `MI_<Auftragsnummer>.pdf` bzw. `MI_<JJJJ-MM-TT>.pdf` |
 | Abtretungserklärung | `Abtretungserklärung bei Versicherungsschäden`, Nummer im Feld `Auftrag/Angebot` (Präfix `32` oder `52`) | `ABTRET_<Auftrag>.pdf` |
 | Unterschriebenes Angebot | Glas-Hagen-Angebotsnummer und Bestätigungsbereich `Datum / Unterschrift` | `AG_<Angebotsnummer>_UNTERS.pdf` |
+| Unterschriebene Auftragsbestätigung | Glas-Hagen-Kopf mit eigener Domain, `Auftragsbestätigung Nr.`, Rücksende-/Unterschriftsfeld und handschriftlicher Eintrag im rechten Unterschriftsbereich | `AU_<Auftragsnummer>_UNTERS.pdf` |
 | Nowak-Lieferschein | Nowak-Kopf und vollständige Lieferscheinnummer ohne festen Nummernpräfix | `LS-Nowak-<Lieferscheinnummer>.pdf` |
 | Heitzer-Lieferschein | `Heitzer AG` und Lieferscheinnummer | `LS-Heitzer-<Lieferscheinnummer>.pdf` |
 | Pauli-Lieferschein | `Pauli + Sohn` und Nummer/Datum | `LS-Pauli-<Lieferscheinnummer>.pdf` |
 | Bohle-Lieferschein | `Bohle AG` und Lieferscheinnummer im Kopfbereich | `LS-Bohle-<Lieferscheinnummer>.pdf` |
+
+Der AU-Aussteller wird räumlich über das Logo oben rechts sowie Domain, Straße und Postanschrift im darunterliegenden Kontaktbereich geprüft. Eine Nennung von Glas Hagen in der Empfängeradresse oder einem Kundenstempel reicht nicht aus. Bleibt eine AU unbestätigt, wird der gesamte Scan zur Prüfung weitergeleitet; ihre Seiten werden auch in gemischten Stapeln nicht an ein Angebot oder anderes erkanntes Dokument angehängt.
+
+Bei eigenen Auftragsbestätigungen wird die Unterschriftszeile anhand der Beschriftung `Ort / den` lokalisiert. Dadurch darf sie auch auf einer kürzeren Folgeseite stehen. Weitere Seiten werden nur dann derselben unterschriebenen AU zugeordnet, wenn sie ebenfalls einen Glas-Hagen-Auftragsbestätigungskopf mit derselben Nummer tragen. Ort und Datum links neben dem Unterschriftsfeld genügen nicht als Unterschrift; fremde Auftragsbestätigungen bleiben ausgeschlossen.
 
 Vorhandener PDF-Text und Barcodes werden vor der langsameren OCR ausgewertet. Bei Nowak wird gezielt der kleine Bereich oben rechts neben dem Barcode gelesen; dadurch entfällt normalerweise die Ganzseiten-OCR. Bei Bohle werden Lieferantenkopf und Nummernfeld getrennt in zwei kleinen Ausschnitten gelesen. Bei einem Glas-Hagen-Angebot wird nach dem Kopf nur der Bestätigungs- und Unterschriftsbereich gelesen. Sobald eine unterschriebene Angebotsseite erkannt ist, bleiben alle Seiten des Angebots zusammen; dies gilt auch bei umgekehrter Scanreihenfolge. Falls weitere OCR nötig ist, wird zuerst nur der allgemeine Kopfbereich geprüft. Bei mehrseitigen Scans arbeiten höchstens zwei OCR-Prozesse gleichzeitig.
 

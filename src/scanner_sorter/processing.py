@@ -42,6 +42,7 @@ _RECOGNITION_PATHS = {
     "allgemeiner_kopf",
     "abtretung_nummer",
     "angebot_bestaetigung",
+    "auftragsbestaetigung",
     "ganzseite",
     "heitzer_seitenreferenz",
 }
@@ -611,6 +612,15 @@ class DocumentProcessor:
                 detections = [self.recognizer.recognise(page) for page in scan]
             source_indexes = list(range(len(detections)))
         try:
+            # A known but unsigned/unverified AU is a document boundary, never
+            # a continuation of the previously recognised AG/EM/LS document.
+            au_pages = getattr(self.recognizer, "last_order_confirmation_pages", set())
+            for index, detection in enumerate(detections):
+                if detection is None and source_indexes[index] in au_pages:
+                    raise RecognitionGroupingError(
+                        "Auftragsbestätigung konnte nicht sicher zugeordnet werden.",
+                        reason_code="dokumenttyp_nicht_erkannt", page_number=index + 1,
+                    )
             groups = group_page_detections(detections)
         except RecognitionGroupingError as error:
             reasons = getattr(self.recognizer, "last_page_reasons", {})
